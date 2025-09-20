@@ -3,10 +3,11 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 54;
+	objectVersion = 70;
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0BEB588F2E7DFC6600B7D7B1 /* TintExtension Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0BEB588E2E7DFC6600B7D7B1 /* TintExtension Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0C80B921A6F3F58F76C31292 /* libPods-TintApp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-TintApp.a */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
@@ -14,7 +15,50 @@
 		827C88652AAA4861CA0F2F4F /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		0BEB58792E7DFC6600B7D7B1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0BEB585B2E7DFC6100B7D7B1;
+			remoteInfo = TintExtension;
+		};
+		0BEB58832E7DFC6600B7D7B1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0BEB585B2E7DFC6100B7D7B1;
+			remoteInfo = TintExtension;
+		};
+		0BEB58902E7DFC6600B7D7B1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0BEB588D2E7DFC6600B7D7B1;
+			remoteInfo = "TintExtension Extension";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		0BEB58AA2E7DFC6700B7D7B1 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				0BEB588F2E7DFC6600B7D7B1 /* TintExtension Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		0BEB585C2E7DFC6100B7D7B1 /* TintExtension.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TintExtension.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0BEB58782E7DFC6600B7D7B1 /* TintExtensionTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TintExtensionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		0BEB58822E7DFC6600B7D7B1 /* TintExtensionUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TintExtensionUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		0BEB588E2E7DFC6600B7D7B1 /* TintExtension Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "TintExtension Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		0BEB58B72E7DFD2600B7D7B1 /* TintApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = TintApp.entitlements; path = TintApp/TintApp.entitlements; sourceTree = "<group>"; };
 		13B07F961A680F5B00A75B9A /* TintApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TintApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = TintApp/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = TintApp/Info.plist; sourceTree = "<group>"; };
@@ -27,7 +71,59 @@
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		0BEB58B12E7DFC6700B7D7B1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 0BEB585B2E7DFC6100B7D7B1 /* TintExtension */;
+		};
+		0BEB58B32E7DFC6700B7D7B1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 0BEB588D2E7DFC6600B7D7B1 /* TintExtension Extension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		0BEB585D2E7DFC6100B7D7B1 /* TintExtension */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (0BEB58B12E7DFC6700B7D7B1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = TintExtension; sourceTree = "<group>"; };
+		0BEB587B2E7DFC6600B7D7B1 /* TintExtensionTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = TintExtensionTests; sourceTree = "<group>"; };
+		0BEB58852E7DFC6600B7D7B1 /* TintExtensionUITests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = TintExtensionUITests; sourceTree = "<group>"; };
+		0BEB58922E7DFC6600B7D7B1 /* TintExtension Extension */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (0BEB58B32E7DFC6700B7D7B1 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (Resources/_locales, Resources/images, ); path = "TintExtension Extension"; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
 /* Begin PBXFrameworksBuildPhase section */
+		0BEB58592E7DFC6100B7D7B1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0BEB58752E7DFC6600B7D7B1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0BEB587F2E7DFC6600B7D7B1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0BEB588B2E7DFC6600B7D7B1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		13B07F8C1A680F5B00A75B9A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -42,6 +138,7 @@
 		13B07FAE1A68108700A75B9A /* TintApp */ = {
 			isa = PBXGroup;
 			children = (
+				0BEB58B72E7DFD2600B7D7B1 /* TintApp.entitlements */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
@@ -72,6 +169,10 @@
 			children = (
 				13B07FAE1A68108700A75B9A /* TintApp */,
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
+				0BEB585D2E7DFC6100B7D7B1 /* TintExtension */,
+				0BEB587B2E7DFC6600B7D7B1 /* TintExtensionTests */,
+				0BEB58852E7DFC6600B7D7B1 /* TintExtensionUITests */,
+				0BEB58922E7DFC6600B7D7B1 /* TintExtension Extension */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				BBD78D7AC51CEA395F1C20DB /* Pods */,
@@ -85,6 +186,10 @@
 			isa = PBXGroup;
 			children = (
 				13B07F961A680F5B00A75B9A /* TintApp.app */,
+				0BEB585C2E7DFC6100B7D7B1 /* TintExtension.app */,
+				0BEB58782E7DFC6600B7D7B1 /* TintExtensionTests.xctest */,
+				0BEB58822E7DFC6600B7D7B1 /* TintExtensionUITests.xctest */,
+				0BEB588E2E7DFC6600B7D7B1 /* TintExtension Extension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -101,6 +206,98 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		0BEB585B2E7DFC6100B7D7B1 /* TintExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0BEB58B42E7DFC6700B7D7B1 /* Build configuration list for PBXNativeTarget "TintExtension" */;
+			buildPhases = (
+				0BEB58582E7DFC6100B7D7B1 /* Sources */,
+				0BEB58592E7DFC6100B7D7B1 /* Frameworks */,
+				0BEB585A2E7DFC6100B7D7B1 /* Resources */,
+				0BEB58AA2E7DFC6700B7D7B1 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0BEB58912E7DFC6600B7D7B1 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				0BEB585D2E7DFC6100B7D7B1 /* TintExtension */,
+			);
+			name = TintExtension;
+			packageProductDependencies = (
+			);
+			productName = TintExtension;
+			productReference = 0BEB585C2E7DFC6100B7D7B1 /* TintExtension.app */;
+			productType = "com.apple.product-type.application";
+		};
+		0BEB58772E7DFC6600B7D7B1 /* TintExtensionTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0BEB58B52E7DFC6700B7D7B1 /* Build configuration list for PBXNativeTarget "TintExtensionTests" */;
+			buildPhases = (
+				0BEB58742E7DFC6600B7D7B1 /* Sources */,
+				0BEB58752E7DFC6600B7D7B1 /* Frameworks */,
+				0BEB58762E7DFC6600B7D7B1 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0BEB587A2E7DFC6600B7D7B1 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				0BEB587B2E7DFC6600B7D7B1 /* TintExtensionTests */,
+			);
+			name = TintExtensionTests;
+			packageProductDependencies = (
+			);
+			productName = TintExtensionTests;
+			productReference = 0BEB58782E7DFC6600B7D7B1 /* TintExtensionTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		0BEB58812E7DFC6600B7D7B1 /* TintExtensionUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0BEB58B62E7DFC6700B7D7B1 /* Build configuration list for PBXNativeTarget "TintExtensionUITests" */;
+			buildPhases = (
+				0BEB587E2E7DFC6600B7D7B1 /* Sources */,
+				0BEB587F2E7DFC6600B7D7B1 /* Frameworks */,
+				0BEB58802E7DFC6600B7D7B1 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0BEB58842E7DFC6600B7D7B1 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				0BEB58852E7DFC6600B7D7B1 /* TintExtensionUITests */,
+			);
+			name = TintExtensionUITests;
+			packageProductDependencies = (
+			);
+			productName = TintExtensionUITests;
+			productReference = 0BEB58822E7DFC6600B7D7B1 /* TintExtensionUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		0BEB588D2E7DFC6600B7D7B1 /* TintExtension Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0BEB58B22E7DFC6700B7D7B1 /* Build configuration list for PBXNativeTarget "TintExtension Extension" */;
+			buildPhases = (
+				0BEB588A2E7DFC6600B7D7B1 /* Sources */,
+				0BEB588B2E7DFC6600B7D7B1 /* Frameworks */,
+				0BEB588C2E7DFC6600B7D7B1 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				0BEB58922E7DFC6600B7D7B1 /* TintExtension Extension */,
+			);
+			name = "TintExtension Extension";
+			packageProductDependencies = (
+			);
+			productName = "TintExtension Extension";
+			productReference = 0BEB588E2E7DFC6600B7D7B1 /* TintExtension Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		13B07F861A680F5B00A75B9A /* TintApp */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "TintApp" */;
@@ -128,8 +325,23 @@
 		83CBB9F71A601CBA00E9B192 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
+				LastSwiftUpdateCheck = 1620;
 				LastUpgradeCheck = 1210;
 				TargetAttributes = {
+					0BEB585B2E7DFC6100B7D7B1 = {
+						CreatedOnToolsVersion = 16.2;
+					};
+					0BEB58772E7DFC6600B7D7B1 = {
+						CreatedOnToolsVersion = 16.2;
+						TestTargetID = 0BEB585B2E7DFC6100B7D7B1;
+					};
+					0BEB58812E7DFC6600B7D7B1 = {
+						CreatedOnToolsVersion = 16.2;
+						TestTargetID = 0BEB585B2E7DFC6100B7D7B1;
+					};
+					0BEB588D2E7DFC6600B7D7B1 = {
+						CreatedOnToolsVersion = 16.2;
+					};
 					13B07F861A680F5B00A75B9A = {
 						LastSwiftMigration = 1120;
 					};
@@ -149,11 +361,43 @@
 			projectRoot = "";
 			targets = (
 				13B07F861A680F5B00A75B9A /* TintApp */,
+				0BEB585B2E7DFC6100B7D7B1 /* TintExtension */,
+				0BEB58772E7DFC6600B7D7B1 /* TintExtensionTests */,
+				0BEB58812E7DFC6600B7D7B1 /* TintExtensionUITests */,
+				0BEB588D2E7DFC6600B7D7B1 /* TintExtension Extension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		0BEB585A2E7DFC6100B7D7B1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0BEB58762E7DFC6600B7D7B1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0BEB58802E7DFC6600B7D7B1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0BEB588C2E7DFC6600B7D7B1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		13B07F8E1A680F5B00A75B9A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -242,6 +486,34 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		0BEB58582E7DFC6100B7D7B1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0BEB58742E7DFC6600B7D7B1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0BEB587E2E7DFC6600B7D7B1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0BEB588A2E7DFC6600B7D7B1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		13B07F871A680F5B00A75B9A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -252,14 +524,360 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		0BEB587A2E7DFC6600B7D7B1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0BEB585B2E7DFC6100B7D7B1 /* TintExtension */;
+			targetProxy = 0BEB58792E7DFC6600B7D7B1 /* PBXContainerItemProxy */;
+		};
+		0BEB58842E7DFC6600B7D7B1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0BEB585B2E7DFC6100B7D7B1 /* TintExtension */;
+			targetProxy = 0BEB58832E7DFC6600B7D7B1 /* PBXContainerItemProxy */;
+		};
+		0BEB58912E7DFC6600B7D7B1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0BEB588D2E7DFC6600B7D7B1 /* TintExtension Extension */;
+			targetProxy = 0BEB58902E7DFC6600B7D7B1 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		0BEB58A82E7DFC6700B7D7B1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = TintExtension/TintExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TintExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TintExtension;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UIMainStoryboardFile = Main;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.TintExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		0BEB58A92E7DFC6700B7D7B1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = TintExtension/TintExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TintExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TintExtension;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UIMainStoryboardFile = Main;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_FAST_MATH = YES;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.TintExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		0BEB58AB2E7DFC6700B7D7B1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.TintExtensionTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TintExtension.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TintExtension";
+			};
+			name = Debug;
+		};
+		0BEB58AC2E7DFC6700B7D7B1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.TintExtensionTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TintExtension.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TintExtension";
+			};
+			name = Release;
+		};
+		0BEB58AD2E7DFC6700B7D7B1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.TintExtensionUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = TintExtension;
+			};
+			name = Debug;
+		};
+		0BEB58AE2E7DFC6700B7D7B1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.TintExtensionUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = TintExtension;
+			};
+			name = Release;
+		};
+		0BEB58AF2E7DFC6700B7D7B1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = "TintExtension Extension/TintExtension Extension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "TintExtension Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "TintExtension Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.TintApp.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		0BEB58B02E7DFC6700B7D7B1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = "TintExtension Extension/TintExtension Extension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "TintExtension Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "TintExtension Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_FAST_MATH = YES;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.TintApp.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 3B4392A12AC88292D35C810B /* Pods-TintApp.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = TintApp/TintApp.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = TintApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -287,7 +905,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = TintApp/TintApp.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
 				INFOPLIST_FILE = TintApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -454,6 +1074,42 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0BEB58B22E7DFC6700B7D7B1 /* Build configuration list for PBXNativeTarget "TintExtension Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0BEB58AF2E7DFC6700B7D7B1 /* Debug */,
+				0BEB58B02E7DFC6700B7D7B1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0BEB58B42E7DFC6700B7D7B1 /* Build configuration list for PBXNativeTarget "TintExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0BEB58A82E7DFC6700B7D7B1 /* Debug */,
+				0BEB58A92E7DFC6700B7D7B1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0BEB58B52E7DFC6700B7D7B1 /* Build configuration list for PBXNativeTarget "TintExtensionTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0BEB58AB2E7DFC6700B7D7B1 /* Debug */,
+				0BEB58AC2E7DFC6700B7D7B1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0BEB58B62E7DFC6700B7D7B1 /* Build configuration list for PBXNativeTarget "TintExtensionUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0BEB58AD2E7DFC6700B7D7B1 /* Debug */,
+				0BEB58AE2E7DFC6700B7D7B1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "TintApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
