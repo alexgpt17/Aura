@@ -29,7 +29,10 @@ function applyTheme(theme) {
 
 // Function to request the theme from the native extension
 function getThemeAndApply() {
-    browser.runtime.sendMessage({ type: "GET_THEME" }).then(response => {
+    browser.runtime.sendMessage({ 
+        type: "GET_THEME",
+        hostname: window.location.hostname 
+    }).then(response => {
         if (response && response.theme) {
             applyTheme(response.theme);
         } else {

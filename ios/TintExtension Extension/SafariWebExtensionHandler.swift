@@ -17,11 +17,36 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         os_log(.default, "Received message type: %@", messageType)
 
         if messageType == "GET_THEME" {
-            let theme = ThemeManager.getCurrentTheme()
+            let hostname = message["hostname"] as? String
+            var themeToApply: [String: Any]?
+
+            // 1. Check for a site-specific theme
+            if let host = hostname, let siteThemes = ThemeManager.getSiteThemes() {
+                // Check for exact match first (e.g., "www.google.com")
+                if let siteTheme = siteThemes[host] as? [String: Any] {
+                    themeToApply = siteTheme
+                    os_log(.default, "Found site-specific theme for %@", host)
+                } else {
+                    // Fallback to checking the base domain (e.g., "google.com")
+                    let components = host.split(separator: ".")
+                    if components.count > 1 {
+                        let baseDomain = components.suffix(2).joined(separator: ".")
+                        if let siteTheme = siteThemes[baseDomain] as? [String: Any] {
+                            themeToApply = siteTheme
+                            os_log(.default, "Found site-specific theme for base domain %@", baseDomain)
+                        }
+                    }
+                }
+            }
+
+            // 2. If no site-specific theme, use the global theme
+            if themeToApply == nil {
+                themeToApply = ThemeManager.getCurrentTheme()
+                os_log(.default, "No site-specific theme found. Using global theme.")
+            }
+
             let response = NSExtensionItem()
-            // The userInfo dictionary must be JSON-serializable.
-            // ThemeManager.getCurrentTheme() returns [String: Any]? which should be fine.
-            response.userInfo = [ SFExtensionMessageKey: [ "theme": theme ?? ["enabled": false] ] ]
+            response.userInfo = [ SFExtensionMessageKey: [ "theme": themeToApply ?? ["enabled": false] ] ]
             context.completeRequest(returningItems: [response], completionHandler: nil)
         } else {
             let response = NSExtensionItem()

@@ -10,4 +10,12 @@ struct ThemeManager {
         }
         return nil
     }
+    
+    static func getSiteThemes() -> [String: Any]? {
+        if let defaults = UserDefaults(suiteName: appGroup),
+           let themes = defaults.dictionary(forKey: "siteThemes") {
+            return themes
+        }
+        return nil
+    }
 }

@@ -9,19 +9,30 @@ import {
   Alert,
   TouchableOpacity,
   Modal,
+  TextInput,
+  FlatList,
 } from 'react-native';
 import ColorPicker from 'react-native-wheel-color-picker';
-import { saveTheme, getTheme } from './src/storage';
+import {
+  saveTheme,
+  getTheme,
+  saveSiteTheme,
+  getSiteThemes,
+  overwriteSiteThemes,
+} from './src/storage';
 
 const App = () => {
   const [isEnabled, setIsEnabled] = useState(true);
   const [backgroundColor, setBackgroundColor] = useState('#000000');
   const [textColor, setTextColor] = useState('#FFFFFF');
   const [linkColor, setLinkColor] = useState('#1E90FF');
+  const [website, setWebsite] = useState('');
 
   const [modalVisible, setModalVisible] = useState(false);
   const [currentColor, setCurrentColor] = useState('#ffffff');
   const [colorToEdit, setColorToEdit] = useState(null);
+
+  const [siteThemes, setSiteThemes] = useState({});
 
   useEffect(() => {
     const loadTheme = async () => {
@@ -33,7 +44,14 @@ const App = () => {
         setIsEnabled(theme.enabled ?? true);
       }
     };
+    const loadSiteThemes = async () => {
+      const themes = await getSiteThemes();
+      if (themes) {
+        setSiteThemes(themes);
+      }
+    };
     loadTheme();
+    loadSiteThemes();
   }, []);
 
   const openColorPicker = (colorType, colorValue) => {
@@ -57,6 +75,22 @@ const App = () => {
     setModalVisible(false);
   };
 
+  const applyPreset = (preset) => {
+    if (preset === 'grayscale') {
+      setBackgroundColor('#1E1E1E');
+      setTextColor('#E0E0E0');
+      setLinkColor('#BB86FC');
+    } else if (preset === 'amoled') {
+      setBackgroundColor('#000000');
+      setTextColor('#FFFFFF');
+      setLinkColor('#1E90FF');
+    } else if (preset === 'sepia') {
+      setBackgroundColor('#F1EADF');
+      setTextColor('#4A3F35');
+      setLinkColor('#006A71');
+    }
+  };
+
   const handleSave = () => {
     const theme = {
       background: backgroundColor,
@@ -66,6 +100,33 @@ const App = () => {
     };
     saveTheme(theme);
     Alert.alert('Theme Saved!', 'Your theme has been saved successfully.');
+  };
+
+  const handleSaveSiteSpecific = () => {
+    if (!website.trim()) {
+      Alert.alert('Invalid Input', 'Please enter a website domain.');
+      return;
+    }
+    const theme = {
+      background: backgroundColor,
+      text: textColor,
+      link: linkColor,
+      enabled: true,
+    };
+    // Optimistically update UI
+    const newSiteThemes = { ...siteThemes, [website.trim()]: theme };
+    setSiteThemes(newSiteThemes);
+    saveSiteTheme(website.trim(), theme);
+    Alert.alert('Site Theme Saved!', `The theme has been saved for ${website.trim()}.`);
+    setWebsite('');
+  };
+
+  const handleDeleteSite = (domain) => {
+    const newSiteThemes = { ...siteThemes };
+    delete newSiteThemes[domain];
+    setSiteThemes(newSiteThemes);
+    overwriteSiteThemes(newSiteThemes);
+    Alert.alert('Site Theme Deleted!', `The theme for ${domain} has been deleted.`);
   };
 
   return (
@@ -119,7 +180,45 @@ const App = () => {
 
       <View style={styles.spacer} />
 
+      <TextInput
+        style={styles.input}
+        placeholder="e.g., wikipedia.org"
+        value={website}
+        onChangeText={setWebsite}
+        autoCapitalize="none"
+        keyboardType="url"
+      />
+      <Button title="Save for this Website" onPress={handleSaveSiteSpecific} />
+
+      <View style={styles.presetContainer}>
+        <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('grayscale')}>
+          <Text style={styles.presetButtonText}>Grayscale</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('amoled')}>
+          <Text style={styles.presetButtonText}>AMOLED</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('sepia')}>
+          <Text style={styles.presetButtonText}>Sepia</Text>
+        </TouchableOpacity>
+      </View>
+
       <Button title="Save Theme" onPress={handleSave} />
+
+      <View style={styles.listContainer}>
+        <Text style={styles.listHeader}>Site-Specific Themes</Text>
+        <FlatList
+          data={Object.keys(siteThemes)}
+          keyExtractor={(item) => item}
+          renderItem={({ item }) => (
+            <View style={styles.listItem}>
+              <Text style={styles.listItemText}>{item}</Text>
+              <TouchableOpacity onPress={() => handleDeleteSite(item)} style={styles.deleteButton}>
+                <Text style={styles.deleteButtonText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        />
+      </View>
     </View>
   );
 };
@@ -185,6 +284,63 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 5,
     width: '80%',
+  },
+  input: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 15,
+    fontSize: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#ccc',
+  },
+  presetContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 20,
+  },
+  presetButton: {
+    backgroundColor: '#DDDDDD',
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 8,
+  },
+  presetButtonText: {
+    fontSize: 16,
+    color: '#000',
+  },
+  listContainer: {
+    marginTop: 30,
+    flex: 1,
+  },
+  listHeader: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    color: '#000',
+  },
+  listItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 15,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  listItemText: {
+    fontSize: 16,
+    color: '#000',
+  },
+  deleteButton: {
+    backgroundColor: '#ff4d4d',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  deleteButtonText: {
+    color: '#fff',
+    fontSize: 14,
   },
 });
 
