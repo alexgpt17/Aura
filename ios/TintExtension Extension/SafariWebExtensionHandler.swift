@@ -1,58 +1,87 @@
 import SafariServices
 import os.log
 
+// Native handler - Receives messages from JavaScript content scripts
+// Noir-style architecture: Content script → sendMessage → beginRequest → Read App Group → Return theme config
 class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
-
+    
+    static let appGroupID = "group.com.alexmartens.tint"
+    static let themeDataKey = "tintThemeData"
+    
+    override init() {
+        super.init()
+        os_log(.fault, "Tint SafariWebExtensionHandler INIT called")
+        NSLog("Tint: SafariWebExtensionHandler INIT")
+    }
+    
     func beginRequest(with context: NSExtensionContext) {
+        NSLog("🔥 beginRequest CALLED")
+        os_log(.fault, "Tint native handler beginRequest CALLED")
+        
+        // Extract message from JavaScript content script
         guard let item = context.inputItems.first as? NSExtensionItem,
-              let userInfo = item.userInfo,
-              let message = userInfo[SFExtensionMessageKey] as? [String: Any],
+              let message = item.userInfo?[SFExtensionMessageKey] as? [String: Any],
               let messageType = message["type"] as? String else {
-            let response = NSExtensionItem()
-            response.userInfo = [ SFExtensionMessageKey: ["error": "Invalid message format"] ]
-            context.completeRequest(returningItems: [response], completionHandler: nil)
+            context.completeRequest(returningItems: nil, completionHandler: nil)
             return
         }
-
-        os_log(.default, "Received message type: %@", messageType)
-
-        if messageType == "GET_THEME" {
-            let hostname = message["hostname"] as? String
-            var themeToApply: [String: Any]?
-
-            // 1. Check for a site-specific theme
-            if let host = hostname, let siteThemes = ThemeManager.getSiteThemes() {
-                // Check for exact match first (e.g., "www.google.com")
-                if let siteTheme = siteThemes[host] as? [String: Any] {
-                    themeToApply = siteTheme
-                    os_log(.default, "Found site-specific theme for %@", host)
-                } else {
-                    // Fallback to checking the base domain (e.g., "google.com")
-                    let components = host.split(separator: ".")
-                    if components.count > 1 {
-                        let baseDomain = components.suffix(2).joined(separator: ".")
-                        if let siteTheme = siteThemes[baseDomain] as? [String: Any] {
-                            themeToApply = siteTheme
-                            os_log(.default, "Found site-specific theme for base domain %@", baseDomain)
-                        }
-                    }
-                }
-            }
-
-            // 2. If no site-specific theme, use the global theme
-            if themeToApply == nil {
-                themeToApply = ThemeManager.getCurrentTheme()
-                os_log(.default, "No site-specific theme found. Using global theme.")
-            }
-
-            let response = NSExtensionItem()
-            response.userInfo = [ SFExtensionMessageKey: [ "theme": themeToApply ?? ["enabled": false] ] ]
-            context.completeRequest(returningItems: [response], completionHandler: nil)
+        
+        // Handle sync request from background script
+        // This is called when Safari loads the extension and background script requests sync
+        if messageType == "syncTheme" {
+            handleSyncThemeRequest(context: context)
         } else {
-            let response = NSExtensionItem()
-            response.userInfo = [ SFExtensionMessageKey: ["error": "Unknown message type"] ]
-            context.completeRequest(returningItems: [response], completionHandler: nil)
+            // Also handle direct getTheme requests (fallback)
+            if messageType == "getTheme" {
+                handleSyncThemeRequest(context: context)
+            } else {
+                context.completeRequest(returningItems: nil, completionHandler: nil)
+            }
         }
     }
-
+    
+    func handleSyncThemeRequest(context: NSExtensionContext) {
+        // Read theme data from App Group
+        guard let shared = UserDefaults(suiteName: SafariWebExtensionHandler.appGroupID) else {
+            os_log(.error, "Failed to access App Group: %@", SafariWebExtensionHandler.appGroupID)
+            NSLog("🔥 Failed to access App Group")
+            context.completeRequest(returningItems: nil, completionHandler: nil)
+            return
+        }
+        
+        shared.synchronize()
+        
+        // Read theme data from App Group
+        var allThemes: [String: Any] = [:]
+        
+        if let dict = shared.dictionary(forKey: SafariWebExtensionHandler.themeDataKey) {
+            allThemes = dict
+            NSLog("🔥 Read theme data as dictionary")
+        } else if let jsonString = shared.string(forKey: SafariWebExtensionHandler.themeDataKey) {
+            NSLog("🔥 Read theme data as string, attempting to parse")
+            if let jsonData = jsonString.data(using: .utf8),
+               let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                allThemes = parsed
+                NSLog("🔥 Successfully parsed JSON string")
+            }
+        } else if let obj = shared.object(forKey: SafariWebExtensionHandler.themeDataKey) as? [String: Any] {
+            allThemes = obj
+            NSLog("🔥 Read theme data as object")
+        } else {
+            NSLog("🔥 No theme data found in App Group")
+        }
+        
+        // Return all theme data (globalTheme + siteThemes) for storage
+        let responseItem = NSExtensionItem()
+        responseItem.userInfo = [
+            SFExtensionMessageKey: [
+                "themeData": allThemes
+            ]
+        ]
+        
+        NSLog("🔥 Returning theme data for sync (has globalTheme: %@, siteThemes count: %d)", 
+              allThemes["globalTheme"] != nil ? "YES" : "NO",
+              (allThemes["siteThemes"] as? [String: Any])?.count ?? 0)
+        context.completeRequest(returningItems: [responseItem], completionHandler: nil)
+    }
 }
