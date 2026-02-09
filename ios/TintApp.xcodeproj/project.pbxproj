@@ -7,8 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0B4D198F2F27F0BA0015BB6B /* KeyboardExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 0B4D19882F27F0BA0015BB6B /* KeyboardExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		0B954CEF2F15DA07004878D6 /* SafariServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0B954CED2F15D982004878D6 /* SafariServices.framework */; };
 		0BEB588F2E7DFC6600B7D7B1 /* TintExtension Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0BEB588E2E7DFC6600B7D7B1 /* TintExtension Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		0BEB58902E7DFC6600B7D7B2 /* TintExtension Extension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 0BEB588E2E7DFC6600B7D7B1 /* TintExtension Extension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
@@ -18,12 +20,12 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		0B55D1FF2F1C848400E73C76 /* PBXContainerItemProxy */ = {
+		0B4D198D2F27F0BA0015BB6B /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = 0BEB585B2E7DFC6100B7D7B1;
-			remoteInfo = TintExtension;
+			remoteGlobalIDString = 0B4D19872F27F0BA0015BB6B;
+			remoteInfo = KeyboardExtension;
 		};
 		0BEB58792E7DFC6600B7D7B1 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -60,9 +62,22 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0BEB58AB2E7DFC6700B7D7B2 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				0BEB58902E7DFC6600B7D7B2 /* TintExtension Extension.appex in Embed App Extensions */,
+				0B4D198F2F27F0BA0015BB6B /* KeyboardExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0B4D19882F27F0BA0015BB6B /* KeyboardExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KeyboardExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		0B954CED2F15D982004878D6 /* SafariServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SafariServices.framework; path = System/Library/Frameworks/SafariServices.framework; sourceTree = SDKROOT; };
 		0BEB585C2E7DFC6100B7D7B1 /* TintExtension.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TintExtension.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0BEB58782E7DFC6600B7D7B1 /* TintExtensionTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TintExtensionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -82,6 +97,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		0B4D19922F27F0BA0015BB6B /* Exceptions for "KeyboardExtension" folder in "KeyboardExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 0B4D19872F27F0BA0015BB6B /* KeyboardExtension */;
+		};
 		0BEB58B12E7DFC6700B7D7B1 /* Exceptions for "TintExtension" folder in "TintExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -106,6 +128,14 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		0B4D19892F27F0BA0015BB6B /* KeyboardExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				0B4D19922F27F0BA0015BB6B /* Exceptions for "KeyboardExtension" folder in "KeyboardExtension" target */,
+			);
+			path = KeyboardExtension;
+			sourceTree = "<group>";
+		};
 		0BEB585D2E7DFC6100B7D7B1 /* TintExtension */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -140,6 +170,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		0B4D19852F27F0BA0015BB6B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		0BEB58592E7DFC6100B7D7B1 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -219,6 +256,7 @@
 				0BEB587B2E7DFC6600B7D7B1 /* TintExtensionTests */,
 				0BEB58852E7DFC6600B7D7B1 /* TintExtensionUITests */,
 				0BEB58922E7DFC6600B7D7B1 /* TintExtension Extension */,
+				0B4D19892F27F0BA0015BB6B /* KeyboardExtension */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				BBD78D7AC51CEA395F1C20DB /* Pods */,
@@ -236,6 +274,7 @@
 				0BEB58782E7DFC6600B7D7B1 /* TintExtensionTests.xctest */,
 				0BEB58822E7DFC6600B7D7B1 /* TintExtensionUITests.xctest */,
 				0BEB588E2E7DFC6600B7D7B1 /* TintExtension Extension.appex */,
+				0B4D19882F27F0BA0015BB6B /* KeyboardExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -252,6 +291,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		0B4D19872F27F0BA0015BB6B /* KeyboardExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0B4D19932F27F0BA0015BB6B /* Build configuration list for PBXNativeTarget "KeyboardExtension" */;
+			buildPhases = (
+				0B4D19842F27F0BA0015BB6B /* Sources */,
+				0B4D19852F27F0BA0015BB6B /* Frameworks */,
+				0B4D19862F27F0BA0015BB6B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				0B4D19892F27F0BA0015BB6B /* KeyboardExtension */,
+			);
+			name = KeyboardExtension;
+			packageProductDependencies = (
+			);
+			productName = KeyboardExtension;
+			productReference = 0B4D19882F27F0BA0015BB6B /* KeyboardExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		0BEB585B2E7DFC6100B7D7B1 /* TintExtension */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0BEB58B42E7DFC6700B7D7B1 /* Build configuration list for PBXNativeTarget "TintExtension" */;
@@ -347,11 +408,13 @@
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				271CFA0F63E01EC38A63DBBC /* [CP] Embed Pods Frameworks */,
 				A12C046A0F146410B63DF5DB /* [CP] Copy Pods Resources */,
+				0BEB58AB2E7DFC6700B7D7B2 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				0B55D2002F1C848400E73C76 /* PBXTargetDependency */,
+				0B4D198E2F27F0BA0015BB6B /* PBXTargetDependency */,
 			);
 			name = TintApp;
 			productName = TintApp;
@@ -368,6 +431,9 @@
 				LastSwiftUpdateCheck = 1620;
 				LastUpgradeCheck = 1620;
 				TargetAttributes = {
+					0B4D19872F27F0BA0015BB6B = {
+						CreatedOnToolsVersion = 16.2;
+					};
 					0BEB585B2E7DFC6100B7D7B1 = {
 						CreatedOnToolsVersion = 16.2;
 					};
@@ -405,11 +471,19 @@
 				0BEB58772E7DFC6600B7D7B1 /* TintExtensionTests */,
 				0BEB58812E7DFC6600B7D7B1 /* TintExtensionUITests */,
 				0BEB588D2E7DFC6600B7D7B1 /* TintExtension Extension */,
+				0B4D19872F27F0BA0015BB6B /* KeyboardExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		0B4D19862F27F0BA0015BB6B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		0BEB585A2E7DFC6100B7D7B1 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -527,6 +601,13 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		0B4D19842F27F0BA0015BB6B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		0BEB58582E7DFC6100B7D7B1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -566,10 +647,15 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		0B4D198E2F27F0BA0015BB6B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0B4D19872F27F0BA0015BB6B /* KeyboardExtension */;
+			targetProxy = 0B4D198D2F27F0BA0015BB6B /* PBXContainerItemProxy */;
+		};
 		0B55D2002F1C848400E73C76 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 0BEB585B2E7DFC6100B7D7B1 /* TintExtension */;
-			targetProxy = 0B55D1FF2F1C848400E73C76 /* PBXContainerItemProxy */;
+			target = 0BEB588D2E7DFC6600B7D7B1 /* TintExtension Extension */;
+			targetProxy = 0BEB58902E7DFC6600B7D7B1 /* PBXContainerItemProxy */;
 		};
 		0BEB587A2E7DFC6600B7D7B1 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -589,6 +675,88 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		0B4D19902F27F0BA0015BB6B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = KeyboardExtension/KeyboardExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = KeyboardExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Aura Keyboard";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.KeyboardExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		0B4D19912F27F0BA0015BB6B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = KeyboardExtension/KeyboardExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = KeyboardExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Aura Keyboard";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.KeyboardExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		0BEB58A82E7DFC6700B7D7B1 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1127,6 +1295,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0B4D19932F27F0BA0015BB6B /* Build configuration list for PBXNativeTarget "KeyboardExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0B4D19902F27F0BA0015BB6B /* Debug */,
+				0B4D19912F27F0BA0015BB6B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		0BEB58B22E7DFC6700B7D7B1 /* Build configuration list for PBXNativeTarget "TintExtension Extension" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

@@ -12,45 +12,10 @@
         _ready: false
     };
     
-    // Try to sync from native handler first (most reliable)
-    console.log('Tint injected: Checking browser.runtime.sendMessage availability');
-    console.log('Tint injected: browser exists?', typeof browser !== 'undefined');
-    console.log('Tint injected: browser.runtime exists?', typeof browser !== 'undefined' && !!browser.runtime);
-    console.log('Tint injected: browser.runtime.sendMessage exists?', typeof browser !== 'undefined' && browser.runtime && typeof browser.runtime.sendMessage === 'function');
-    
-    if (typeof browser !== 'undefined' && browser.runtime && typeof browser.runtime.sendMessage === 'function') {
-        console.log('Tint injected: Attempting to call native handler via sendMessage');
-        browser.runtime.sendMessage({ type: "syncTheme" }).then(response => {
-            console.log('Tint injected: sendMessage promise resolved with:', response);
-            console.log('Tint injected: response type:', typeof response);
-            console.log('Tint injected: response is null?', response === null);
-            console.log('Tint injected: response is undefined?', response === undefined);
-            
-            if (response && response.themeData) {
-                window.__TINT_THEME_DATA__ = response.themeData;
-                window.__TINT_THEME_DATA__._ready = true;
-                console.log('Tint injected: Theme data loaded from native handler', response.themeData);
-                
-                // Also cache in storage for next time
-                if (browser.storage) {
-                    browser.storage.local.set({ tintThemeData: response.themeData });
-                }
-            } else {
-                console.log('Tint injected: No themeData in response, falling back to storage');
-                // Fall back to storage
-                loadFromStorage();
-            }
-        }).catch(error => {
-            console.error('Tint injected: sendMessage promise rejected with error:', error);
-            console.error('Tint injected: Error message:', error?.message);
-            console.error('Tint injected: Error stack:', error?.stack);
-            console.log('Tint injected: Falling back to storage due to error');
-            loadFromStorage();
-        });
-    } else {
-        console.log('Tint injected: sendMessage not available, using storage only');
-        loadFromStorage();
-    }
+    // CRITICAL: On iOS Safari, sendMessage doesn't work - go straight to storage
+    // The background script should have synced from App Group already
+    console.log('🔥🔥🔥 Tint injected: Loading theme from storage (sendMessage not reliable on iOS)');
+    loadFromStorage();
     
     function loadFromStorage() {
         if (typeof browser !== 'undefined' && browser.storage) {
@@ -58,17 +23,24 @@
                 if (result.tintThemeData) {
                     window.__TINT_THEME_DATA__ = result.tintThemeData;
                     window.__TINT_THEME_DATA__._ready = true;
-                    console.log('Tint injected: Theme data loaded from storage', result.tintThemeData);
+                    console.log('🔥🔥🔥 Tint injected: Theme data loaded from storage');
+                    if (result.tintThemeData.globalTheme) {
+                        console.log('🔥🔥🔥 Tint injected: Theme - background:', result.tintThemeData.globalTheme.background, 'text:', result.tintThemeData.globalTheme.text);
+                        // EARLY: Set theme-color meta tag immediately to prevent white flash
+                        // This controls iOS Safari's status bar and overscroll color
+                        injectThemeColorMeta(result.tintThemeData.globalTheme.background);
+                    }
                 } else {
                     window.__TINT_THEME_DATA__._ready = true;
-                    console.log('Tint injected: No theme data available');
+                    console.log('🔥🔥🔥 Tint injected: No theme data available in storage');
                 }
             }).catch(error => {
-                console.error('Tint injected: Error loading from storage:', error);
+                console.error('🔥🔥🔥 Tint injected: Error loading from storage:', error);
                 window.__TINT_THEME_DATA__._ready = true;
             });
         } else {
             window.__TINT_THEME_DATA__._ready = true;
+            console.log('🔥🔥🔥 Tint injected: browser.storage not available');
         }
     }
     
@@ -83,5 +55,52 @@
                 }
             }
         });
+    }
+    
+    // Inject theme-color meta tag for iOS Safari overscroll/status bar
+    function injectThemeColorMeta(bgColor) {
+        if (!bgColor) return;
+        try {
+            const head = document.head || document.documentElement;
+            if (!head) return;
+            let themeColorMeta = document.querySelector('meta[name="theme-color"]');
+            if (themeColorMeta) {
+                themeColorMeta.setAttribute('content', bgColor);
+            } else {
+                themeColorMeta = document.createElement('meta');
+                themeColorMeta.setAttribute('name', 'theme-color');
+                themeColorMeta.setAttribute('content', bgColor);
+                head.appendChild(themeColorMeta);
+            }
+        } catch (e) {
+            // Ignore errors during early injection
+        }
+    }
+    
+    // Inject viewport meta tag for safe area support
+    function injectViewportMeta() {
+        if (document.head) {
+            // Check if viewport meta already exists
+            let viewportMeta = document.querySelector('meta[name="viewport"]');
+            if (!viewportMeta) {
+                viewportMeta = document.createElement('meta');
+                viewportMeta.setAttribute('name', 'viewport');
+                viewportMeta.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover');
+                document.head.appendChild(viewportMeta);
+            } else {
+                // Update existing viewport meta to include viewport-fit=cover
+                const content = viewportMeta.getAttribute('content') || '';
+                if (!content.includes('viewport-fit=cover')) {
+                    viewportMeta.setAttribute('content', content + ', viewport-fit=cover');
+                }
+            }
+        }
+    }
+    
+    // Inject viewport meta immediately if head exists, otherwise wait for DOM
+    if (document.head) {
+        injectViewportMeta();
+    } else {
+        document.addEventListener('DOMContentLoaded', injectViewportMeta);
     }
 })();
