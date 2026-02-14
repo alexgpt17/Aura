@@ -11,6 +11,7 @@ import { saveThemes, getThemes } from '../storage';
 import GearIcon from '../components/GearIcon';
 import { useAppTheme } from '../contexts/AppThemeContext';
 import { AURA_PRESETS } from './AuraPresetsScreen';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 interface SafariScreenProps {
   navigation: any;
@@ -105,7 +106,7 @@ interface WebsiteSettings {
 }
 
 const SafariScreen: React.FC<SafariScreenProps> = ({ navigation }) => {
-  const { appThemeColor } = useAppTheme();
+  const { appThemeColor, backgroundColor, textColor, sectionBgColor, borderColor } = useAppTheme();
   const [currentTheme, setCurrentTheme] = useState<Theme | null>(null);
   const [siteThemes, setSiteThemes] = useState<WebsiteSettings>({});
 
@@ -213,9 +214,9 @@ const SafariScreen: React.FC<SafariScreenProps> = ({ navigation }) => {
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Safari</Text>
+    <View style={[styles.container, { backgroundColor }]}>
+      <View style={[styles.header, { borderBottomColor: borderColor }]}>
+        <Text style={[styles.headerTitle, { color: textColor }]}>Safari</Text>
         <TouchableOpacity
           style={styles.settingsButton}
           onPress={() => navigation.navigate('Settings')}
@@ -225,70 +226,78 @@ const SafariScreen: React.FC<SafariScreenProps> = ({ navigation }) => {
       </View>
 
       <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
-        {/* Current Theme Button - Enlarged */}
+        {/* Preview Section - Non-clickable */}
         {currentTheme && (
           <TouchableOpacity
             style={[
-              styles.currentThemeButton,
-              { backgroundColor: currentTheme.background },
+              styles.themeCard,
+              { backgroundColor: currentTheme.background, marginBottom: 20 },
             ]}
-            onPress={() => navigation.navigate('ThemeSelection')}
+            onPress={() => {}}
           >
-            <View style={styles.currentThemeContent}>
-              <View style={styles.currentThemeTextContainer}>
-                <View style={styles.currentThemeHeader}>
-                  <Text style={[styles.currentThemeLabel, { color: currentTheme.text }]}>
-                    Current Theme
-                  </Text>
-                  <View style={[styles.activeBadge, { backgroundColor: appThemeColor }]}>
-                    <Text style={styles.activeBadgeText}>Active</Text>
-                  </View>
-                </View>
-                <Text style={[styles.currentThemeName, { color: currentTheme.text }]}>
+            <View style={styles.themeContent}>
+              <View style={styles.themeTextContainer}>
+                <Text style={[styles.themeName, { color: currentTheme.text }]}>
                   {currentTheme.name}
                 </Text>
+                <View style={styles.previewColors}>
+                  <View style={[styles.colorIndicator, { backgroundColor: currentTheme.background }]} />
+                  <View style={[styles.colorIndicator, { backgroundColor: currentTheme.text }]} />
+                  <View style={[styles.colorIndicator, { backgroundColor: currentTheme.link }]} />
+                </View>
+              </View>
+              <View style={styles.previewTextContainer}>
+                <Text style={[styles.previewText, { color: currentTheme.text }]}>
+                  Welcome to Aura
+                </Text>
+                <TouchableOpacity onPress={() => {}}>
+                  <Text style={[styles.previewLink, { color: currentTheme.link }]}>
+                    Learn more
+                  </Text>
+                </TouchableOpacity>
               </View>
             </View>
-            <Text
-              style={[
-                styles.arrow,
-                { color: currentTheme.link || appThemeColor },
-              ]}
-            >
-              →
-            </Text>
           </TouchableOpacity>
         )}
 
         {/* Browse Themes Button */}
         <TouchableOpacity
-          style={styles.browseThemesButton}
-          onPress={() => navigation.navigate('ThemeSelection')}
+          style={[styles.browseThemesButton, { backgroundColor: sectionBgColor, borderColor }]}
+          onPress={() => navigation.navigate('BrowseThemes', { forKeyboard: false })}
         >
-          <Text style={[styles.browseThemesButtonText, { color: appThemeColor }]}>Browse Themes</Text>
-          <Text style={[styles.browseThemesArrow, { color: appThemeColor }]}>→</Text>
+          <Text style={[styles.browseThemesButtonText, { color: textColor }]}>Browse Themes</Text>
+          <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
+        </TouchableOpacity>
+
+        {/* Your Themes Button */}
+        <TouchableOpacity
+          style={[styles.browseThemesButton, { backgroundColor: sectionBgColor, borderColor }]}
+          onPress={() => navigation.navigate('CustomThemesList', { forKeyboard: false })}
+        >
+          <Text style={[styles.browseThemesButtonText, { color: textColor }]}>Your Themes</Text>
+          <Ionicons name="folder" size={20} color={appThemeColor} />
         </TouchableOpacity>
 
         {/* Create Theme Button */}
         <TouchableOpacity
-          style={styles.browseThemesButton}
+          style={[styles.browseThemesButton, { backgroundColor: sectionBgColor, borderColor }]}
           onPress={() => navigation.navigate('CustomTheme')}
         >
-          <Text style={[styles.browseThemesButtonText, { color: appThemeColor }]}>Create Theme</Text>
-          <Text style={[styles.browseThemesArrow, { color: appThemeColor }]}>→</Text>
+          <Text style={[styles.browseThemesButtonText, { color: textColor }]}>Create Theme</Text>
+          <Ionicons name="add" size={20} color={appThemeColor} />
         </TouchableOpacity>
 
         {/* Per-Site Settings Section */}
         <View style={styles.siteSettingsSection}>
-          <Text style={styles.sectionTitle}>Per-Site Settings</Text>
-          <Text style={styles.sectionDescription}>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Per-Site Settings</Text>
+          <Text style={[styles.sectionDescription, { color: textColor }]}>
             Customize themes for specific websites.
           </Text>
 
           {Object.keys(siteThemes).length === 0 ? (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>No website-specific settings yet</Text>
-              <Text style={styles.emptyStateSubtext}>
+              <Text style={[styles.emptyStateText, { color: textColor }]}>No website-specific settings yet</Text>
+              <Text style={[styles.emptyStateSubtext, { color: textColor }]}>
                 Add custom settings for individual websites.
               </Text>
             </View>
@@ -296,27 +305,28 @@ const SafariScreen: React.FC<SafariScreenProps> = ({ navigation }) => {
             Object.keys(siteThemes).map((hostname) => (
               <TouchableOpacity
                 key={hostname}
-                style={styles.siteRow}
+                style={[styles.siteRow, { backgroundColor: sectionBgColor, borderColor }]}
                 onPress={() => navigation.navigate('WebsiteSettings', { hostname })}
               >
                 <View style={styles.siteRowContent}>
-                  <Text style={styles.siteName}>{hostname}</Text>
+                  <Text style={[styles.siteName, { color: textColor }]}>{hostname}</Text>
                   {siteThemes[hostname].enabled ? (
-                    <Text style={styles.siteStatus}>Enabled</Text>
+                    <Text style={[styles.siteStatus, { color: appThemeColor }]}>Enabled</Text>
                   ) : (
-                    <Text style={styles.siteStatusDisabled}>Disabled</Text>
+                    <Text style={[styles.siteStatusDisabled, { color: '#FF4444' }]}>Disabled</Text>
                   )}
                 </View>
-                <Text style={[styles.arrow, { color: appThemeColor }]}>→</Text>
+                <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
               </TouchableOpacity>
             ))
           )}
 
           <TouchableOpacity
-            style={styles.addSiteButton}
+            style={[styles.addSiteButton, { backgroundColor: sectionBgColor, borderColor }]}
             onPress={() => navigation.navigate('WebsiteSettings', { hostname: '' })}
           >
-            <Text style={[styles.addSiteButtonText, { color: appThemeColor }]}>+ Add Website</Text>
+            <Text style={[styles.addSiteButtonText, { color: appThemeColor }]}>Add Website</Text>
+            <Ionicons name="add" size={20} color={appThemeColor} />
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -327,7 +337,6 @@ const SafariScreen: React.FC<SafariScreenProps> = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
   },
   header: {
     flexDirection: 'row',
@@ -337,12 +346,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
   },
   headerTitle: {
     fontSize: 34,
     fontWeight: 'bold',
-    color: '#FFFFFF',
   },
   settingsButton: {
     padding: 8,
@@ -359,7 +366,6 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   currentThemeButton: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 16,
     padding: 24,
     flexDirection: 'row',
@@ -367,7 +373,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 20,
     borderWidth: 2,
-    borderColor: '#2a2a2a',
   },
   currentThemeContent: {
     flexDirection: 'row',
@@ -375,7 +380,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   currentThemeTextContainer: {
-    flex: 1,
+    flex: 2,
   },
   currentThemeHeader: {
     flexDirection: 'row',
@@ -385,7 +390,6 @@ const styles = StyleSheet.create({
   },
   currentThemeLabel: {
     fontSize: 14,
-    color: '#888888',
   },
   activeBadge: {
     paddingHorizontal: 8,
@@ -395,18 +399,33 @@ const styles = StyleSheet.create({
   activeBadgeText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#FFFFFF',
     textTransform: 'uppercase',
   },
   currentThemeName: {
     fontSize: 22,
     fontWeight: '600',
-    color: '#FFFFFF',
+    marginBottom: 12,
+    flexShrink: 0,
+  },
+  previewColors: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  colorIndicator: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#333',
   },
   arrow: {
     fontSize: 20,
     color: '#FFFFFF',
     fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 20,
+    width: 20,
   },
   selectMoreButton: {
     backgroundColor: 'transparent',
@@ -423,7 +442,6 @@ const styles = StyleSheet.create({
     fontWeight: '300',
   },
   browseThemesButton: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     paddingVertical: 16,
     paddingHorizontal: 20,
@@ -431,18 +449,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#2a2a2a',
     marginBottom: 24,
   },
   browseThemesButtonText: {
-    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
   browseThemesArrow: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '600',
     color: '#FFFFFF',
+    textAlign: 'center',
+    lineHeight: 20,
+    width: 20,
   },
   siteSettingsSection: {
     marginTop: 32,
@@ -450,17 +469,14 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#FFFFFF',
     marginBottom: 8,
   },
   sectionDescription: {
     fontSize: 14,
-    color: '#888888',
     marginBottom: 16,
     lineHeight: 20,
   },
   siteRow: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     padding: 16,
     flexDirection: 'row',
@@ -468,7 +484,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
   },
   siteRowContent: {
     flex: 1,
@@ -476,7 +491,6 @@ const styles = StyleSheet.create({
   siteName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#FFFFFF',
     marginBottom: 4,
   },
   siteStatus: {
@@ -492,29 +506,26 @@ const styles = StyleSheet.create({
   emptyState: {
     padding: 24,
     alignItems: 'center',
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
     marginBottom: 16,
   },
   emptyStateText: {
     fontSize: 16,
-    color: '#FFFFFF',
     marginBottom: 8,
     fontWeight: '600',
   },
   emptyStateSubtext: {
     fontSize: 14,
-    color: '#888888',
     textAlign: 'center',
     lineHeight: 20,
   },
   addSiteButton: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     padding: 16,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     borderWidth: 1,
     borderColor: '#2a2a2a',
     marginTop: 8,
@@ -523,6 +534,52 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  addSiteButtonIcon: {
+    // Style no longer used - replaced with Ionicons
+  },
+  themeCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 16,
+    padding: 28,
+    borderWidth: 2,
+    borderColor: '#2a2a2a',
+  },
+  themeContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  themeTextContainer: {
+    flex: 1,
+  },
+  themeName: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 8,
+  },
+  tapToChange: {
+    fontSize: 12,
+    fontWeight: '500',
+    opacity: 0.8,
+  },
+  previewTextContainer: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    paddingLeft: 20,
+    minWidth: 120,
+    minHeight: 50,
+    paddingVertical: 8,
+  },
+  previewText: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  previewLink: {
+    fontSize: 14,
+    textDecorationLine: 'underline',
   },
 });
 

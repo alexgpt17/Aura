@@ -14,6 +14,8 @@ protocol KeyboardViewDelegate: AnyObject {
     func didTapEmoji()
     func didTapPeriod()
     func getDocumentContextBeforeInput() -> String?
+    func getDocumentContextAfterInput() -> String?
+    func adjustTextPosition(byCharacterOffset offset: Int)
     func emojiPickerToggled(isShowing: Bool)
     /// Returns true if the next character should be auto-capitalized (sentence start, etc.)
     func shouldAutoCapitalize() -> Bool
@@ -609,40 +611,126 @@ class ForgivingButton: UIButton {
     /// ADVANCED iOS-STYLE OVERLAPPING TOUCH ZONES:
     /// Implements sophisticated touch area expansion that mimics iOS keyboard behavior.
     /// Creates overlapping zones where frequently used keys get priority.
+    /// Includes predictive touch zones that expand based on typing context.
+    
+    // SIMPLIFIED: Use Apple's approach - let the button handle its own touches
+    // No custom touch tracking needed; rely on target-action for reliable input
+    
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+    }
+    
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+    }
+    
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+    }
+    
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        // Always accept touches within the visual bounds
+        // Always accept touches within the visual bounds first
         if super.point(inside: point, with: event) {
             return true
         }
         
         let buttonTitle = title(for: .normal) ?? ""
         
-        // Determine key type and calculate appropriate tolerance
-        var tolerance: CGFloat = 20 // Base tolerance
+        // SIMPLIFIED APPLE-LIKE APPROACH:
+        // 1. Conservative base tolerance
+        // 2. Predictive expansion based on text context only
+        // 3. Strict vertical separation between rows
         
+        var baseTolerance: CGFloat = 12  // Much more conservative base
+        
+        // Special cases for key positioning
         if buttonTitle == "space" {
-            // Space bar gets massive tolerance due to frequency and importance
-            tolerance = 45
-        } else if ["e", "t", "a", "o", "i", "n", "s", "h", "r"].contains(buttonTitle.lowercased()) {
-            // High-frequency letters get extra tolerance
-            tolerance = 30
-        } else if buttonTitle == "." {
-            // Period gets reduced tolerance to favor space bar
-            tolerance = 15
-        } else if ["q", "w", "p", "a", "l", "z", "x", "m"].contains(buttonTitle.lowercased()) {
-            // Edge letters get extra tolerance
-            tolerance = 28
-        } else {
-            // Standard keys get moderate tolerance
-            tolerance = 25
+            baseTolerance = 16  // Space bar gets slightly more
+        } else if ["q", "p", "a", "l", "z", "m"].contains(buttonTitle.lowercased()) {
+            baseTolerance = 14  // Edge keys get small boost
         }
         
-        // Create asymmetric expansion for better key interaction
-        let horizontalExpansion = tolerance
-        let verticalExpansion = tolerance * 0.8 // Less vertical expansion
+        // Get predictive boost from typing context (Apple's main strategy)
+        var predictiveBoost: CGFloat = 0
+        if let keyboardView = superview as? KeyboardView {
+            predictiveBoost = keyboardView.getPredictiveBoostForKey(buttonTitle)
+            // Cap predictive boost much lower
+            predictiveBoost = min(predictiveBoost, 6)
+        }
         
-        let expandedBounds = bounds.insetBy(dx: -horizontalExpansion, dy: -verticalExpansion)
-        return expandedBounds.contains(point)
+        let totalTolerance = baseTolerance + predictiveBoost
+        
+        // CRITICAL: Row-specific vertical constraints (Apple's key insight)
+        let rowPosition = getRowPosition(for: buttonTitle)
+        
+        switch rowPosition {
+        case .space:
+            // Space bar: Conservative horizontal, very conservative upward
+            let horizontalZone = CGRect(
+                x: bounds.midX - (bounds.width/2 + totalTolerance * 0.8),
+                y: bounds.midY - (bounds.height/2 + 6), // Minimal upward expansion
+                width: bounds.width + totalTolerance * 1.6,
+                height: bounds.height + totalTolerance * 1.2
+            )
+            return horizontalZone.contains(point)
+            
+        case .bottom:
+            // Bottom row: Moderate expansion, but no overlap with space
+            let maxY = bounds.maxY + 6  // Very limited downward expansion
+            if point.y > maxY {
+                return false  // Clearly in space territory
+            }
+            
+            let bottomZone = CGRect(
+                x: bounds.midX - (bounds.width/2 + totalTolerance),
+                y: bounds.midY - (bounds.height/2 + totalTolerance),
+                width: bounds.width + totalTolerance * 2,
+                height: bounds.height + totalTolerance + 6  // Limited downward
+            )
+            return bottomZone.contains(point)
+            
+        case .middle:
+            // Middle row: Conservative to avoid bottom row conflict
+            let maxY = bounds.maxY + 4  // Minimal downward expansion
+            if point.y > maxY {
+                return false
+            }
+            
+            let middleZone = CGRect(
+                x: bounds.midX - (bounds.width/2 + totalTolerance),
+                y: bounds.midY - (bounds.height/2 + totalTolerance),
+                width: bounds.width + totalTolerance * 2,
+                height: bounds.height + totalTolerance * 2
+            )
+            return middleZone.contains(point)
+            
+        case .top:
+            // Top row: Standard expansion
+            let topZone = CGRect(
+                x: bounds.midX - (bounds.width/2 + totalTolerance),
+                y: bounds.midY - (bounds.height/2 + totalTolerance),
+                width: bounds.width + totalTolerance * 2,
+                height: bounds.height + totalTolerance * 2
+            )
+            return topZone.contains(point)
+        }
+    }
+
+    private enum RowPosition {
+        case space, bottom, middle, top
+    }
+
+    private func getRowPosition(for key: String) -> RowPosition {
+        switch key.lowercased() {
+        case "space":
+            return .space
+        case "z", "x", "c", "v", "b", "n", "m":
+            return .bottom
+        case "a", "s", "d", "f", "g", "h", "j", "k", "l":
+            return .middle
+        default:
+            return .top
+        }
     }
     
     /// CRITICAL FOR TEXT CENTERING:
@@ -879,22 +967,26 @@ class KeyboardView: UIView {
     private var backspaceRepeatCount = 0
     private var isShowingEmojiPicker = false
     private var heightConstraint: NSLayoutConstraint?
+    private var displayUppercaseKeys = true // iOS-style: show keys in uppercase by default
+    private var currentKeyboardAppearance: UIKeyboardAppearance = .default
+    var isSafariMode = false // Safari requires special touch handling
     
-    // Touch tracking for smooth typing - iOS tracks finger movement continuously
-    private var activeTouch: UITouch?
-    private var activeButton: UIButton? // The button currently "under" the finger
-    private var initialButton: UIButton? // The button where touch started
-    
-    // Enhanced touch tracking for iOS-like behavior
-    private var touchStartTime: CFTimeInterval = 0
-    private var initialTouchPoint: CGPoint?
+    // Simplified touch tracking - rely on ForgivingButton for spatial handling
     
     // Advanced typing pattern analysis for touch prediction
     private var lastKeyTapTime: CFTimeInterval = 0
     private var lastTappedKey: String = ""
-    private var typingVelocity: CGFloat = 0
-    private var recentTouchPoints: [CGPoint] = []
-    private var recentKeySequence: [String] = []
+    private var recentKeySequence: [String] = [] // Keep for basic autocapitalization
+    
+    // SIMPLIFIED: Removed complex spatial tracking variables that are no longer used
+    // Apple's approach relies on the built-in UIButton touch handling
+    
+    // WORD-CONTEXT PREDICTION:
+    // Real-time word analysis for Apple-style key resizing
+    private var currentPartialWord: String = ""
+    private var wordCompletionCache: [String: [String]] = [:]  // Cache completions for performance
+    private var lastWordAnalysisTime: TimeInterval = 0
+    weak var keyboardViewController: UIInputViewController?
     
     // Performance optimizations for smooth typing
     // TEMPORARILY DISABLED: cachedButtonCenters, lastTouchPoint, lastFoundButton
@@ -939,6 +1031,7 @@ class KeyboardView: UIView {
     
     // Theme colors - updated via applyTheme()
     private var keyBackgroundColor: UIColor = UIColor(white: 0.27, alpha: 1.0)
+    private var isThemeOverrideActive: Bool = false
     
     private var specialKeyBackgroundColor: UIColor {
         // Special keys use the same color as regular keys
@@ -962,6 +1055,9 @@ class KeyboardView: UIView {
         selectionFeedback?.prepare()
         impactFeedback?.prepare()
         setupKeyboard()
+        
+        // iOS Extension Memory Management: Keyboard extensions have ~30MB limit
+        setupMemoryManagement()
     }
     
     required init?(coder: NSCoder) {
@@ -972,6 +1068,9 @@ class KeyboardView: UIView {
         selectionFeedback?.prepare()
         impactFeedback?.prepare()
         setupKeyboard()
+        
+        // iOS Extension Memory Management: Keyboard extensions have ~30MB limit
+        setupMemoryManagement()
     }
     
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -998,285 +1097,53 @@ class KeyboardView: UIView {
     // .touchUpInside fires reliably even when the touch started slightly outside the
     // button's visual bounds.
     
-    // ── APPLE'S TOUCH TRACKING STRATEGY ──
-    // iOS keyboards don't just use hitTest once. They continuously track finger movement
-    // and update which key is "active" as the finger moves. This allows users to:
-    //   1. Start on one key, realize it's wrong, slide to the correct key
-    //   2. Get visual feedback (key highlight/preview) that follows the finger
-    //   3. Have the character commit based on where the finger LIFTS, not where it started
-    //
-    // We implement this by overriding touchesBegan/Moved/Ended to track the active button
-    // as the finger moves, then using hitTest to find the nearest key at each point.
+    // ── SIMPLIFIED TOUCH HANDLING ──
+    // Apple's approach relies on simple, responsive button touches without complex gesture tracking.
+    // Each ForgivingButton handles its own touch detection and the target-action system 
+    // provides reliable input without delays or accuracy issues.
     
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard !isShowingEmojiPicker, let touch = touches.first else {
-            super.touchesBegan(touches, with: event)
-            return
-        }
-        
-        let point = touch.location(in: self)
-        guard self.point(inside: point, with: event) else {
-            super.touchesBegan(touches, with: event)
-            return
-        }
-        
-        // Store touch information for advanced pattern analysis
-        touchStartTime = CACurrentMediaTime()
-        initialTouchPoint = point
-        
-        // Update typing velocity and patterns for prediction
-        let currentTime = touchStartTime
-        if lastKeyTapTime > 0 {
-            let timeDelta = currentTime - lastKeyTapTime
-            typingVelocity = 1.0 / max(timeDelta, 0.05) // WPM-like metric
-        }
-        
-        // Maintain recent touch history for pattern recognition
-        recentTouchPoints.append(point)
-        if recentTouchPoints.count > 5 {
-            recentTouchPoints.removeFirst()
-        }
-        
-        // Find the nearest key using predictive spatial model
-        if let button = findNearestKeyWithPrediction(to: point) {
-            activeTouch = touch
-            initialButton = button
-            activeButton = button
-            
-            // Send touchDown with optimized timing for iOS-like feel
-            DispatchQueue.main.async {
-                button.sendActions(for: .touchDown)
-            }
-        } else {
-            super.touchesBegan(touches, with: event)
-        }
+        super.touchesBegan(touches, with: event)
     }
     
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard !isShowingEmojiPicker,
-              let touch = activeTouch,
-              touches.contains(touch) else {
-            super.touchesMoved(touches, with: event)
-            return
-        }
-        
-        let point = touch.location(in: self)
-        
-        // Calculate movement from initial touch for gesture analysis
-        if let startPoint = initialTouchPoint {
-            let dx = point.x - startPoint.x
-            let dy = point.y - startPoint.y
-            let distance = sqrt(dx * dx + dy * dy)
-            
-            // iOS-style movement threshold before key switching
-            // Small movements don't immediately switch keys for stability
-            let movementThreshold: CGFloat = 8
-            if distance < movementThreshold && activeButton == initialButton {
-                return // Stay on initial key for small movements
-            }
-        }
-        
-        // Find the nearest key with predictive spatial model
-        if let newButton = findNearestKeyWithPrediction(to: point) {
-            if newButton != activeButton {
-                // Finger moved to a different key
-                if let oldButton = activeButton {
-                    // Cancel touch on old button with slight delay for smoother transition
-                    DispatchQueue.main.async {
-                        oldButton.sendActions(for: .touchCancel)
-                    }
-                }
-                
-                activeButton = newButton
-                // Start touch on new button with optimized timing
-                DispatchQueue.main.async {
-                    newButton.sendActions(for: .touchDown)
-                }
-            }
-        }
-        
-        // Don't call super - we're handling this ourselves
+        super.touchesMoved(touches, with: event)
     }
     
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard !isShowingEmojiPicker,
-              let touch = activeTouch,
-              touches.contains(touch) else {
-            super.touchesEnded(touches, with: event)
-            return
-        }
-        
-        // Commit based on where finger lifted (activeButton), not where it started
-        if let button = activeButton {
-            button.sendActions(for: .touchUpInside)
-        }
-        
-        activeTouch = nil
-        activeButton = nil
-        initialButton = nil
+        super.touchesEnded(touches, with: event)
     }
     
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard !isShowingEmojiPicker,
-              let touch = activeTouch,
-              touches.contains(touch) else {
-            super.touchesCancelled(touches, with: event)
-            return
-        }
-        
-        if let button = activeButton {
-            button.sendActions(for: .touchCancel)
-        }
-        
-        activeTouch = nil
-        activeButton = nil
-        initialButton = nil
+        super.touchesCancelled(touches, with: event)
     }
     
-    // Helper: Find nearest key using advanced iOS-style spatial model
-    // Implements overlapping touch zones and frequency-based prioritization
+    // SIMPLIFIED: Find nearest key using Apple's simple approach
+    // Basic distance calculation without complex bonuses or special cases
     private func findNearestKey(to point: CGPoint) -> UIButton? {
-        // iOS-style spatial parameters with overlapping zones
-        let verticalWeight: CGFloat = 1.8 // Reduced for more horizontal forgiveness
-        let maxSnapDistance: CGFloat = 75 // Increased base tolerance
-        
-        // Advanced touch zone bonuses based on key importance and position
-        let edgeBonus: CGFloat = 15 // Increased edge tolerance
-        let cornerBonus: CGFloat = 20 // Increased corner tolerance
-        let frequentKeyBonus: CGFloat = 12 // Extra tolerance for common keys
+        let maxDistance: CGFloat = 60 // Simple, consistent tolerance
         
         var nearestButton: UIButton?
-        var minWeightedDistance: CGFloat = .infinity
+        var minDistance: CGFloat = .infinity
         
-        // Ensure layout is complete before calculating centers
-        self.layoutIfNeeded()
-        
-        // Special variables to track space bar vs period conflict resolution
-        var spaceBarCandidate: UIButton?
-        var spaceBarDistance: CGFloat = .infinity
-        var periodCandidate: UIButton?
-        var periodDistance: CGFloat = .infinity
-        
-        // Calculate centers on-demand with iOS-style spatial model
         for button in keyButtons {
-            guard !button.isHidden, button.alpha > 0, button.window != nil else { continue }
+            guard !button.isHidden, button.alpha > 0 else { continue }
             
-            // Ensure button layout is complete
-            button.layoutIfNeeded()
-            
-            // Calculate center and bounds in self's coordinate space
+            // Calculate center in self's coordinate space
             let center = button.convert(
                 CGPoint(x: button.bounds.midX, y: button.bounds.midY),
                 to: self
             )
-            let buttonFrame = button.convert(button.bounds, to: self)
             
+            // Simple Euclidean distance
             let dx = point.x - center.x
             let dy = point.y - center.y
+            let distance = sqrt(dx * dx + dy * dy)
             
-            // Identify space bar and period key for special handling
-            let buttonTitle = button.title(for: .normal) ?? ""
-            let isSpaceBar = buttonTitle == "space"
-            let isPeriodKey = buttonTitle == "."
-            
-            // Advanced key classification for intelligent touch handling
-            let isEdgeKey = buttonFrame.minX <= 25 || buttonFrame.maxX >= bounds.width - 25
-            let isCornerKey = (buttonFrame.minY <= 25 || buttonFrame.maxY >= bounds.height - 25) && isEdgeKey
-            
-            // Identify high-frequency keys that need extra tolerance
-            let isFrequentKey = ["e", "t", "a", "o", "i", "n", "s", "h", "r"].contains(buttonTitle.lowercased())
-            let isSpaceKey = isSpaceBar
-            
-            // Dynamic snap distance based on key importance and position
-            var effectiveSnapDistance = maxSnapDistance
-            if isSpaceKey {
-                effectiveSnapDistance += 30 // Massive space bar tolerance
-            } else if isCornerKey {
-                effectiveSnapDistance += cornerBonus
-            } else if isEdgeKey {
-                effectiveSnapDistance += edgeBonus
-            } else if isFrequentKey {
-                effectiveSnapDistance += frequentKeyBonus
-            }
-            
-            // Quick bounds check with dynamic distance
-            if abs(dx) > effectiveSnapDistance || abs(dy) > effectiveSnapDistance {
-                continue
-            }
-            
-            // iOS-style weighted distance with pressure simulation
-            // Horizontal movement is more forgiving than vertical
-            let horizontalComponent = dx * dx
-            let verticalComponent = dy * dy * verticalWeight * verticalWeight
-            let weightedDistance = sqrt(horizontalComponent + verticalComponent)
-            
-            // Special handling for space bar vs period key conflict
-            if isSpaceBar {
-                spaceBarCandidate = button
-                spaceBarDistance = weightedDistance
-            }
-            if isPeriodKey {
-                periodCandidate = button
-                // Add penalty to period key if touch comes from the left (space bar side)
-                // This reduces period key sensitivity when touched from space bar area
-                let periodPenalty = dx < 0 ? 20.0 : 0.0 // 20pt penalty for left-side touches
-                periodDistance = weightedDistance + periodPenalty
-            }
-            
-            // Apply intelligent distance adjustments based on key characteristics
-            var adjustedDistance = weightedDistance
-            if isSpaceKey {
-                adjustedDistance *= 0.7 // Strong space bar preference
-            } else if isFrequentKey {
-                adjustedDistance *= 0.9 // Slight preference for common letters
-            } else if isEdgeKey {
-                adjustedDistance *= 0.85 // Edge key assistance
-            }
-            
-            if adjustedDistance < minWeightedDistance && weightedDistance < effectiveSnapDistance {
-                minWeightedDistance = adjustedDistance
+            // Check if within tolerance and closer than previous candidates
+            if distance <= maxDistance && distance < minDistance {
+                minDistance = distance
                 nearestButton = button
-            }
-        }
-        
-        // AGGRESSIVE SPACE BAR PROTECTION:
-        // iOS heavily prioritizes space bar over period due to frequency and importance
-        if let spaceBar = spaceBarCandidate, let period = periodCandidate {
-            let spaceBarFrame = spaceBar.convert(spaceBar.bounds, to: self)
-            let periodFrame = period.convert(period.bounds, to: self)
-            
-            // Rule 1: Space bar "owns" a much larger area extending significantly right
-            // This creates a strong bias toward space bar for ambiguous touches
-            let spaceBarDominantArea = spaceBarFrame.insetBy(dx: -25, dy: -12)
-            let spaceBarRightExtension = CGRect(
-                x: spaceBarFrame.maxX - 10,
-                y: spaceBarFrame.minY - 12,
-                width: 40, // Extend 30pt into period territory
-                height: spaceBarFrame.height + 24
-            )
-            
-            if spaceBarDominantArea.contains(point) || spaceBarRightExtension.contains(point) {
-                return spaceBar
-            }
-            
-            // Rule 2: If both are candidates, strongly favor space unless clearly in period zone
-            if nearestButton == period {
-                // Only allow period if touch is clearly in the right 60% of period key
-                let periodRightZone = CGRect(
-                    x: periodFrame.minX + (periodFrame.width * 0.4),
-                    y: periodFrame.minY,
-                    width: periodFrame.width * 0.6,
-                    height: periodFrame.height
-                )
-                
-                if !periodRightZone.contains(point) {
-                    return spaceBar // Favor space bar unless clearly in period's right zone
-                }
-            }
-            
-            // Rule 3: For gap touches or ambiguous cases, always prefer space
-            if spaceBarDistance < periodDistance + 25 { // Increased threshold
-                return spaceBar
             }
         }
         
@@ -1284,101 +1151,6 @@ class KeyboardView: UIView {
     }
     
     // Advanced predictive spatial model that considers typing patterns
-    private func findNearestKeyWithPrediction(to point: CGPoint) -> UIButton? {
-        // Start with the standard spatial model
-        guard let baseResult = findNearestKey(to: point) else { return nil }
-        
-        // Apply predictive corrections based on typing patterns
-        let baseTitle = baseResult.title(for: .normal) ?? ""
-        
-        // Fast typing correction: if typing quickly, be more forgiving
-        if typingVelocity > 3.0 { // Fast typing threshold
-            // Check for common fast typing errors and corrections
-            if let correctedKey = applyFastTypingCorrection(originalKey: baseTitle, touchPoint: point) {
-                return correctedKey
-            }
-        }
-        
-        // Sequence-based prediction: predict next likely keys
-        if recentKeySequence.count >= 2 {
-            let lastTwo = Array(recentKeySequence.suffix(2))
-            if let predictedKey = applySequencePrediction(sequence: lastTwo, touchPoint: point, nearestKey: baseResult) {
-                return predictedKey
-            }
-        }
-        
-        return baseResult
-    }
-    
-    // Apply corrections for fast typing scenarios
-    private func applyFastTypingCorrection(originalKey: String, touchPoint: CGPoint) -> UIButton? {
-        // Common fast typing error patterns
-        let errorCorrections: [String: [String]] = [
-            ".": [" "], // Period instead of space - CRITICAL FIX
-            "m": ["n"], // m/n confusion
-            "b": ["v", "n"], // b/v/n confusion  
-            "p": ["o"], // p/o confusion
-        ]
-        
-        if let alternatives = errorCorrections[originalKey.lowercased()] {
-            for altKey in alternatives {
-                if let altButton = findKeyButton(with: altKey) {
-                    let altFrame = altButton.convert(altButton.bounds, to: self)
-                    let altCenter = CGPoint(x: altFrame.midX, y: altFrame.midY)
-                    let distanceToAlt = sqrt(pow(touchPoint.x - altCenter.x, 2) + pow(touchPoint.y - altCenter.y, 2))
-                    
-                    // If alternative is reasonably close, prefer it during fast typing
-                    if distanceToAlt < 60 {
-                        return altButton
-                    }
-                }
-            }
-        }
-        
-        return nil
-    }
-    
-    // Apply sequence-based predictions for common letter combinations
-    private func applySequencePrediction(sequence: [String], touchPoint: CGPoint, nearestKey: UIButton) -> UIButton? {
-        // Common sequences that often end with space
-        let spaceSequences = ["he", "th", "an", "in", "to", "of", "it", "be", "as", "at", "on", "or"]
-        let sequenceKey = sequence.joined().lowercased()
-        
-        // If we're in a sequence that commonly ends with space, and touch is ambiguous,
-        // strongly favor space over other keys
-        if spaceSequences.contains(sequenceKey) {
-            if let spaceButton = findKeyButton(with: " ") {
-                let spaceFrame = spaceButton.convert(spaceButton.bounds, to: self)
-                let spaceCenter = CGPoint(x: spaceFrame.midX, y: spaceFrame.midY)
-                let distanceToSpace = sqrt(pow(touchPoint.x - spaceCenter.x, 2) + pow(touchPoint.y - spaceCenter.y, 2))
-                
-                // If touch is anywhere near space bar area, prefer it
-                if distanceToSpace < 80 {
-                    return spaceButton
-                }
-            }
-        }
-        
-        return nil
-    }
-    
-    // Helper to find button with specific title
-    private func findKeyButton(with title: String) -> UIButton? {
-        for button in keyButtons {
-            let buttonTitle = button.title(for: .normal)?.lowercased() ?? ""
-            let accessibilityTitle = button.accessibilityLabel?.lowercased() ?? ""
-            
-            if buttonTitle == title.lowercased() || accessibilityTitle == title.lowercased() {
-                return button
-            }
-            
-            // Special case for space
-            if title == " " && buttonTitle == "space" {
-                return button
-            }
-        }
-        return nil
-    }
     
     // TEMPORARILY DISABLED: updateCachedButtonCenters()
     // This was causing incorrect key detection due to coordinate system issues
@@ -1415,7 +1187,7 @@ class KeyboardView: UIView {
     }
     */
     
-    // Keep hitTest for non-touch events (accessibility, etc.)
+    // CRITICAL: Override hitTest to fix space bar stealing touches from b/n keys
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard !isShowingEmojiPicker else {
             return super.hitTest(point, with: event)
@@ -1425,7 +1197,21 @@ class KeyboardView: UIView {
             return nil
         }
         
-        // For non-touch events, use the same logic
+        // PRIORITY SYSTEM: Check bottom row letters FIRST before space bar
+        // This fixes the hierarchy issue where space bar was added after letters
+        
+        for button in keyButtons {
+            guard let title = button.accessibilityLabel?.lowercased() ?? button.title(for: .normal)?.lowercased(),
+                  ["z", "x", "c", "v", "b", "n", "m"].contains(title) else { continue }
+            
+            let buttonPoint = convert(point, to: button)
+            if button.point(inside: buttonPoint, with: event) {
+                print("🎯 Priority routing: \(title) takes precedence over space bar for touch at \(point)")
+                return button
+            }
+        }
+        
+        // Standard hit testing for all other keys
         return findNearestKey(to: point) ?? super.hitTest(point, with: event)
     }
     
@@ -1525,7 +1311,7 @@ class KeyboardView: UIView {
         vStack.axis = .vertical
         vStack.alignment = .fill
         vStack.distribution = .fill
-        vStack.spacing = 12
+        vStack.spacing = 8  // Standard iOS keyboard row spacing
         vStack.translatesAutoresizingMaskIntoConstraints = false
         backgroundView.addSubview(vStack)
 
@@ -1841,7 +1627,9 @@ class KeyboardView: UIView {
         // Space Bar — Position between emoji and period/return with exact spacing
         // Use trailing anchor constraint to prevent extending too far right
         let spaceButton = createSpecialKeyButton(title: "space")
-        spaceButton.addTarget(self, action: #selector(spaceTapped), for: [.touchUpInside, .touchUpOutside])
+        // CRITICAL: Only register for touchUpInside to reduce false activations
+        // touchUpOutside was causing space bar to activate when sliding from b/n keys
+        spaceButton.addTarget(self, action: #selector(spaceTapped), for: [.touchUpInside])
         spaceButton.addTarget(self, action: #selector(keyTouchDown(_:)), for: .touchDown)
         spaceButton.addTarget(self, action: #selector(keyTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         keyButtons.append(spaceButton)
@@ -1890,7 +1678,7 @@ class KeyboardView: UIView {
         let button = ForgivingButton(type: .custom)
         button.translatesAutoresizingMaskIntoConstraints = false
         
-        let displayTitle = (currentMode == .letters) ? title.uppercased() : title
+        let displayTitle = (currentMode == .letters) ? (displayUppercaseKeys ? title.uppercased() : title.lowercased()) : title
         button.setTitle(displayTitle, for: .normal)
         button.accessibilityLabel = title.lowercased()
         
@@ -2147,11 +1935,12 @@ class KeyboardView: UIView {
             keyToSend = sender.title(for: .normal) ?? ""
         }
         
-        // iOS-style double-tap prevention for better accuracy
-        // Allow rapid typing but prevent accidental double characters
+        // Enhanced iOS-style double-tap prevention with adaptive timing
+        // Analyze typing patterns to distinguish intentional rapid typing from accidental double hits
         let timeSinceLastTap = currentTime - lastKeyTapTime
+        
+        // SIMPLE double-hit prevention: Only block same key within 50ms
         if timeSinceLastTap < 0.05 && keyToSend == lastTappedKey {
-            // Too fast, likely accidental double-tap - ignore
             return
         }
         
@@ -2164,6 +1953,10 @@ class KeyboardView: UIView {
             recentKeySequence.removeFirst()
         }
         
+        // Provide immediate haptic and audio feedback for responsive feel
+        impactFeedback?.impactOccurred()
+        delegate?.playKeyClickSound()
+        
         delegate?.didTapKey(keyToSend)
         
         if currentMode == .letters && isShifted && shiftState != .capsLock {
@@ -2171,32 +1964,38 @@ class KeyboardView: UIView {
             updateShiftState()
         }
         
-        // Auto-capitalize check after character insertion
-        // Use async to ensure textDocumentProxy context is updated
-        DispatchQueue.main.async { [weak self] in
-            self?.checkAutoCapitalize()
+        // Clear word completion cache for letters (word context changes)
+        if keyToSend.count == 1 && keyToSend.rangeOfCharacter(from: .letters) != nil {
+            // Letter typed - word context is still valid, will be updated on next prediction
         }
+        
+        // Auto-capitalize check after character insertion
+        checkAutoCapitalize()
     }
     
     @objc private func spaceTapped() {
         let currentTime = Date().timeIntervalSince1970
         let timeSinceLastTap = currentTime - lastSpaceTapTime
         
-        if timeSinceLastTap < 0.5 && timeSinceLastTap > 0 {
-            // Double-space-for-period: delete trailing space, insert period + space
-            delegate?.didTapBackspace()
-            delegate?.didTapKey(".")
-            delegate?.didTapSpace()
-            lastSpaceTapTime = 0
-        } else {
-            delegate?.didTapSpace()
-            lastSpaceTapTime = currentTime
+        // Very minimal space debouncing - only prevent true accidents
+        if timeSinceLastTap < 0.03 && timeSinceLastTap > 0 {
+            // Extremely fast, likely accidental
+            return
         }
         
+        // DISABLED: Double-space-to-period feature was causing unwanted periods
+        // Just handle space normally with debouncing
+        impactFeedback?.impactOccurred()
+        delegate?.playKeyClickSound()
+        delegate?.didTapSpace()
+        lastSpaceTapTime = currentTime
+        
+        // Clear word context and cache on word boundary
+        currentPartialWord = ""
+        wordCompletionCache.removeAll(keepingCapacity: true)
+        
         // Auto-capitalize after space (important for ". " → capitalize)
-        DispatchQueue.main.async { [weak self] in
-            self?.checkAutoCapitalize()
-        }
+        checkAutoCapitalize()
     }
     
     @objc private func returnTapped() {
@@ -2206,9 +2005,7 @@ class KeyboardView: UIView {
         delegate?.didTapReturn()
         
         // Auto-capitalize after newline
-        DispatchQueue.main.async { [weak self] in
-            self?.checkAutoCapitalize()
-        }
+        checkAutoCapitalize()
     }
     
     @objc private func backspaceTouchDown(_ sender: UIButton) {
@@ -2337,8 +2134,16 @@ class KeyboardView: UIView {
             // Identify shift button by its accessibility label or image
             if let accessibilityLabel = button.accessibilityLabel, accessibilityLabel == "shift" {
                 updateShiftButtonAppearance(button)
-            } else if let title = button.title(for: .normal), title.count == 1 && title.rangeOfCharacter(from: CharacterSet.letters) != nil {
-                let newTitle = isShifted ? title.uppercased() : title.lowercased()
+            } else if let accessibilityLabel = button.accessibilityLabel, accessibilityLabel.count == 1 && accessibilityLabel.rangeOfCharacter(from: CharacterSet.letters) != nil {
+                // Update key display based on setting and shift state
+                let newTitle: String
+                if displayUppercaseKeys {
+                    // iOS-style: always show uppercase letters, shift doesn't change appearance
+                    newTitle = accessibilityLabel.uppercased()
+                } else {
+                    // Traditional: show lowercase normally, uppercase when shifted
+                    newTitle = isShifted ? accessibilityLabel.uppercased() : accessibilityLabel.lowercased()
+                }
                 button.setTitle(newTitle, for: .normal)
             }
         }
@@ -2410,7 +2215,10 @@ class KeyboardView: UIView {
     }
     
     // FIXED: Simplified theme application with gradient support
-    func applyTheme(background: UIColor, text: UIColor, link: UIColor, keyColor: UIColor? = nil, backgroundType: String? = nil, backgroundGradient: String? = nil) {
+    func applyTheme(background: UIColor, text: UIColor, link: UIColor, keyColor: UIColor? = nil, backgroundType: String? = nil, backgroundGradient: String? = nil, displayUppercaseKeys: Bool = true) {
+        // If a theme is applying explicit colors/gradient, don't let updateKeyboardAppearance override them later.
+        isThemeOverrideActive = (keyColor != nil) || (backgroundType != nil) || (backgroundGradient != nil)
+        
         // Apply theme to emoji picker if it exists
         emojiPickerView?.applyTheme(background: background, text: text)
         
@@ -2464,15 +2272,22 @@ class KeyboardView: UIView {
             for button in keyButtons {
                 let title = button.title(for: .normal) ?? ""
                 let hasImage = button.image(for: .normal) != nil
-                let isSpecial = (title == "space" || title == "return" || title == "go" ||
-                                title == "search" || title == "send" || title == "done" ||
-                                title == "next" || title == "123" || title == "ABC" ||
+                let isReturnKey = (title == "return" || title == "go" || title == "search" ||
+                                  title == "send" || title == "done" || title == "next")
+                let isSpecial = (title == "space" || title == "123" || title == "ABC" ||
                                 title == "#+=" || title == "⇧" || title == "⌫" ||
                                 title == "face.smiling" || hasImage)
                 
-                button.backgroundColor = isSpecial ? specialKeyBackgroundColor : keyBackgroundColor
-                button.setTitleColor(keyTextColor, for: .normal)
-                button.tintColor = keyTextColor
+                // Return keys use link color, other special keys use key color, regular keys use key color
+                if isReturnKey {
+                    button.backgroundColor = link
+                    button.setTitleColor(.white, for: .normal)
+                    button.tintColor = .white
+                } else {
+                    button.backgroundColor = isSpecial ? specialKeyBackgroundColor : keyBackgroundColor
+                    button.setTitleColor(keyTextColor, for: .normal)
+                    button.tintColor = keyTextColor
+                }
             }
         }
         
@@ -2482,11 +2297,128 @@ class KeyboardView: UIView {
                 updateShiftButtonAppearance(button)
             }
         }
+        
+        // Store and apply the displayUppercaseKeys setting
+        self.displayUppercaseKeys = displayUppercaseKeys
+        
+        // Update key titles based on the setting (but only for letter keys)
+        updateKeyTitles()
     }
     
     private func updateGradientFrame() {
         guard let gradientLayer = gradientLayer else { return }
         gradientLayer.frame = backgroundView.bounds
+    }
+    
+    private func updateKeyTitles() {
+        // Update only letter keys based on displayUppercaseKeys setting
+        for button in keyButtons {
+            if let accessibilityLabel = button.accessibilityLabel,
+               currentMode == .letters,
+               accessibilityLabel.count == 1,
+               accessibilityLabel.rangeOfCharacter(from: .letters) != nil {
+                // This is a letter key - update its display
+                let displayTitle = displayUppercaseKeys ? accessibilityLabel.uppercased() : accessibilityLabel.lowercased()
+                button.setTitle(displayTitle, for: .normal)
+            }
+        }
+    }
+    
+    
+    func prepareForTextChange() {
+        // Prepare haptic feedback generators for optimal performance
+        impactFeedback?.prepare()
+        selectionFeedback?.prepare()
+        
+        // iOS optimization: pre-warm any text processing
+        // Note: Don't pre-trigger sound here, only prepare for optimal response
+    }
+    
+    func updateKeyboardAppearance(_ appearance: UIKeyboardAppearance) {
+        // Adapt to text field's dark/light appearance
+        guard appearance != currentKeyboardAppearance else { return }
+        currentKeyboardAppearance = appearance
+        
+        // If a theme is actively overriding colors, preserve theme colors (including keyColor).
+        guard !isThemeOverrideActive else { return }
+        
+        // iOS automatically adapts key colors based on text field appearance
+        if appearance == .dark {
+            // Dark text fields typically use lighter key colors
+            keyTextColor = UIColor.white
+            keyBackgroundColor = UIColor(white: 0.3, alpha: 1.0)
+        } else {
+            // Light text fields use standard colors (will be overridden by theme)
+            keyTextColor = UIColor.label
+            keyBackgroundColor = UIColor(white: 0.27, alpha: 1.0)
+        }
+        
+        // Update all button colors
+        for button in keyButtons {
+            button.setTitleColor(keyTextColor, for: .normal)
+            button.tintColor = keyTextColor
+            
+            let title = button.title(for: .normal) ?? ""
+            let hasImage = button.image(for: .normal) != nil
+            let isSpecial = (title == "space" || title == "return" || title == "go" ||
+                            title == "search" || title == "send" || title == "done" ||
+                            title == "next" || title == "123" || title == "ABC" ||
+                            title == "#+=" || title == "⇧" || title == "⌫" ||
+                            title == "face.smiling" || hasImage)
+            
+            button.backgroundColor = isSpecial ? specialKeyBackgroundColor : keyBackgroundColor
+        }
+    }
+    
+    private func setupMemoryManagement() {
+        // iOS Keyboard Extensions have strict memory limits (~30MB)
+        // Monitor memory usage and optimize accordingly
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMemoryWarning),
+            name: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func handleMemoryWarning() {
+        // Optimize memory usage when system warns about low memory
+        // Release non-essential resources immediately
+        
+        // Clear cached colors if they exist
+        KeyboardThemeManager.KeyboardTheme.clearCache()
+        
+        // Reset haptic feedback generators (they'll be recreated when needed)
+        selectionFeedback = nil
+        impactFeedback = nil
+        
+        // Clear typing pattern history (keep only recent patterns)
+        if recentKeySequence.count > 3 {
+            recentKeySequence = Array(recentKeySequence.suffix(2))
+        }
+        
+        // Force garbage collection of any preview views
+        keyPreview = nil
+        
+        // Re-initialize haptics for immediate response
+        DispatchQueue.main.async { [weak self] in
+            self?.selectionFeedback = UISelectionFeedbackGenerator()
+            self?.impactFeedback = UIImpactFeedbackGenerator(style: .light)
+            self?.selectionFeedback?.prepare()
+            self?.impactFeedback?.prepare()
+        }
+    }
+    
+    func configureSafariMode(_ isSafari: Bool) {
+        // Safari WebView has different viewport behavior that affects touch detection
+        guard isSafari != isSafariMode else { return }
+        isSafariMode = isSafari
+        
+        if isSafari {
+            print("🌐 Keyboard: Enabling Safari mode - stricter touch zones")
+        } else {
+            print("📱 Keyboard: Native app mode - standard touch zones")
+        }
     }
     
     override func layoutSubviews() {
@@ -2551,6 +2483,138 @@ class KeyboardView: UIView {
                 }
             }
         }
+    }
+    
+    /// PREDICTIVE TOUCH ZONE EXPANSION:
+    /// SIMPLIFIED APPLE-STYLE PREDICTIVE BOOST:
+    /// Conservative implementation that only provides small boosts for highly probable next characters
+    /// based on simple English patterns. Max boost is 6pt for predictability.
+    func getPredictiveBoostForKey(_ key: String) -> CGFloat {
+        guard !recentKeySequence.isEmpty else { return 0 }
+        
+        let lastKey = recentKeySequence.last?.lowercased() ?? ""
+        
+        // Very conservative predictive patterns with small boosts (max 6pt)
+        let patterns: [String: [String: CGFloat]] = [
+            "t": ["h": 6],        // th - most common
+            "h": ["e": 4],        // he, the
+            "s": ["h": 3],        // sh
+            "c": ["h": 3],        // ch
+            "w": ["h": 3],        // wh
+            "q": ["u": 6],        // qu - almost always
+        ]
+        
+        // Only boost for very common, highly predictable patterns
+        if let nextLetters = patterns[lastKey],
+           let boost = nextLetters[key.lowercased()] {
+            return boost
+        }
+        
+        return 0
+    }
+    
+    /// SPATIAL OFFSET MODELING:
+    /// Simplified to disable spatial offset adjustments for more predictable touch detection.
+    func getSpatialOffsetForKey(_ key: String) -> CGPoint {
+        // Disabled: Always return zero offset for conservative, predictable behavior
+        return .zero
+    }
+    
+    /// VELOCITY-BASED ZONE ADJUSTMENT:
+    /// Simplified to disable velocity-based adjustments for consistent touch detection.
+    func getVelocityMultiplier() -> CGFloat {
+        // Disabled: Always return 1.0 for consistent, predictable touch zones
+        return 1.0
+    }
+    
+    // REMOVED: recordTouchOffset method is no longer needed
+    // Simplified touch handling doesn't require complex spatial learning
+    
+    /// WORD-CONTEXT ANALYSIS:
+    /// Extracts current partial word being typed for word-level key resizing.
+    /// This is the core of Apple's "hit region" resizing algorithm.
+    func updateCurrentPartialWord() {
+        guard let controller = keyboardViewController else { return }
+        guard let context = controller.textDocumentProxy.documentContextBeforeInput else {
+            currentPartialWord = ""
+            return
+        }
+        
+        // Extract the last partial word (everything after last space/punctuation)
+        let wordBoundaryChars = CharacterSet.whitespacesAndNewlines.union(CharacterSet.punctuationCharacters)
+        if let lastRange = context.rangeOfCharacter(from: wordBoundaryChars, options: .backwards) {
+            let startIndex = context.index(after: lastRange.lowerBound)
+            currentPartialWord = String(context[startIndex...])
+        } else {
+            currentPartialWord = context
+        }
+        
+        // Clean up and validate
+        currentPartialWord = currentPartialWord.trimmingCharacters(in: .whitespacesAndNewlines)
+        if currentPartialWord.count > 20 {  // Reasonable word length limit
+            currentPartialWord = String(currentPartialWord.suffix(20))
+        }
+        
+        lastWordAnalysisTime = CACurrentMediaTime()
+    }
+    
+    /// WORD COMPLETION PREDICTION:
+    /// Gets possible completions for current partial word using UITextChecker.
+    /// This drives Apple-style key resizing based on word context.
+    func getWordCompletions(for partialWord: String) -> [String] {
+        guard partialWord.count >= 2 else { return [] }
+        
+        // Check cache first for performance
+        if let cached = wordCompletionCache[partialWord.lowercased()] {
+            return cached
+        }
+        
+        // Use UITextChecker to get completions (if available via delegate)
+        guard let controller = keyboardViewController else { return [] }
+        
+        var completions: [String] = []
+        
+        // Try to get completions using UITextChecker
+        if let textChecker = (controller as? KeyboardViewController)?.textChecker {
+            let nsString = partialWord as NSString
+            let range = NSRange(location: 0, length: nsString.length)
+            
+            if let guesses = textChecker.completions(forPartialWordRange: range, in: partialWord, language: "en") {
+                completions = Array(guesses.prefix(10))  // Limit to top 10 for performance
+            }
+        }
+        
+        // Fallback to common word patterns if no completions
+        if completions.isEmpty {
+            completions = getCommonWordCompletions(for: partialWord)
+        }
+        
+        // Cache results
+        wordCompletionCache[partialWord.lowercased()] = completions
+        
+        return completions
+    }
+    
+    /// COMMON WORD COMPLETIONS:
+    /// Provides fallback completions when UITextChecker is unavailable.
+    func getCommonWordCompletions(for partialWord: String) -> [String] {
+        let partial = partialWord.lowercased()
+        
+        let commonWords = [
+            "the", "and", "that", "have", "for", "not", "with", "you", "this", "but",
+            "his", "from", "they", "she", "her", "been", "than", "its", "who", "did",
+            "get", "may", "him", "old", "see", "now", "way", "could", "my", "come",
+            "your", "make", "more", "over", "such", "our", "out", "day", "go", "has",
+            "her", "had", "which", "their", "said", "each", "how", "she", "may",
+            "what", "there", "we", "can", "all", "were", "they", "call", "its",
+            "hello", "world", "about", "would", "people", "time", "very", "when",
+            "come", "here", "just", "like", "long", "make", "many", "over", "such",
+            "take", "than", "them", "well", "where", "year", "work", "first",
+            "before", "after", "back", "other", "good", "great", "right", "still",
+            "small", "every", "think", "should", "through", "place", "where"
+        ]
+        
+        return commonWords.filter { $0.hasPrefix(partial) && $0.count > partial.count }
     }
 }
 

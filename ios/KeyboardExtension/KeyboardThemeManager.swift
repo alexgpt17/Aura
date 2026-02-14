@@ -87,6 +87,7 @@ class KeyboardThemeManager {
         let enabled: Bool
         let backgroundType: String?
         let backgroundGradient: String?
+        let displayUppercaseKeys: Bool?
         
         // Cache UIColor objects to avoid recreating them
         private static var colorCache: [String: UIColor] = [:]
@@ -221,6 +222,8 @@ class KeyboardThemeManager {
                         print("🎨 KeyboardExtension: Per-app theme has gradient: \(gradient)")
                     }
                     
+                    let displayUppercaseKeys = appTheme["displayUppercaseKeys"] as? Bool ?? true
+                    
                     return KeyboardTheme(
                         background: background,
                         text: text,
@@ -228,7 +231,8 @@ class KeyboardThemeManager {
                         keyColor: keyColor,
                         enabled: enabled,
                         backgroundType: backgroundType,
-                        backgroundGradient: backgroundGradient
+                        backgroundGradient: backgroundGradient,
+                        displayUppercaseKeys: displayUppercaseKeys
                     )
                 }
             } else {
@@ -255,6 +259,7 @@ class KeyboardThemeManager {
         let keyColor = keyboardTheme["keyColor"] as? String
         let backgroundType = keyboardTheme["backgroundType"] as? String
         let backgroundGradient = keyboardTheme["backgroundGradient"] as? String
+        let displayUppercaseKeys = keyboardTheme["displayUppercaseKeys"] as? Bool ?? true
         
         print("✅ KeyboardExtension: Loaded global theme - background: \(background), text: \(text), link: \(link), keyColor: \(keyColor ?? "nil")")
         if let bgType = backgroundType, bgType == "gradient", let gradient = backgroundGradient {
@@ -268,7 +273,8 @@ class KeyboardThemeManager {
             keyColor: keyColor,
             enabled: enabled,
             backgroundType: backgroundType,
-            backgroundGradient: backgroundGradient
+            backgroundGradient: backgroundGradient,
+            displayUppercaseKeys: displayUppercaseKeys
         )
     }
 }

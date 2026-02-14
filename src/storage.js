@@ -33,6 +33,7 @@ const getDefaultThemeData = () => {
       enabled: true,
       backgroundImage: null,
       backgroundGradient: null,
+      displayUppercaseKeys: true, // iOS-style: show keys in uppercase, but shift changes behavior not appearance
     },
     auraPresets: [], // Array of custom Aura presets (user-created)
     focusModeSettings: {
@@ -45,6 +46,7 @@ const getDefaultThemeData = () => {
       }
     },
     appThemeColor: "#228B22", // Default forest green
+    appThemeMode: "dark", // Default dark mode
     favoriteThemes: [], // Array of theme IDs (preset or custom)
     recentlyUsedThemes: [], // Array of { themeId, timestamp, type: 'preset' | 'custom' | 'keyboard' | 'safari' }
     hasCompletedOnboarding: false, // Track if user has completed onboarding

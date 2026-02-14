@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { saveThemes, getThemes } from '../storage';
 import { useAppTheme } from '../contexts/AppThemeContext';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 interface ThemeOptionsScreenProps {
   navigation: any;
@@ -168,9 +169,12 @@ const ThemeOptionsScreen: React.FC<ThemeOptionsScreenProps> = ({ navigation }) =
 
           <TouchableOpacity
             style={styles.moreThemesButton}
-            onPress={() => navigation.navigate('ThemeSelection')}
+            onPress={() => navigation.navigate('BrowseThemes')}
           >
-            <Text style={[styles.moreThemesButtonText, { color: appThemeColor }]}>More themes →</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={[styles.moreThemesButtonText, { color: appThemeColor }]}>More themes </Text>
+              <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
+            </View>
           </TouchableOpacity>
         </View>
 
@@ -189,7 +193,7 @@ const ThemeOptionsScreen: React.FC<ThemeOptionsScreenProps> = ({ navigation }) =
                 </Text>
               </View>
             </View>
-            <Text style={styles.customizeButtonArrow}>→</Text>
+            <Ionicons name="chevron-forward" size={24} color="#228B22" />
           </TouchableOpacity>
         </View>
       </View>
@@ -334,9 +338,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   customizeButtonArrow: {
-    fontSize: 24,
-    color: '#228B22',
-    fontWeight: 'bold',
+    // Style no longer used - replaced with Ionicons
     marginLeft: 12,
   },
 });

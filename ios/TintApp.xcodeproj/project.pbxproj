@@ -147,11 +147,15 @@
 		};
 		0BEB587B2E7DFC6600B7D7B1 /* TintExtensionTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = TintExtensionTests;
 			sourceTree = "<group>";
 		};
 		0BEB58852E7DFC6600B7D7B1 /* TintExtensionUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = TintExtensionUITests;
 			sourceTree = "<group>";
 		};
@@ -307,8 +311,6 @@
 				0B4D19892F27F0BA0015BB6B /* KeyboardExtension */,
 			);
 			name = KeyboardExtension;
-			packageProductDependencies = (
-			);
 			productName = KeyboardExtension;
 			productReference = 0B4D19882F27F0BA0015BB6B /* KeyboardExtension.appex */;
 			productType = "com.apple.product-type.app-extension";

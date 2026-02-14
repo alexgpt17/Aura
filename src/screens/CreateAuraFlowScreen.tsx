@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useAppTheme } from '../contexts/AppThemeContext';
 import { hasPurchasedCustomThemes, saveAuraPreset } from '../storage';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 interface CreateAuraFlowScreenProps {
   navigation: any;
@@ -33,7 +34,7 @@ interface CreateAuraFlowScreenProps {
 type Step = 'safari' | 'keyboard' | 'name';
 
 const CreateAuraFlowScreen: React.FC<CreateAuraFlowScreenProps> = ({ navigation, route }) => {
-  const { appThemeColor } = useAppTheme();
+  const { appThemeColor, backgroundColor, textColor, sectionBgColor, borderColor } = useAppTheme();
   const [currentStep, setCurrentStep] = useState<Step>('safari');
   const [hasPurchased, setHasPurchased] = useState(false);
   const [safariTheme, setSafariTheme] = useState<{
@@ -69,29 +70,53 @@ const CreateAuraFlowScreen: React.FC<CreateAuraFlowScreenProps> = ({ navigation,
     }
   }, []);
 
-  // Listen for navigation focus to get updated params
+  // Listen for navigation focus and param updates to get updated theme data
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
       const params = route?.params;
       if (params) {
-        // If we have both themes from route params, go to name step
-        if (params.safariTheme && params.keyboardTheme) {
+        // Update themes from params if they exist
+        if (params.safariTheme) {
           setSafariTheme(params.safariTheme);
+        }
+        if (params.keyboardTheme) {
           setKeyboardTheme(params.keyboardTheme);
+        }
+        
+        // Determine current step based on what we have
+        if (params.safariTheme && params.keyboardTheme) {
           setCurrentStep('name');
         } else if (params.safariTheme) {
-          setSafariTheme(params.safariTheme);
           setCurrentStep('keyboard');
-        } else if (params.keyboardTheme) {
-          setKeyboardTheme(params.keyboardTheme);
-          if (safariTheme) {
-            setCurrentStep('name');
-          }
+        } else if (params.keyboardTheme && safariTheme) {
+          setCurrentStep('name');
         }
       }
     });
     return unsubscribe;
   }, [navigation, route?.params, safariTheme]);
+
+  // Also listen for param changes directly (when setParams is called)
+  useEffect(() => {
+    const params = route?.params;
+    if (params) {
+      if (params.safariTheme) {
+        setSafariTheme(params.safariTheme);
+      }
+      if (params.keyboardTheme) {
+        setKeyboardTheme(params.keyboardTheme);
+      }
+      
+      // Determine current step based on what we have
+      if (params.safariTheme && params.keyboardTheme) {
+        setCurrentStep('name');
+      } else if (params.safariTheme) {
+        setCurrentStep('keyboard');
+      } else if (params.keyboardTheme && safariTheme) {
+        setCurrentStep('name');
+      }
+    }
+  }, [route?.params, safariTheme]);
 
   const checkPurchaseStatus = async () => {
     const purchased = await hasPurchasedCustomThemes();
@@ -223,8 +248,18 @@ const CreateAuraFlowScreen: React.FC<CreateAuraFlowScreenProps> = ({ navigation,
       setCurrentStep('keyboard');
     } else {
       // If we're on the first step (safari), go back to AuraPresets
-      // This prevents getting stuck in a loop
-      if (navigation.canGoBack()) {
+      // Use reset to clear the navigation stack and prevent loops
+      const state = navigation.getState();
+      const routes = state.routes;
+      const auraPresetsIndex = routes.findIndex(route => route.name === 'AuraPresets');
+      
+      if (auraPresetsIndex >= 0) {
+        // Reset to AuraPresets, removing all screens after it
+        navigation.reset({
+          index: auraPresetsIndex,
+          routes: routes.slice(0, auraPresetsIndex + 1),
+        });
+      } else if (navigation.canGoBack()) {
         navigation.goBack();
       } else {
         navigation.navigate('AuraPresets');
@@ -258,13 +293,13 @@ const CreateAuraFlowScreen: React.FC<CreateAuraFlowScreenProps> = ({ navigation,
     if (currentStep === 'safari') {
       return (
         <View style={styles.stepContent}>
-          <Text style={styles.stepTitle}>Step 1: Create Safari Theme</Text>
-          <Text style={styles.stepDescription}>
+          <Text style={[styles.stepTitle, { color: textColor }]}>Step 1: Create Safari Theme</Text>
+          <Text style={[styles.stepDescription, { color: textColor }]}>
             Create a theme for your Safari browsing experience. This will be the first part of your Aura preset.
           </Text>
           {safariTheme && (
             <View style={styles.themePreview}>
-              <Text style={styles.previewLabel}>Safari Theme Created ✓</Text>
+              <Text style={[styles.previewLabel, { color: textColor }]}>Safari Theme Created ✓</Text>
               <View style={[styles.colorPreviewBox, { backgroundColor: safariTheme.background }]}>
                 <Text style={[styles.previewText, { color: safariTheme.text }]}>Preview</Text>
                 <Text style={[styles.previewLink, { color: safariTheme.link }]}>Link</Text>
@@ -272,25 +307,29 @@ const CreateAuraFlowScreen: React.FC<CreateAuraFlowScreenProps> = ({ navigation,
             </View>
           )}
           <TouchableOpacity
-            style={styles.nextButton}
+            style={[styles.nextButton, { backgroundColor: sectionBgColor, borderColor }]}
             onPress={handleNext}
           >
-            <Text style={[styles.nextButtonText, { color: appThemeColor }]}>
+            <Text style={[styles.nextButtonText, { color: textColor }]}>
               {safariTheme ? 'Edit Safari Theme' : 'Create Safari Theme'}
             </Text>
+            <Text style={[styles.nextButtonIcon, { color: appThemeColor }]}>⌘</Text>
           </TouchableOpacity>
         </View>
       );
     } else if (currentStep === 'keyboard') {
       return (
         <View style={styles.stepContent}>
-          <Text style={styles.stepTitle}>Step 2: Create Keyboard Theme</Text>
-          <Text style={styles.stepDescription}>
+          <Text style={[styles.stepTitle, { color: textColor }]}>Step 2: Create Keyboard Theme</Text>
+          <Text style={[styles.stepDescription, { color: textColor }]}>
             Create a theme for your keyboard. This will be the second part of your Aura preset.
           </Text>
           {keyboardTheme && (
             <View style={styles.themePreview}>
-              <Text style={styles.previewLabel}>Keyboard Theme Created ✓</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={[styles.previewLabel, { color: textColor }]}>Keyboard Theme Created </Text>
+                <Ionicons name="checkmark" size={16} color={appThemeColor} />
+              </View>
               <View style={[styles.colorPreviewBox, { backgroundColor: keyboardTheme.background }]}>
                 <Text style={[styles.previewText, { color: keyboardTheme.text }]}>Preview</Text>
                 <Text style={[styles.previewLink, { color: keyboardTheme.link }]}>Return</Text>
@@ -298,12 +337,13 @@ const CreateAuraFlowScreen: React.FC<CreateAuraFlowScreenProps> = ({ navigation,
             </View>
           )}
           <TouchableOpacity
-            style={styles.nextButton}
+            style={[styles.nextButton, { backgroundColor: sectionBgColor, borderColor }]}
             onPress={handleNext}
           >
-            <Text style={[styles.nextButtonText, { color: appThemeColor }]}>
+            <Text style={[styles.nextButtonText, { color: textColor }]}>
               {keyboardTheme ? 'Edit Keyboard Theme' : 'Create Keyboard Theme'}
             </Text>
+            <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
           </TouchableOpacity>
         </View>
       );
@@ -311,21 +351,21 @@ const CreateAuraFlowScreen: React.FC<CreateAuraFlowScreenProps> = ({ navigation,
       // Name step
       return (
         <View style={styles.stepContent}>
-          <Text style={styles.stepTitle}>Step 3: Name Your Aura</Text>
-          <Text style={styles.stepDescription}>
+          <Text style={[styles.stepTitle, { color: textColor }]}>Step 3: Name Your Aura</Text>
+          <Text style={[styles.stepDescription, { color: textColor }]}>
             Give your Aura preset a name so you can easily identify it later.
           </Text>
-          <Text style={styles.inputLabel}>Aura Name</Text>
+          <Text style={[styles.inputLabel, { color: textColor }]}>Aura Name</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { backgroundColor: sectionBgColor, borderColor, color: textColor }]}
             placeholder="Enter aura name"
-            placeholderTextColor="#666"
+            placeholderTextColor={textColor === '#FFFFFF' ? '#666' : '#999'}
             value={auraName}
             onChangeText={setAuraName}
             autoFocus
           />
           <View style={styles.finalPreview}>
-            <Text style={styles.finalPreviewLabel}>Your Aura Preview</Text>
+            <Text style={[styles.finalPreviewLabel, { color: textColor }]}>Your Aura Preview</Text>
             <View style={styles.finalPreviewContainer}>
               <View style={[styles.finalPreviewBox, { backgroundColor: safariTheme?.background || '#000' }]}>
                 <Text style={[styles.finalPreviewText, { color: safariTheme?.text || '#FFF' }]}>Safari</Text>
@@ -336,10 +376,11 @@ const CreateAuraFlowScreen: React.FC<CreateAuraFlowScreenProps> = ({ navigation,
             </View>
           </View>
           <TouchableOpacity
-            style={styles.finishButton}
+            style={[styles.finishButton, { backgroundColor: sectionBgColor, borderColor }]}
             onPress={handleFinish}
           >
-            <Text style={[styles.finishButtonText, { color: appThemeColor }]}>Finish</Text>
+            <Text style={[styles.finishButtonText, { color: textColor }]}>Finish</Text>
+            <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
           </TouchableOpacity>
         </View>
       );
@@ -347,12 +388,12 @@ const CreateAuraFlowScreen: React.FC<CreateAuraFlowScreenProps> = ({ navigation,
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
+    <View style={[styles.container, { backgroundColor }]}>
+      <View style={[styles.header, { borderBottomColor: borderColor }]}>
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
           <Text style={[styles.backButtonText, { color: appThemeColor }]}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create Aura</Text>
+        <Text style={[styles.headerTitle, { color: textColor }]}>Create Aura</Text>
         <View style={styles.placeholder} />
       </View>
 
@@ -372,7 +413,6 @@ const CreateAuraFlowScreen: React.FC<CreateAuraFlowScreenProps> = ({ navigation,
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
   },
   header: {
     flexDirection: 'row',
@@ -382,7 +422,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
   },
   backButton: {
     padding: 8,
@@ -394,7 +433,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 26,
     fontWeight: 'bold',
-    color: '#FFFFFF',
   },
   placeholder: {
     width: 60,
@@ -426,12 +464,10 @@ const styles = StyleSheet.create({
   stepTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#FFFFFF',
     marginBottom: 8,
   },
   stepDescription: {
     fontSize: 16,
-    color: '#888888',
     marginBottom: 24,
     lineHeight: 22,
   },
@@ -440,7 +476,6 @@ const styles = StyleSheet.create({
   },
   previewLabel: {
     fontSize: 14,
-    color: '#228B22',
     marginBottom: 8,
     fontWeight: '600',
   },
@@ -459,41 +494,43 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
   nextButton: {
-    backgroundColor: '#1a1a1a',
     paddingVertical: 16,
+    paddingHorizontal: 20,
     borderRadius: 12,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginTop: 24,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
   },
   nextButtonText: {
-    color: '#000000',
     fontSize: 18,
     fontWeight: 'bold',
   },
+  nextButtonIcon: {
+    fontSize: 20,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 20,
+    width: 20,
+  },
   inputLabel: {
     fontSize: 16,
-    color: '#FFFFFF',
     marginBottom: 8,
     fontWeight: '600',
   },
   input: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 8,
     padding: 16,
     fontSize: 16,
-    color: '#FFFFFF',
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: '#333',
   },
   finalPreview: {
     marginBottom: 24,
   },
   finalPreviewLabel: {
     fontSize: 16,
-    color: '#FFFFFF',
     marginBottom: 12,
     fontWeight: '600',
   },
@@ -516,19 +553,22 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   finishButton: {
-    backgroundColor: '#1a1a1a',
     paddingVertical: 16,
+    paddingHorizontal: 20,
     borderRadius: 12,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginTop: 24,
     marginBottom: 40,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
   },
   finishButtonText: {
-    color: '#000000',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  finishButtonIcon: {
+    // Style no longer used - replaced with Ionicons
   },
 });
 

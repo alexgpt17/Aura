@@ -11,6 +11,7 @@ import { getThemes, saveThemes } from '../storage';
 import GearIcon from '../components/GearIcon';
 import { useAppTheme } from '../contexts/AppThemeContext';
 import { AURA_PRESETS } from './AuraPresetsScreen';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 interface HomeScreenProps {
   navigation: any;
@@ -22,6 +23,8 @@ interface Theme {
   background: string;
   text: string;
   link: string;
+  keyColor?: string;
+  returnKeyColor?: string;
   backgroundType?: 'color' | 'gradient';
   backgroundGradient?: string;
 }
@@ -124,7 +127,7 @@ const ALL_THEMES: Theme[] = [
 ];
 
 const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
-  const { appThemeColor } = useAppTheme();
+  const { appThemeColor, backgroundColor, textColor, sectionBgColor, borderColor } = useAppTheme();
   const [safariTheme, setSafariTheme] = useState<Theme | null>(null);
   const [keyboardTheme, setKeyboardTheme] = useState<Theme | null>(null);
 
@@ -223,13 +226,15 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         }
         
         if (matchingPreset) {
-          setKeyboardTheme({
-            id: matchingPreset.id,
-            name: matchingPreset.name,
-            background: matchingPreset.keyboardTheme.background,
-            text: matchingPreset.keyboardTheme.text,
-            link: matchingPreset.keyboardTheme.link,
-          });
+            setKeyboardTheme({
+              id: matchingPreset.id,
+              name: matchingPreset.name,
+              background: matchingPreset.keyboardTheme.background,
+              text: matchingPreset.keyboardTheme.text,
+              link: matchingPreset.keyboardTheme.link,
+              keyColor: matchingPreset.keyboardTheme.keyColor,
+              returnKeyColor: matchingPreset.keyboardTheme.returnKeyColor,
+            });
         } else {
           // Check against ALL_THEMES
           const matchingTheme = ALL_THEMES.find(
@@ -247,6 +252,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               background: keyboard.background || '#000000',
               text: keyboard.text || '#ffffff',
               link: keyboard.link || '#228B22',
+              keyColor: keyboard.keyColor || '#2a2a2a',
+              returnKeyColor: keyboard.returnKeyColor || keyboard.link || '#228B22',
             });
           }
         }
@@ -262,9 +269,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Aura</Text>
+    <View style={[styles.container, { backgroundColor }]}>
+      <View style={[styles.header, { borderBottomColor: borderColor }]}>
+        <Text style={[styles.headerTitle, { color: textColor }]}>Aura</Text>
         <TouchableOpacity
           style={styles.settingsButton}
           onPress={() => navigation.navigate('Settings')}
@@ -276,84 +283,117 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
         {/* Current Safari Theme */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Safari Theme</Text>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Safari Theme</Text>
           {safariTheme ? (
             <TouchableOpacity
               style={[
                 styles.themeCard,
                 { backgroundColor: safariTheme.background },
               ]}
-              onPress={() => navigation.navigate('ThemeSelection')}
+              onPress={() => navigation.navigate('MainTabs', { screen: 'SafariTab' })}
             >
-              <View style={styles.themeInfo}>
-                <Text style={[styles.themeName, { color: safariTheme.text }]}>
-                  {safariTheme.name}
-                </Text>
-                <Text style={[styles.themeSubtext, { color: safariTheme.text }]}>
-                  Tap to change
-                </Text>
+              <View style={styles.themeContent}>
+                <View style={styles.themeTextContainer}>
+                  <Text style={[styles.themeName, { color: safariTheme.text }]}>
+                    {safariTheme.name}
+                  </Text>
+                  <View style={styles.previewColors}>
+                    <View style={[styles.colorIndicator, { backgroundColor: safariTheme.background }]} />
+                    <View style={[styles.colorIndicator, { backgroundColor: safariTheme.text }]} />
+                    <View style={[styles.colorIndicator, { backgroundColor: safariTheme.link }]} />
+                  </View>
+                  <Text style={[styles.tapToChange, { color: safariTheme.text }]}>
+                    Tap to Change
+                  </Text>
+                </View>
+                <View style={styles.previewTextContainer}>
+                  <Text style={[styles.previewText, { color: safariTheme.text }]}>
+                    Welcome to Aura
+                  </Text>
+                  <TouchableOpacity onPress={() => {}}>
+                    <Text style={[styles.previewLink, { color: safariTheme.link }]}>
+                      Learn more
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-              <Text
-                style={[
-                  styles.arrow,
-                  { color: safariTheme.link || appThemeColor },
-                ]}
-              >
-                →
-              </Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
-              style={styles.themeCard}
-              onPress={() => navigation.navigate('ThemeSelection')}
+              style={[styles.themeCard, { backgroundColor: sectionBgColor }]}
+              onPress={() => navigation.navigate('MainTabs', { screen: 'SafariTab' })}
             >
               <View style={styles.themeInfo}>
-                <Text style={styles.themeName}>No theme selected</Text>
-                <Text style={styles.themeSubtext}>Tap to select a theme</Text>
+                <Text style={[styles.themeName, { color: textColor }]}>No theme selected</Text>
+                <Text style={[styles.themeSubtext, { color: textColor }]}>Tap to select a theme</Text>
               </View>
-              <Text style={styles.arrow}>→</Text>
+              <Ionicons name="chevron-forward" size={20} color={textColor} />
             </TouchableOpacity>
           )}
         </View>
 
         {/* Current Keyboard Theme */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Keyboard Theme</Text>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Keyboard Theme</Text>
           {keyboardTheme ? (
             <TouchableOpacity
               style={[
                 styles.themeCard,
                 { backgroundColor: keyboardTheme.background },
               ]}
-              onPress={() => navigation.navigate('ThemeSelection', { forKeyboard: true })}
+              onPress={() => navigation.navigate('MainTabs', { screen: 'KeyboardTab' })}
             >
-              <View style={styles.themeInfo}>
-                <Text style={[styles.themeName, { color: keyboardTheme.text }]}>
-                  {keyboardTheme.name}
-                </Text>
-                <Text style={[styles.themeSubtext, { color: keyboardTheme.text }]}>
-                  Tap to change
-                </Text>
+              <View style={styles.themeContent}>
+                <View style={styles.themeTextContainer}>
+                  <Text style={[styles.themeName, { color: keyboardTheme.text }]}>
+                    {keyboardTheme.name}
+                  </Text>
+                  <View style={styles.previewColors}>
+                    <View style={[styles.colorIndicator, { backgroundColor: keyboardTheme.background }]} />
+                    <View style={[styles.colorIndicator, { backgroundColor: keyboardTheme.keyColor || '#2a2a2a' }]} />
+                    <View style={[styles.colorIndicator, { backgroundColor: keyboardTheme.text }]} />
+                    <View style={[styles.colorIndicator, { backgroundColor: keyboardTheme.link }]} />
+                  </View>
+                  <Text style={[styles.tapToChange, { color: keyboardTheme.text }]}>
+                    Tap to Change
+                  </Text>
+                </View>
+                <View style={styles.keyboardPreviewContainer}>
+                  <View style={styles.keyboardRow}>
+                    <View style={[styles.key, { backgroundColor: keyboardTheme.keyColor || '#2a2a2a' }]}>
+                      <Text style={[styles.keyText, { color: keyboardTheme.text }]}>A</Text>
+                    </View>
+                    <View style={[styles.key, { backgroundColor: keyboardTheme.keyColor || '#2a2a2a' }]}>
+                      <Text style={[styles.keyText, { color: keyboardTheme.text }]}>U</Text>
+                    </View>
+                    <View style={[styles.key, { backgroundColor: keyboardTheme.keyColor || '#2a2a2a' }]}>
+                      <Text style={[styles.keyText, { color: keyboardTheme.text }]}>R</Text>
+                    </View>
+                    <View style={[styles.key, { backgroundColor: keyboardTheme.keyColor || '#2a2a2a' }]}>
+                      <Text style={[styles.keyText, { color: keyboardTheme.text }]}>A</Text>
+                    </View>
+                  </View>
+                  <View style={styles.keyboardRow}>
+                    <View style={[styles.spaceKey, { backgroundColor: keyboardTheme.keyColor || '#2a2a2a' }]}>
+                      <Text style={[styles.keyText, { color: keyboardTheme.text }]}>space</Text>
+                    </View>
+                    <View style={[styles.returnKey, { backgroundColor: keyboardTheme.returnKeyColor || keyboardTheme.link || '#228B22' }]}>
+                      <Text style={[styles.keyText, { color: keyboardTheme.text }]}>↵</Text>
+                    </View>
+                  </View>
+                </View>
               </View>
-              <Text
-                style={[
-                  styles.arrow,
-                  { color: keyboardTheme.link || appThemeColor },
-                ]}
-              >
-                →
-              </Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
-              style={styles.themeCard}
-              onPress={() => navigation.navigate('ThemeSelection', { forKeyboard: true })}
+              style={[styles.themeCard, { backgroundColor: sectionBgColor }]}
+              onPress={() => navigation.navigate('MainTabs', { screen: 'KeyboardTab' })}
             >
               <View style={styles.themeInfo}>
-                <Text style={styles.themeName}>No theme selected</Text>
-                <Text style={styles.themeSubtext}>Tap to select a theme</Text>
+                <Text style={[styles.themeName, { color: textColor }]}>No theme selected</Text>
+                <Text style={[styles.themeSubtext, { color: textColor }]}>Tap to select a theme</Text>
               </View>
-              <Text style={styles.arrow}>→</Text>
+              <Ionicons name="chevron-forward" size={20} color={textColor} />
             </TouchableOpacity>
           )}
         </View>
@@ -361,16 +401,16 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         {/* Aura Presets Section */}
         <View style={styles.section}>
           <TouchableOpacity
-            style={styles.auraButton}
+            style={[styles.auraButton, { backgroundColor: sectionBgColor }]}
             onPress={() => navigation.navigate('AuraPresets')}
           >
             <View style={styles.auraButtonContent}>
-              <Text style={[styles.auraButtonText, { color: appThemeColor }]}>Set Aura</Text>
-              <Text style={styles.auraButtonSubtext}>
+              <Text style={[styles.auraButtonText, { color: textColor }]}>Set Aura</Text>
+              <Text style={[styles.auraButtonSubtext, { color: textColor }]}>
                 One-tap themes that apply to both Safari and Keyboard
               </Text>
             </View>
-            <Text style={[styles.arrow, { color: appThemeColor }]}>→</Text>
+            <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -381,7 +421,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
   },
   header: {
     flexDirection: 'row',
@@ -391,12 +430,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
   },
   headerTitle: {
     fontSize: 34,
     fontWeight: 'bold',
-    color: '#FFFFFF',
   },
   settingsButton: {
     padding: 8,
@@ -419,23 +456,25 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#FFFFFF',
     marginBottom: 12,
   },
   sectionDescription: {
     fontSize: 14,
-    color: '#888888',
     marginBottom: 16,
     lineHeight: 20,
   },
   themeCard: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 2,
+  },
+  themeContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
+    justifyContent: 'space-between',
+  },
+  themeTextContainer: {
+    flex: 1,
   },
   themePreview: {
     width: 50,
@@ -455,17 +494,49 @@ const styles = StyleSheet.create({
   themeName: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 2,
+    marginBottom: 8,
   },
   themeSubtext: {
     fontSize: 14,
-    color: '#888888',
+  },
+  previewColors: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  colorIndicator: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  tapToChange: {
+    fontSize: 12,
+    fontWeight: '500',
+    opacity: 0.8,
+  },
+  previewTextContainer: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    paddingLeft: 20,
+    minHeight: 40,
+    paddingVertical: 4,
+    minWidth: 140,
+    flexShrink: 0,
+  },
+  previewText: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  previewLink: {
+    fontSize: 14,
+    textDecorationLine: 'underline',
   },
   arrow: {
-    fontSize: 20,
-    color: '#FFFFFF',
-    fontWeight: '600',
+    // Style no longer used - replaced with Ionicons
   },
   recentScrollView: {
     marginTop: 12,
@@ -489,14 +560,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   auraButton: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     padding: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#2a2a2a',
   },
   auraButtonContent: {
     flex: 1,
@@ -504,12 +573,52 @@ const styles = StyleSheet.create({
   auraButtonText: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#FFFFFF',
     marginBottom: 4,
   },
   auraButtonSubtext: {
     fontSize: 14,
-    color: '#888888',
+  },
+  keyboardPreviewContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingLeft: 20,
+    minWidth: 140,
+    minHeight: 40,
+    flexShrink: 0,
+  },
+  keyboardRow: {
+    flexDirection: 'row',
+    gap: 4,
+    marginBottom: 4,
+  },
+  key: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 4,
+    minWidth: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  spaceKey: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 4,
+    width: 66,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
+  },
+  returnKey: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 4,
+    width: 35,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  keyText: {
+    fontSize: 10,
+    fontWeight: '600',
   },
 });
 

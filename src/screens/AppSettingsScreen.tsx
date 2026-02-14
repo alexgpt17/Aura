@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { saveThemes, getThemes } from '../storage';
 import { useAppTheme } from '../contexts/AppThemeContext';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 // Minimal app list for name lookup (full expanded list is in AppPickerScreen)
 // This is just used to display app names for known apps
@@ -63,7 +64,7 @@ interface AppTheme {
 }
 
 const AppSettingsScreen: React.FC<AppSettingsScreenProps> = ({ navigation, route }) => {
-  const { appThemeColor } = useAppTheme();
+  const { appThemeColor, backgroundColor, textColor, sectionBgColor, borderColor, appThemeMode } = useAppTheme();
   const initialBundleId = route.params?.bundleId || '';
   const [bundleId, setBundleId] = useState(initialBundleId);
   const [appName, setAppName] = useState('');
@@ -233,15 +234,15 @@ const AppSettingsScreen: React.FC<AppSettingsScreenProps> = ({ navigation, route
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
+    <View style={[styles.container, { backgroundColor }]}>
+      <View style={[styles.header, { borderBottomColor: borderColor }]}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
         >
           <Text style={[styles.backButtonText, { color: appThemeColor }]}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>
+        <Text style={[styles.headerTitle, { color: textColor }]}>
           {appName || bundleId || initialBundleId || 'New App'}
         </Text>
         <View style={styles.placeholder} />
@@ -252,7 +253,7 @@ const AppSettingsScreen: React.FC<AppSettingsScreenProps> = ({ navigation, route
           <View style={styles.section}>
             <Text style={styles.label}>Select App</Text>
             <TouchableOpacity
-              style={styles.selectAppButton}
+              style={[styles.selectAppButton, { backgroundColor: sectionBgColor, borderColor }]}
               onPress={() => {
                 navigation.navigate('AppPicker', {
                   onSelectApp: (selectedBundleId: string, selectedAppName: string) => {
@@ -262,13 +263,13 @@ const AppSettingsScreen: React.FC<AppSettingsScreenProps> = ({ navigation, route
                 });
               }}
             >
-              <Text style={styles.selectAppButtonText}>
+              <Text style={[styles.selectAppButtonText, { color: textColor }]}>
                 {bundleId ? `${appName || bundleId}` : 'Tap to select an app'}
               </Text>
-              <Text style={[styles.arrow, { color: appThemeColor }]}>→</Text>
+              <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
             </TouchableOpacity>
             {bundleId && (
-              <Text style={styles.hint}>
+              <Text style={[styles.hint, { color: textColor }]}>
                 Bundle ID: {bundleId}
               </Text>
             )}
@@ -276,42 +277,42 @@ const AppSettingsScreen: React.FC<AppSettingsScreenProps> = ({ navigation, route
         )}
 
         <View style={styles.section}>
-          <View style={styles.settingRow}>
+          <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
             <View style={styles.settingContent}>
-              <Text style={styles.settingLabel}>Enabled</Text>
-              <Text style={styles.settingDescription}>
+              <Text style={[styles.settingLabel, { color: textColor }]}>Enabled</Text>
+              <Text style={[styles.settingDescription, { color: textColor }]}>
                 Aura will apply this keyboard theme to {bundleId || initialBundleId || 'this app'} when enabled.
               </Text>
             </View>
             <Switch
               value={enabled}
               onValueChange={handleToggleEnabled}
-              trackColor={{ false: '#333', true: appThemeColor }}
-              thumbColor={enabled ? '#FFFFFF' : '#888'}
+              trackColor={{ false: appThemeMode === 'dark' ? '#333' : '#CCC', true: appThemeColor }}
+              thumbColor={enabled ? (appThemeMode === 'dark' ? '#FFFFFF' : '#FFFFFF') : (appThemeMode === 'dark' ? '#888' : '#999')}
             />
           </View>
 
           <TouchableOpacity
-            style={styles.settingRow}
-            onPress={() => navigation.navigate('ThemeSelection', { forApp: bundleId || initialBundleId })}
+            style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}
+            onPress={() => navigation.navigate('BrowseThemes', { forApp: bundleId || initialBundleId })}
           >
             <View style={styles.settingContent}>
-              <Text style={styles.settingLabel}>Theme</Text>
-              <Text style={styles.settingDescription}>
+              <Text style={[styles.settingLabel, { color: textColor }]}>Theme</Text>
+              <Text style={[styles.settingDescription, { color: textColor }]}>
                 Customize how Aura's keyboard theme looks in {bundleId || initialBundleId || 'this app'}.
               </Text>
             </View>
-            <Text style={styles.arrow}>→</Text>
+            <Ionicons name="chevron-forward" size={20} color={textColor} />
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-          <Text style={[styles.saveButtonText, { color: appThemeColor }]}>Save</Text>
+        <TouchableOpacity style={[styles.saveButton, { backgroundColor: sectionBgColor, borderColor }]} onPress={handleSave}>
+          <Text style={[styles.saveButtonText, { color: textColor }]}>Save</Text>
         </TouchableOpacity>
 
         {!isNew && (
           <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
-            <Text style={styles.deleteButtonText}>Delete Settings</Text>
+            <Text style={styles.deleteButtonText}>Delete</Text>
           </TouchableOpacity>
         )}
       </ScrollView>
@@ -322,7 +323,6 @@ const AppSettingsScreen: React.FC<AppSettingsScreenProps> = ({ navigation, route
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
   },
   header: {
     flexDirection: 'row',
@@ -332,7 +332,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
   },
   backButton: {
     padding: 8,
@@ -369,31 +368,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#1a1a1a',
     borderRadius: 8,
     padding: 16,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#333',
   },
   selectAppButtonText: {
     fontSize: 16,
-    color: '#FFFFFF',
     flex: 1,
   },
   input: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 8,
     padding: 16,
     fontSize: 16,
-    color: '#FFFFFF',
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#333',
   },
   hint: {
     fontSize: 12,
-    color: '#FFFFFF',
     marginTop: 4,
   },
   settingRow: {
@@ -402,11 +394,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 12,
     paddingHorizontal: 16,
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
   },
   settingContent: {
     flex: 1,
@@ -414,29 +404,23 @@ const styles = StyleSheet.create({
   settingLabel: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#FFFFFF',
     marginBottom: 4,
   },
   settingDescription: {
     fontSize: 14,
-    color: '#FFFFFF',
     lineHeight: 18,
   },
   arrow: {
-    fontSize: 20,
-    color: '#FFFFFF',
-    fontWeight: '600',
+    // Style no longer used - replaced with Ionicons
     marginLeft: 12,
   },
   saveButton: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
     marginTop: 24,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
   },
   saveButtonText: {
     color: '#000000',

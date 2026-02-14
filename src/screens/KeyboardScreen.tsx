@@ -10,6 +10,7 @@ import { getThemes } from '../storage';
 import GearIcon from '../components/GearIcon';
 import { useAppTheme } from '../contexts/AppThemeContext';
 import { AURA_PRESETS } from './AuraPresetsScreen';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 // App name lookup for displaying app names instead of bundle IDs
 const COMMON_APPS = [
@@ -50,6 +51,8 @@ interface Theme {
   background: string;
   text: string;
   link: string;
+  keyColor?: string;
+  returnKeyColor?: string;
 }
 
 // All available themes (same as Safari)
@@ -120,9 +123,9 @@ const ALL_THEMES: Theme[] = [
 ];
 
 const KeyboardScreen: React.FC<KeyboardScreenProps> = ({ navigation }) => {
-  const { appThemeColor } = useAppTheme();
+  const { appThemeColor, backgroundColor, textColor, sectionBgColor, borderColor } = useAppTheme();
   const [currentTheme, setCurrentTheme] = useState<Theme | null>(null);
-  const [appThemes, setAppThemes] = useState<AppSettings>({});
+  const [appThemes, setAppThemes] = useState<Record<string, any>>({});
 
   useEffect(() => {
     loadCurrentTheme();
@@ -158,13 +161,15 @@ const KeyboardScreen: React.FC<KeyboardScreenProps> = ({ navigation }) => {
         }
         
         if (matchingPreset) {
-          setCurrentTheme({
-            id: matchingPreset.id,
-            name: matchingPreset.name,
-            background: matchingPreset.keyboardTheme.background,
-            text: matchingPreset.keyboardTheme.text,
-            link: matchingPreset.keyboardTheme.link,
-          });
+            setCurrentTheme({
+              id: matchingPreset.id,
+              name: matchingPreset.name,
+              background: matchingPreset.keyboardTheme.background,
+              text: matchingPreset.keyboardTheme.text,
+              link: matchingPreset.keyboardTheme.link,
+              keyColor: matchingPreset.keyboardTheme.keyColor,
+              returnKeyColor: matchingPreset.keyboardTheme.returnKeyColor,
+            });
         } else {
           // Check against ALL_THEMES
           const matchingTheme = ALL_THEMES.find(
@@ -183,6 +188,8 @@ const KeyboardScreen: React.FC<KeyboardScreenProps> = ({ navigation }) => {
               background: current.background || '#000000',
               text: current.text || '#ffffff',
               link: current.link || '#228B22',
+              keyColor: current.keyColor || '#2a2a2a',
+              returnKeyColor: current.returnKeyColor || current.link || '#228B22',
             });
           }
         }
@@ -204,9 +211,9 @@ const KeyboardScreen: React.FC<KeyboardScreenProps> = ({ navigation }) => {
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Keyboard</Text>
+    <View style={[styles.container, { backgroundColor }]}>
+      <View style={[styles.header, { borderBottomColor: borderColor }]}>
+        <Text style={[styles.headerTitle, { color: textColor }]}>Keyboard</Text>
         <TouchableOpacity
           style={styles.settingsButton}
           onPress={() => navigation.navigate('Settings')}
@@ -216,70 +223,93 @@ const KeyboardScreen: React.FC<KeyboardScreenProps> = ({ navigation }) => {
       </View>
 
       <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
-        {/* Current Theme Button - Enlarged */}
+        {/* Preview Section - Non-clickable */}
         {currentTheme && (
           <TouchableOpacity
             style={[
-              styles.currentThemeButton,
-              { backgroundColor: currentTheme.background },
+              styles.themeCard,
+              { backgroundColor: currentTheme.background, marginBottom: 20 },
             ]}
-            onPress={() => navigation.navigate('ThemeSelection', { forKeyboard: true })}
+            onPress={() => {}}
           >
-            <View style={styles.currentThemeContent}>
-              <View style={styles.currentThemeTextContainer}>
-                <View style={styles.currentThemeHeader}>
-                  <Text style={[styles.currentThemeLabel, { color: currentTheme.text }]}>
-                    Current Theme
-                  </Text>
-                  <View style={[styles.activeBadge, { backgroundColor: appThemeColor }]}>
-                    <Text style={styles.activeBadgeText}>Active</Text>
-                  </View>
-                </View>
-                <Text style={[styles.currentThemeName, { color: currentTheme.text }]}>
+            <View style={styles.themeContent}>
+              <View style={styles.themeTextContainer}>
+                <Text style={[styles.themeName, { color: currentTheme.text }]}>
                   {currentTheme.name}
                 </Text>
+                <View style={styles.previewColors}>
+                  <View style={[styles.colorIndicator, { backgroundColor: currentTheme.background }]} />
+                  <View style={[styles.colorIndicator, { backgroundColor: currentTheme.keyColor || '#2a2a2a' }]} />
+                  <View style={[styles.colorIndicator, { backgroundColor: currentTheme.text }]} />
+                  <View style={[styles.colorIndicator, { backgroundColor: currentTheme.link }]} />
+                </View>
+              </View>
+              <View style={styles.keyboardPreviewContainer}>
+                <View style={styles.keyboardRow}>
+                  <View style={[styles.key, { backgroundColor: currentTheme.keyColor || '#2a2a2a' }]}>
+                    <Text style={[styles.keyText, { color: currentTheme.text }]}>A</Text>
+                  </View>
+                  <View style={[styles.key, { backgroundColor: currentTheme.keyColor || '#2a2a2a' }]}>
+                    <Text style={[styles.keyText, { color: currentTheme.text }]}>U</Text>
+                  </View>
+                  <View style={[styles.key, { backgroundColor: currentTheme.keyColor || '#2a2a2a' }]}>
+                    <Text style={[styles.keyText, { color: currentTheme.text }]}>R</Text>
+                  </View>
+                  <View style={[styles.key, { backgroundColor: currentTheme.keyColor || '#2a2a2a' }]}>
+                    <Text style={[styles.keyText, { color: currentTheme.text }]}>A</Text>
+                  </View>
+                </View>
+                <View style={styles.keyboardRow}>
+                  <View style={[styles.spaceKey, { backgroundColor: currentTheme.keyColor || '#2a2a2a' }]}>
+                    <Text style={[styles.keyText, { color: currentTheme.text }]}>space</Text>
+                  </View>
+                  <View style={[styles.returnKey, { backgroundColor: currentTheme.returnKeyColor || currentTheme.link || '#228B22' }]}>
+                    <Text style={[styles.keyText, { color: currentTheme.text }]}>↵</Text>
+                  </View>
+                </View>
               </View>
             </View>
-            <Text
-              style={[
-                styles.arrow,
-                { color: currentTheme.link || appThemeColor },
-              ]}
-            >
-              →
-            </Text>
           </TouchableOpacity>
         )}
 
         {/* Browse Themes Button */}
         <TouchableOpacity
-          style={styles.selectMoreButton}
-          onPress={() => navigation.navigate('ThemeSelection', { forKeyboard: true })}
+          style={[styles.selectMoreButton, { backgroundColor: sectionBgColor, borderColor }]}
+          onPress={() => navigation.navigate('BrowseThemes', { forKeyboard: true })}
         >
-          <Text style={[styles.selectMoreButtonText, { color: appThemeColor }]}>Browse Themes</Text>
-          <Text style={[styles.browseThemesArrow, { color: appThemeColor }]}>→</Text>
+          <Text style={[styles.selectMoreButtonText, { color: textColor }]}>Browse Themes</Text>
+          <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
+        </TouchableOpacity>
+
+        {/* Your Themes Button */}
+        <TouchableOpacity
+          style={[styles.selectMoreButton, { backgroundColor: sectionBgColor, borderColor }]}
+          onPress={() => navigation.navigate('CustomThemesList', { forKeyboard: true })}
+        >
+          <Text style={[styles.selectMoreButtonText, { color: textColor }]}>Your Themes</Text>
+          <Ionicons name="folder" size={20} color={appThemeColor} />
         </TouchableOpacity>
 
         {/* Create Theme Button */}
         <TouchableOpacity
-          style={styles.selectMoreButton}
+          style={[styles.selectMoreButton, { backgroundColor: sectionBgColor, borderColor }]}
           onPress={() => navigation.navigate('CustomKeyboardTheme')}
         >
-          <Text style={[styles.selectMoreButtonText, { color: appThemeColor }]}>Create Theme</Text>
-          <Text style={[styles.browseThemesArrow, { color: appThemeColor }]}>→</Text>
+          <Text style={[styles.selectMoreButtonText, { color: textColor }]}>Create Theme</Text>
+          <Ionicons name="add" size={20} color={appThemeColor} />
         </TouchableOpacity>
 
         {/* Per-App Settings Section */}
         <View style={styles.appSettingsSection}>
-          <Text style={styles.sectionTitle}>Per-App Settings</Text>
-          <Text style={styles.sectionDescription}>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Per-App Settings</Text>
+          <Text style={[styles.sectionDescription, { color: textColor }]}>
             Customize keyboard themes for specific apps.
           </Text>
 
           {Object.keys(appThemes).length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>No app-specific settings yet</Text>
-              <Text style={styles.emptyStateSubtext}>
+            <View style={[styles.emptyState, { backgroundColor: sectionBgColor, borderColor }]}>
+              <Text style={[styles.emptyStateText, { color: textColor }]}>No app-specific settings yet</Text>
+              <Text style={[styles.emptyStateSubtext, { color: textColor }]}>
                 Add custom settings for individual apps.
               </Text>
             </View>
@@ -290,28 +320,29 @@ const KeyboardScreen: React.FC<KeyboardScreenProps> = ({ navigation }) => {
               return (
                 <TouchableOpacity
                   key={bundleId}
-                  style={styles.appRow}
+                  style={[styles.appRow, { backgroundColor: sectionBgColor, borderColor }]}
                   onPress={() => navigation.navigate('AppSettings', { bundleId })}
                 >
                   <View style={styles.appRowContent}>
-                    <Text style={styles.appName}>{displayName}</Text>
+                    <Text style={[styles.appName, { color: textColor }]}>{displayName}</Text>
                     {appThemes[bundleId].enabled ? (
-                      <Text style={styles.appStatus}>Enabled</Text>
+                      <Text style={[styles.appStatus, { color: appThemeColor }]}>Enabled</Text>
                     ) : (
-                      <Text style={styles.appStatusDisabled}>Disabled</Text>
+                      <Text style={[styles.appStatusDisabled, { color: '#FF4444' }]}>Disabled</Text>
                     )}
                   </View>
-                  <Text style={[styles.arrow, { color: appThemeColor }]}>→</Text>
+                  <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
                 </TouchableOpacity>
               );
             })
           )}
 
           <TouchableOpacity
-            style={styles.addAppButton}
+            style={[styles.addAppButton, { backgroundColor: sectionBgColor, borderColor }]}
             onPress={() => navigation.navigate('AppSettings', { bundleId: '' })}
           >
-            <Text style={[styles.addAppButtonText, { color: appThemeColor }]}>+ Add App</Text>
+            <Text style={[styles.addAppButtonText, { color: appThemeColor }]}>Add App</Text>
+            <Ionicons name="add" size={20} color={appThemeColor} />
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -322,7 +353,6 @@ const KeyboardScreen: React.FC<KeyboardScreenProps> = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
   },
   header: {
     flexDirection: 'row',
@@ -332,12 +362,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
   },
   headerTitle: {
     fontSize: 34,
     fontWeight: 'bold',
-    color: '#FFFFFF',
   },
   settingsButton: {
     padding: 8,
@@ -364,6 +392,24 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#2a2a2a',
   },
+  themeCard: {
+    borderRadius: 16,
+    padding: 28,
+    borderWidth: 2,
+  },
+  themeContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  themeTextContainer: {
+    flex: 1,
+  },
+  themeName: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
   currentThemeContent: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -380,7 +426,6 @@ const styles = StyleSheet.create({
   },
   currentThemeLabel: {
     fontSize: 14,
-    color: '#888888',
   },
   activeBadge: {
     paddingHorizontal: 8,
@@ -390,21 +435,49 @@ const styles = StyleSheet.create({
   activeBadgeText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#FFFFFF',
     textTransform: 'uppercase',
   },
   currentThemeName: {
     fontSize: 22,
     fontWeight: '600',
-    color: '#FFFFFF',
+    marginBottom: 12,
+  },
+  previewColors: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  colorIndicator: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  previewTextContainer: {
+    flex: 1,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    paddingLeft: 20,
+  },
+  previewText: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  previewLink: {
+    fontSize: 14,
+    textDecorationLine: 'underline',
   },
   arrow: {
     fontSize: 20,
     color: '#FFFFFF',
     fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 20,
+    width: 20,
   },
   selectMoreButton: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     paddingVertical: 16,
     paddingHorizontal: 20,
@@ -412,18 +485,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#2a2a2a',
     marginBottom: 24,
   },
   selectMoreButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#FFFFFF',
   },
   browseThemesArrow: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
+    // Style no longer used - replaced with Ionicons
   },
   appSettingsSection: {
     marginTop: 32,
@@ -431,17 +500,14 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#FFFFFF',
     marginBottom: 8,
   },
   sectionDescription: {
     fontSize: 14,
-    color: '#888888',
     marginBottom: 16,
     lineHeight: 20,
   },
   appRow: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     padding: 16,
     flexDirection: 'row',
@@ -449,7 +515,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
   },
   appRowContent: {
     flex: 1,
@@ -457,7 +522,6 @@ const styles = StyleSheet.create({
   appName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#FFFFFF',
     marginBottom: 4,
   },
   appStatus: {
@@ -473,37 +537,75 @@ const styles = StyleSheet.create({
   emptyState: {
     padding: 24,
     alignItems: 'center',
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
     marginBottom: 16,
   },
   emptyStateText: {
     fontSize: 16,
-    color: '#FFFFFF',
     marginBottom: 8,
     fontWeight: '600',
   },
   emptyStateSubtext: {
     fontSize: 14,
-    color: '#888888',
     textAlign: 'center',
     lineHeight: 20,
   },
   addAppButton: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     padding: 16,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#2a2a2a',
     marginTop: 8,
   },
   addAppButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#FFFFFF',
+  },
+  addAppButtonIcon: {
+    // Style no longer used - replaced with Ionicons
+  },
+  keyboardPreviewContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingLeft: 20,
+    minWidth: 120,
+  },
+  keyboardRow: {
+    flexDirection: 'row',
+    gap: 4,
+    marginBottom: 4,
+  },
+  key: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 4,
+    minWidth: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  spaceKey: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 4,
+    flex: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
+  },
+  returnKey: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 4,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  keyText: {
+    fontSize: 10,
+    fontWeight: '600',
   },
 });
 

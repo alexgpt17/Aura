@@ -8,7 +8,7 @@ import {
   TextInput,
   Alert,
 } from 'react-native';
-import ColorPickerModal from '../components/ColorPickerModal';
+import SimpleColorPickerModal from '../components/SimpleColorPickerModal';
 import { saveThemes, getThemes, hasPurchasedCustomThemes } from '../storage';
 import { PurchaseManager } from '../services/PurchaseManager';
 import { useAppTheme } from '../contexts/AppThemeContext';
@@ -30,7 +30,7 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
   const creatingAura = route?.params?.creatingAura || false;
   const returnTo = route?.params?.returnTo;
   const returnParams = route?.params?.returnParams || {};
-  const { appThemeColor } = useAppTheme();
+  const { appThemeColor, backgroundColor, textColor, sectionBgColor, borderColor } = useAppTheme();
   const [themeName, setThemeName] = useState('');
   const [background, setBackground] = useState('#000000');
   const [text, setText] = useState('#FFFFFF');
@@ -121,8 +121,11 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
       return;
     }
 
-    // If creating Aura, navigate back with theme data
+    // If creating Aura, navigate back to CreateAuraFlow with updated theme data
+    // Using navigate instead of goBack to ensure we update the existing screen
     if (creatingAura && returnTo) {
+      // Navigate to the return screen with updated params
+      // React Navigation will update the existing screen if it's in the stack
       navigation.navigate(returnTo, {
         ...returnParams,
         safariTheme: {
@@ -157,6 +160,7 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
         text,
         link,
         keyColor: forKeyboard ? '#2a2a2a' : undefined, // Only include keyColor for keyboard themes
+        type: (forKeyboard ? 'keyboard' : 'safari') as const,
       };
 
       // Add to custom themes array
@@ -222,68 +226,38 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
+    <View style={[styles.container, { backgroundColor }]}>
+      <View style={[styles.header, { borderBottomColor: borderColor }]}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
         >
-          <Text style={[styles.backButtonText, { color: appThemeColor }]}>← Back</Text>
+          <Text style={[styles.backButtonText, { color: appThemeColor }]}>Cancel</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create Theme</Text>
-        <View style={styles.placeholder} />
+        <Text style={[styles.headerTitle, { color: textColor }]}>Create Theme</Text>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={handleSaveTheme}
+        >
+          <Text style={[styles.backButtonText, { color: appThemeColor }]}>Save</Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         {!creatingAura && (
           <>
-            <Text style={styles.label}>Theme Name</Text>
+            <Text style={[styles.label, { color: textColor }]}>Theme Name</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { backgroundColor: sectionBgColor, borderColor, color: textColor }]}
               placeholder="Enter theme name"
-              placeholderTextColor="#666"
+              placeholderTextColor={textColor === '#FFFFFF' ? '#666' : '#999'}
               value={themeName}
               onChangeText={setThemeName}
             />
           </>
         )}
 
-        <Text style={styles.sectionTitle}>Colors</Text>
-
-        <View style={styles.colorSection}>
-          <Text style={styles.colorLabel}>Background</Text>
-          <TouchableOpacity
-            style={styles.colorButton}
-            onPress={() => openColorPicker('background', background)}
-          >
-            <View style={[styles.colorPreview, { backgroundColor: background }]} />
-            <Text style={styles.colorValue}>{background}</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.colorSection}>
-          <Text style={styles.colorLabel}>Text</Text>
-          <TouchableOpacity
-            style={styles.colorButton}
-            onPress={() => openColorPicker('text', text)}
-          >
-            <View style={[styles.colorPreview, { backgroundColor: text }]} />
-            <Text style={styles.colorValue}>{text}</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.colorSection}>
-          <Text style={styles.colorLabel}>Link</Text>
-          <TouchableOpacity
-            style={styles.colorButton}
-            onPress={() => openColorPicker('link', link)}
-          >
-            <View style={[styles.colorPreview, { backgroundColor: link }]} />
-            <Text style={styles.colorValue}>{link}</Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.sectionTitle}>Preview</Text>
+        <Text style={[styles.sectionTitle, { color: textColor }]}>Preview</Text>
         <View style={[styles.previewBox, { backgroundColor: background }]}>
           <Text style={[styles.previewText, { color: text }]}>
             This is how your text will look
@@ -293,14 +267,43 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
           </Text>
         </View>
 
-        <TouchableOpacity style={styles.saveButton} onPress={handleSaveTheme}>
-          <Text style={[styles.saveButtonText, { color: appThemeColor }]}>
-            {creatingAura ? 'Next' : 'Save Theme'}
-          </Text>
-        </TouchableOpacity>
+        <Text style={[styles.sectionTitle, { color: textColor }]}>Colors</Text>
+
+        <View style={styles.colorSection}>
+          <Text style={[styles.colorLabel, { color: textColor }]}>Background</Text>
+          <TouchableOpacity
+            style={[styles.colorButton, { backgroundColor: sectionBgColor, borderColor }]}
+            onPress={() => openColorPicker('background', background)}
+          >
+            <View style={[styles.colorPreview, { backgroundColor: background }]} />
+            <Text style={[styles.colorValue, { color: textColor }]}>{background}</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.colorSection}>
+          <Text style={[styles.colorLabel, { color: textColor }]}>Text</Text>
+          <TouchableOpacity
+            style={[styles.colorButton, { backgroundColor: sectionBgColor, borderColor }]}
+            onPress={() => openColorPicker('text', text)}
+          >
+            <View style={[styles.colorPreview, { backgroundColor: text }]} />
+            <Text style={[styles.colorValue, { color: textColor }]}>{text}</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.colorSection}>
+          <Text style={[styles.colorLabel, { color: textColor }]}>Link</Text>
+          <TouchableOpacity
+            style={[styles.colorButton, { backgroundColor: sectionBgColor, borderColor }]}
+            onPress={() => openColorPicker('link', link)}
+          >
+            <View style={[styles.colorPreview, { backgroundColor: link }]} />
+            <Text style={[styles.colorValue, { color: textColor }]}>{link}</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
 
-      <ColorPickerModal
+      <SimpleColorPickerModal
         visible={colorPickerVisible}
         initialColor={colorToEdit?.value || '#000000'}
         onColorSelect={handleColorSelect}
@@ -317,7 +320,6 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
   },
   header: {
     flexDirection: 'row',
@@ -327,7 +329,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
   },
   backButton: {
     padding: 8,
@@ -340,7 +341,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#FFFFFF',
   },
   placeholder: {
     width: 60,
@@ -353,24 +353,19 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 16,
-    color: '#FFFFFF',
     marginBottom: 8,
     fontWeight: '600',
   },
   input: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 8,
     padding: 16,
     fontSize: 16,
-    color: '#FFFFFF',
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: '#333',
   },
   sectionTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#888888',
     marginTop: 8,
     marginBottom: 16,
   },
@@ -379,18 +374,15 @@ const styles = StyleSheet.create({
   },
   colorLabel: {
     fontSize: 16,
-    color: '#FFFFFF',
     marginBottom: 8,
     fontWeight: '600',
   },
   colorButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1a1a1a',
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#333',
   },
   colorPreview: {
     width: 40,
@@ -401,7 +393,6 @@ const styles = StyleSheet.create({
     borderColor: '#333',
   },
   colorValue: {
-    color: '#FFFFFF',
     fontSize: 16,
     fontFamily: 'monospace',
   },

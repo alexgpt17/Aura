@@ -12,6 +12,8 @@ import { saveThemes, getThemes, hasPurchasedCustomThemes } from '../storage';
 import FocusModeService from '../services/FocusModeService';
 import { useAppTheme } from '../contexts/AppThemeContext';
 import ColorPickerDropdown from '../components/ColorPickerDropdown';
+import ThemeModePicker from '../components/ThemeModePicker';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 interface SettingsScreenProps {
   navigation: any;
@@ -30,7 +32,16 @@ interface FocusModeSettings {
 }
 
 const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
-  const { appThemeColor, setAppThemeColor } = useAppTheme();
+  const { 
+    appThemeColor, 
+    setAppThemeColor, 
+    appThemeMode, 
+    setAppThemeMode,
+    backgroundColor,
+    textColor,
+    sectionBgColor,
+    borderColor,
+  } = useAppTheme();
   const [globalEnabled, setGlobalEnabled] = useState(true);
   const [focusModeEnabled, setFocusModeEnabled] = useState(false);
   const [focusModeMappings, setFocusModeMappings] = useState<FocusModeMapping>({
@@ -41,6 +52,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
   });
   const [focusModeAvailable, setFocusModeAvailable] = useState(false);
   const [hasPurchased, setHasPurchased] = useState(false);
+  const [displayUppercaseKeys, setDisplayUppercaseKeys] = useState(true);
 
   useEffect(() => {
     loadSettings();
@@ -59,6 +71,9 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
       const themeData = await getThemes();
       if (themeData) {
         setGlobalEnabled(themeData.globalTheme?.enabled ?? true);
+        
+        // Load keyboard settings
+        setDisplayUppercaseKeys(themeData.keyboardTheme?.displayUppercaseKeys ?? true);
         
         // Load Focus Mode settings
         const focusSettings = themeData.focusModeSettings;
@@ -103,6 +118,24 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
     }
   };
 
+  const handleToggleDisplayUppercaseKeys = async (value: boolean) => {
+    try {
+      const currentData = await getThemes();
+      const newThemeData = {
+        ...currentData,
+        keyboardTheme: {
+          ...currentData?.keyboardTheme,
+          displayUppercaseKeys: value,
+        },
+      };
+      await saveThemes(newThemeData);
+      setDisplayUppercaseKeys(value);
+    } catch (error) {
+      console.error('Error toggling keyboard setting:', error);
+      Alert.alert('Error', 'Failed to update keyboard setting. Please try again.');
+    }
+  };
+
   const handleToggleFocusMode = async (value: boolean) => {
     try {
       await FocusModeService.updateSettings({ enabled: value });
@@ -124,84 +157,129 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
+    <View style={[styles.container, { backgroundColor }]}>
+      <View style={[styles.header, { borderBottomColor: borderColor }]}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
         >
           <Text style={[styles.backButtonText, { color: appThemeColor }]}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Settings</Text>
+        <Text style={[styles.headerTitle, { color: textColor }]}>Settings</Text>
         <View style={styles.placeholder} />
       </View>
 
       <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
         {/* App Appearance Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>App Appearance</Text>
-          <Text style={styles.sectionDescription}>
-            Customize the accent color used throughout the app.
+          <Text style={[styles.sectionTitle, { color: textColor }]}>App Appearance</Text>
+          <Text style={[styles.sectionDescription, { color: textColor }]}>
+            Customize the accent color and theme used throughout the app.
           </Text>
 
-          <View style={styles.settingRow}>
+          <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
             <View style={styles.settingContent}>
               <Text style={[styles.settingLabel, { color: appThemeColor }]}>App Color</Text>
-              <Text style={styles.settingDescription}>
+              <Text style={[styles.settingDescription, { color: textColor }]}>
                 Choose the accent color for buttons, highlights, and UI elements.
               </Text>
             </View>
           </View>
-          <View style={styles.colorPickerContainer}>
+          <View style={[styles.colorPickerContainer, { marginBottom: 16 }]}>
             <ColorPickerDropdown
               selectedColor={appThemeColor}
               onColorSelect={setAppThemeColor}
             />
           </View>
+
+          <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
+            <View style={styles.settingContent}>
+              <Text style={[styles.settingLabel, { color: appThemeColor }]}>App Theme</Text>
+              <Text style={[styles.settingDescription, { color: textColor }]}>
+                Choose between dark and light mode for the app interface.
+              </Text>
+            </View>
+          </View>
+          <View style={styles.colorPickerContainer}>
+            <ThemeModePicker
+              selectedMode={appThemeMode}
+              onModeSelect={setAppThemeMode}
+              backgroundColor={sectionBgColor}
+              textColor={textColor}
+              borderColor={borderColor}
+              sectionBgColor={backgroundColor}
+            />
+          </View>
         </View>
 
-        {/* Default Settings Section */}
+        {/* Safari Settings Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionDescription}>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Safari Settings</Text>
+          <Text style={[styles.sectionDescription, { color: textColor }]}>
             These settings apply to every website, unless you have custom settings set up for a website.
           </Text>
 
-          <View style={styles.settingRow}>
+          <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
             <View style={styles.settingContent}>
-              <Text style={styles.settingLabel}>Enabled</Text>
-              <Text style={styles.settingDescription}>
+              <Text style={[styles.settingLabel, { color: textColor }]}>Enabled</Text>
+              <Text style={[styles.settingDescription, { color: textColor }]}>
                 Aura will enhance websites when enabled.
               </Text>
             </View>
             <Switch
               value={globalEnabled}
               onValueChange={handleToggleGlobal}
-              trackColor={{ false: '#333', true: appThemeColor }}
-              thumbColor={globalEnabled ? '#FFFFFF' : '#888'}
+              trackColor={{ false: appThemeMode === 'dark' ? '#333' : '#CCC', true: appThemeColor }}
+              thumbColor={globalEnabled ? (appThemeMode === 'dark' ? '#FFFFFF' : '#FFFFFF') : (appThemeMode === 'dark' ? '#888' : '#999')}
             />
           </View>
 
         </View>
 
+        {/* Keyboard Settings Section */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Keyboard Settings</Text>
+          <Text style={[styles.sectionDescription, { color: textColor }]}>
+            Customize the behavior of your Aura keyboard.
+          </Text>
+
+          <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
+            <View style={styles.settingContent}>
+              <Text style={[styles.settingLabel, { color: textColor }]}>Display Uppercase Letters</Text>
+              <Text style={[styles.settingDescription, { color: textColor }]}>
+                {displayUppercaseKeys 
+                  ? 'Keys display in uppercase like iOS (shift affects typing behavior only)'
+                  : 'Keys display in lowercase (shift changes key appearance)'}
+              </Text>
+            </View>
+            <Switch
+              value={displayUppercaseKeys}
+              onValueChange={handleToggleDisplayUppercaseKeys}
+              trackColor={{ false: appThemeMode === 'dark' ? '#333' : '#CCC', true: appThemeColor }}
+              thumbColor={displayUppercaseKeys ? (appThemeMode === 'dark' ? '#FFFFFF' : '#FFFFFF') : (appThemeMode === 'dark' ? '#888' : '#999')}
+            />
+          </View>
+        </View>
+
         {/* Focus Mode Integration Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Focus Mode Integration</Text>
-          <Text style={styles.sectionDescription}>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Focus Mode Integration</Text>
+          <Text style={[styles.sectionDescription, { color: textColor }]}>
             Automatically apply Aura presets based on your iOS Focus mode.
           </Text>
           
           {!focusModeAvailable && (
-            <View style={styles.warningBox}>
+            <View style={[styles.warningBox, { backgroundColor: sectionBgColor, borderColor }]}>
               <Text style={styles.warningText}>
                 Focus Filters require iOS 15.0 or later.
               </Text>
             </View>
           )}
 
-          <View style={styles.settingRow}>
+          <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
             <View style={styles.settingContent}>
-              <Text style={styles.settingLabel}>Enabled</Text>
-              <Text style={styles.settingDescription}>
+              <Text style={[styles.settingLabel, { color: textColor }]}>Enabled</Text>
+              <Text style={[styles.settingDescription, { color: textColor }]}>
                 Aura will automatically change themes when your Focus mode changes.
               </Text>
             </View>
@@ -209,63 +287,63 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
               value={focusModeEnabled && focusModeAvailable}
               onValueChange={handleToggleFocusMode}
               disabled={!focusModeAvailable}
-              trackColor={{ false: '#333', true: appThemeColor }}
-              thumbColor={focusModeEnabled && focusModeAvailable ? '#FFFFFF' : '#888'}
+              trackColor={{ false: appThemeMode === 'dark' ? '#333' : '#CCC', true: appThemeColor }}
+              thumbColor={focusModeEnabled && focusModeAvailable ? (appThemeMode === 'dark' ? '#FFFFFF' : '#FFFFFF') : (appThemeMode === 'dark' ? '#888' : '#999')}
             />
           </View>
 
           {focusModeEnabled && focusModeAvailable && (
             <>
               <TouchableOpacity
-                style={styles.settingRow}
+                style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}
                 onPress={() => handleSelectFocusPreset('work')}
               >
                 <View style={styles.settingContent}>
                   <Text style={[styles.settingLabel, { color: appThemeColor }]}>Work Focus</Text>
-                  <Text style={styles.settingDescription}>
+                  <Text style={[styles.settingDescription, { color: textColor }]}>
                     {focusModeMappings.work ? `Preset: ${focusModeMappings.work}` : 'No preset selected'}
                   </Text>
                 </View>
-                <Text style={[styles.arrow, { color: appThemeColor }]}>→</Text>
+                <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.settingRow}
+                style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}
                 onPress={() => handleSelectFocusPreset('sleep')}
               >
                 <View style={styles.settingContent}>
                   <Text style={[styles.settingLabel, { color: appThemeColor }]}>Sleep Focus</Text>
-                  <Text style={styles.settingDescription}>
+                  <Text style={[styles.settingDescription, { color: textColor }]}>
                     {focusModeMappings.sleep ? `Preset: ${focusModeMappings.sleep}` : 'No preset selected'}
                   </Text>
                 </View>
-                <Text style={[styles.arrow, { color: appThemeColor }]}>→</Text>
+                <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.settingRow}
+                style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}
                 onPress={() => handleSelectFocusPreset('personal')}
               >
                 <View style={styles.settingContent}>
                   <Text style={[styles.settingLabel, { color: appThemeColor }]}>Personal Focus</Text>
-                  <Text style={styles.settingDescription}>
+                  <Text style={[styles.settingDescription, { color: textColor }]}>
                     {focusModeMappings.personal ? `Preset: ${focusModeMappings.personal}` : 'No preset selected'}
                   </Text>
                 </View>
-                <Text style={[styles.arrow, { color: appThemeColor }]}>→</Text>
+                <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.settingRow}
+                style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}
                 onPress={() => handleSelectFocusPreset('doNotDisturb')}
               >
                 <View style={styles.settingContent}>
                   <Text style={[styles.settingLabel, { color: appThemeColor }]}>Do Not Disturb</Text>
-                  <Text style={styles.settingDescription}>
+                  <Text style={[styles.settingDescription, { color: textColor }]}>
                     {focusModeMappings.doNotDisturb ? `Preset: ${focusModeMappings.doNotDisturb}` : 'No preset selected'}
                   </Text>
                 </View>
-                <Text style={[styles.arrow, { color: appThemeColor }]}>→</Text>
+                <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
               </TouchableOpacity>
             </>
           )}
@@ -273,20 +351,20 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
 
         {/* Purchase Status Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Custom Themes</Text>
-          <Text style={styles.sectionDescription}>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Custom Themes</Text>
+          <Text style={[styles.sectionDescription, { color: textColor }]}>
             Create and manage your own custom themes for Safari and Keyboard.
           </Text>
-          <View style={styles.settingRow}>
+          <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
             <View style={styles.settingContent}>
-              <Text style={styles.settingLabel}>Purchase Status</Text>
-              <Text style={styles.settingDescription}>
+              <Text style={[styles.settingLabel, { color: textColor }]}>Purchase Status</Text>
+              <Text style={[styles.settingDescription, { color: textColor }]}>
                 {hasPurchased 
                   ? 'You have unlocked custom theme creation. You can create up to 5 custom themes.' 
                   : 'Unlock custom theme creation with a one-time purchase of $4.99.'}
               </Text>
             </View>
-            <View style={styles.purchaseStatusBadge}>
+            <View style={[styles.purchaseStatusBadge, { backgroundColor: sectionBgColor, borderColor }]}>
               <Text style={[styles.purchaseStatusText, { color: hasPurchased ? '#4CAF50' : '#FF9800' }]}>
                 {hasPurchased ? '✓ Unlocked' : 'Locked'}
               </Text>
@@ -294,7 +372,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
           </View>
           {!hasPurchased && (
             <TouchableOpacity
-              style={[styles.purchaseButton, { borderColor: appThemeColor }]}
+              style={[styles.purchaseButton, { borderColor: appThemeColor, backgroundColor: sectionBgColor }]}
               onPress={() => navigation.navigate('Purchase')}
             >
               <Text style={[styles.purchaseButtonText, { color: appThemeColor }]}>
@@ -306,13 +384,13 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
 
         {/* About Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>About</Text>
-          <View style={styles.aboutContent}>
-            <Text style={styles.aboutLabel}>Version</Text>
-            <Text style={styles.aboutValue}>1.0</Text>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>About</Text>
+          <View style={[styles.aboutContent, { backgroundColor: sectionBgColor, borderBottomColor: borderColor }]}>
+            <Text style={[styles.aboutLabel, { color: textColor }]}>Version</Text>
+            <Text style={[styles.aboutValue, { color: textColor }]}>1.0</Text>
           </View>
-          <View style={styles.aboutContentContact}>
-            <Text style={styles.aboutLabel}>Contact Developer:</Text>
+          <View style={[styles.aboutContentContact, { backgroundColor: sectionBgColor, borderBottomColor: borderColor }]}>
+            <Text style={[styles.aboutLabel, { color: textColor }]}>Contact Developer:</Text>
             <TouchableOpacity onPress={() => {
               // Open email client
               Alert.alert('Contact', 'Email: alexmartens1111@gmail.com');
@@ -329,7 +407,6 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
   },
   header: {
     flexDirection: 'row',
@@ -339,7 +416,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
   },
   backButton: {
     padding: 8,
@@ -352,7 +428,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 34,
     fontWeight: 'bold',
-    color: '#FFFFFF',
     flex: 1,
     textAlign: 'center',
   },
@@ -371,12 +446,10 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#FFFFFF',
     marginBottom: 8,
   },
   sectionDescription: {
     fontSize: 14,
-    color: '#FFFFFF', // White for explanations
     marginBottom: 16,
     lineHeight: 20,
   },
@@ -386,11 +459,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 12,
     paddingHorizontal: 16,
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
   },
   settingContent: {
     flex: 1,
@@ -398,18 +469,14 @@ const styles = StyleSheet.create({
   settingLabel: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#FFFFFF', // White by default, App Color will override
     marginBottom: 4,
   },
   settingDescription: {
     fontSize: 14,
-    color: '#888888',
     lineHeight: 18,
   },
   arrow: {
-    fontSize: 20,
-    color: '#FFFFFF',
-    fontWeight: '600',
+    // Style no longer used - replaced with Ionicons
     marginLeft: 12,
   },
   emptyState: {
@@ -429,12 +496,10 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   warningBox: {
-    backgroundColor: '#2a1a1a',
     borderRadius: 8,
     padding: 12,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#4a2a2a',
   },
   warningText: {
     fontSize: 14,
@@ -451,8 +516,6 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     marginBottom: 8,
   },
@@ -463,20 +526,16 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     marginBottom: 8,
     minHeight: 80,
   },
   aboutLabel: {
     fontSize: 16,
-    color: '#FFFFFF',
     fontWeight: '500',
   },
   aboutValue: {
     fontSize: 16,
-    color: '#FFFFFF', // White for values
   },
   aboutLink: {
     color: '#007AFF',
@@ -488,16 +547,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
-    backgroundColor: '#1a1a1a',
     borderWidth: 1,
-    borderColor: '#2a2a2a',
   },
   purchaseStatusText: {
     fontSize: 12,
     fontWeight: '600',
   },
   purchaseButton: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',

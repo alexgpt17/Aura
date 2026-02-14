@@ -10,7 +10,7 @@ import HomeScreen from './src/screens/HomeScreen';
 import SafariScreen from './src/screens/SafariScreen';
 import KeyboardScreen from './src/screens/KeyboardScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
-import ThemeSelectionScreen from './src/screens/ThemeSelectionScreen';
+import BrowseThemesScreen from './src/screens/BrowseThemesScreen';
 import CustomThemeScreen from './src/screens/CustomThemeScreen';
 import CustomKeyboardThemeScreen from './src/screens/CustomKeyboardThemeScreen';
 import CustomThemesListScreen from './src/screens/CustomThemesListScreen';
@@ -18,6 +18,7 @@ import WebsiteSettingsScreen from './src/screens/WebsiteSettingsScreen';
 import AppSettingsScreen from './src/screens/AppSettingsScreen';
 import AppPickerScreen from './src/screens/AppPickerScreen';
 import FocusModePresetSelectionScreen from './src/screens/FocusModePresetSelectionScreen';
+import KeyboardIcon from './src/components/KeyboardIcon';
 import AuraPresetsScreen from './src/screens/AuraPresetsScreen';
 import CreateAuraFlowScreen from './src/screens/CreateAuraFlowScreen';
 import PurchaseScreen from './src/screens/PurchaseScreen';
@@ -29,22 +30,22 @@ const Tab = createBottomTabNavigator();
 // Main tab navigator
 const MainTabs = () => {
   const insets = useSafeAreaInsets();
-  const { appThemeColor } = useAppTheme();
+  const { appThemeColor, backgroundColor, borderColor, textColor } = useAppTheme();
   
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#000000',
-          borderTopColor: '#1a1a1a',
+          backgroundColor: backgroundColor,
+          borderTopColor: borderColor,
           borderTopWidth: 1,
           paddingTop: 8,
           paddingBottom: Math.max(insets.bottom, 8),
           height: 60 + Math.max(insets.bottom - 8, 0),
         },
         tabBarActiveTintColor: appThemeColor,
-        tabBarInactiveTintColor: '#888888',
+        tabBarInactiveTintColor: textColor === '#FFFFFF' ? '#888888' : '#666666',
         tabBarLabelStyle: {
           fontSize: 12,
           fontWeight: '600',
@@ -72,7 +73,7 @@ const MainTabs = () => {
         component={KeyboardScreen}
         options={{
           tabBarLabel: 'Keyboard',
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>▭</Text>,
+          tabBarIcon: ({ color }) => <KeyboardIcon size={20} color={color} />,
         }}
       />
     </Tab.Navigator>
@@ -130,12 +131,11 @@ const App = () => {
           <Stack.Navigator
             screenOptions={{
               headerShown: false,
-              contentStyle: { backgroundColor: '#000000' },
             }}
           >
             <Stack.Screen name="MainTabs" component={MainTabs} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
-            <Stack.Screen name="ThemeSelection" component={ThemeSelectionScreen} />
+            <Stack.Screen name="BrowseThemes" component={BrowseThemesScreen} />
             <Stack.Screen name="CustomThemesList" component={CustomThemesListScreen} />
             <Stack.Screen name="CustomTheme" component={CustomThemeScreen} />
             <Stack.Screen name="CustomKeyboardTheme" component={CustomKeyboardThemeScreen} />

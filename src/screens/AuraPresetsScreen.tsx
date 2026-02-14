@@ -9,6 +9,8 @@ import {
 } from 'react-native';
 import { getThemes, saveThemes, deleteAuraPreset } from '../storage';
 import { useAppTheme } from '../contexts/AppThemeContext';
+import KeyboardIcon from '../components/KeyboardIcon';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 interface AuraPresetsScreenProps {
   navigation: any;
@@ -30,6 +32,7 @@ interface AuraPreset {
     text: string;
     link: string;
     keyColor?: string;
+    returnKeyColor?: string;
   };
   previewColor: string;
   isCustom?: boolean;
@@ -50,6 +53,7 @@ export const AURA_PRESETS: AuraPreset[] = [
       text: '#32CD32',
       link: '#2E7D32',
       keyColor: '#2a2a2a',
+      returnKeyColor: '#1B5E20',
     },
     previewColor: '#000000',
   },
@@ -67,6 +71,7 @@ export const AURA_PRESETS: AuraPreset[] = [
       text: '#FFFFFF',
       link: '#4A9EFF',
       keyColor: '#2a2a2a',
+      returnKeyColor: '#1E90FF',
     },
     previewColor: '#121212',
   },
@@ -84,6 +89,7 @@ export const AURA_PRESETS: AuraPreset[] = [
       text: '#000000',
       link: '#0066CC',
       keyColor: '#E0E0E0',
+      returnKeyColor: '#0066CC',
     },
     previewColor: '#FFFFFF',
   },
@@ -101,13 +107,14 @@ export const AURA_PRESETS: AuraPreset[] = [
       text: '#E0FF33',
       link: '#FF33FF',
       keyColor: '#3A0066',
+      returnKeyColor: '#FF00FF',
     },
     previewColor: '#1A0033',
   },
 ];
 
 const AuraPresetsScreen: React.FC<AuraPresetsScreenProps> = ({ navigation }) => {
-  const { appThemeColor } = useAppTheme();
+  const { appThemeColor, backgroundColor, textColor, sectionBgColor, borderColor } = useAppTheme();
   const [customPresets, setCustomPresets] = useState<AuraPreset[]>([]);
 
   useEffect(() => {
@@ -187,35 +194,36 @@ const AuraPresetsScreen: React.FC<AuraPresetsScreenProps> = ({ navigation }) => 
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
+    <View style={[styles.container, { backgroundColor }]}>
+      <View style={[styles.header, { borderBottomColor: borderColor }]}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
         >
           <Text style={[styles.backButtonText, { color: appThemeColor }]}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Set Aura</Text>
+        <Text style={[styles.headerTitle, { color: textColor }]}>Set Aura</Text>
         <View style={styles.placeholder} />
       </View>
 
       <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
-        <Text style={styles.description}>
+        <Text style={[styles.description, { color: textColor }]}>
           One-tap themes that apply to both Safari and Keyboard
         </Text>
 
         {/* Create Aura Button */}
         <TouchableOpacity
-          style={styles.createButton}
+          style={[styles.createButton, { backgroundColor: sectionBgColor, borderColor }]}
           onPress={() => navigation.navigate('CreateAuraFlow')}
         >
-          <Text style={[styles.createButtonText, { color: appThemeColor }]}>+ Create Aura</Text>
+          <Text style={[styles.createButtonText, { color: textColor }]}>Create Aura</Text>
+          <Ionicons name="add" size={20} color={appThemeColor} />
         </TouchableOpacity>
 
         {/* Custom Presets - Moved to top */}
         {customPresets.length > 0 && (
           <>
-            <Text style={styles.sectionTitle}>Your Auras</Text>
+            <Text style={[styles.sectionTitle, { color: textColor }]}>Your Auras</Text>
             {customPresets.map((preset) => (
               <TouchableOpacity
                 key={preset.id}
@@ -246,8 +254,10 @@ const AuraPresetsScreen: React.FC<AuraPresetsScreenProps> = ({ navigation }) => 
                 <View style={styles.presetHeader}>
                   <Text style={[styles.presetName, { color: preset.safariTheme.text }]}>{preset.name}</Text>
                   <View style={styles.presetIcons}>
-                    <Text style={styles.presetIcon}>🌐</Text>
-                    <Text style={styles.presetIcon}>⌨️</Text>
+                    <Text style={[styles.presetIcon, { color: '#666666' }]}>⌘</Text>
+                    <View style={styles.presetIconContainer}>
+                      <KeyboardIcon size={18} color="#666666" />
+                    </View>
                   </View>
                 </View>
                 <Text style={[styles.presetDescription, { color: preset.safariTheme.text }]}>
@@ -265,7 +275,7 @@ const AuraPresetsScreen: React.FC<AuraPresetsScreenProps> = ({ navigation }) => 
         )}
 
         {/* Hardcoded Presets */}
-        <Text style={styles.sectionTitle}>Aura Presets</Text>
+        <Text style={[styles.sectionTitle, { color: textColor }]}>Aura Presets</Text>
         {AURA_PRESETS.map((preset) => (
           <TouchableOpacity
             key={preset.id}
@@ -295,8 +305,10 @@ const AuraPresetsScreen: React.FC<AuraPresetsScreenProps> = ({ navigation }) => 
             <View style={styles.presetHeader}>
               <Text style={[styles.presetName, { color: preset.safariTheme.text }]}>{preset.name}</Text>
               <View style={styles.presetIcons}>
-                <Text style={styles.presetIcon}>🌐</Text>
-                <Text style={styles.presetIcon}>⌨️</Text>
+                <Text style={[styles.presetIcon, { color: '#666666' }]}>⌘</Text>
+                <View style={styles.presetIconContainer}>
+                  <KeyboardIcon size={18} color="#666666" />
+                </View>
               </View>
             </View>
             <Text style={[styles.presetDescription, { color: preset.safariTheme.text }]}>{preset.description}</Text>
@@ -310,7 +322,6 @@ const AuraPresetsScreen: React.FC<AuraPresetsScreenProps> = ({ navigation }) => 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
   },
   header: {
     flexDirection: 'row',
@@ -320,7 +331,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
   },
   backButton: {
     padding: 8,
@@ -332,7 +342,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 26,
     fontWeight: 'bold',
-    color: '#FFFFFF',
   },
   placeholder: {
     width: 60,
@@ -345,7 +354,6 @@ const styles = StyleSheet.create({
   },
   description: {
     fontSize: 14,
-    color: '#FFFFFF',
     marginBottom: 24,
     lineHeight: 20,
   },
@@ -401,28 +409,34 @@ const styles = StyleSheet.create({
   presetIcon: {
     fontSize: 18,
   },
+  presetIconContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   presetDescription: {
     fontSize: 14,
     color: '#E0E0E0',
   },
   createButton: {
-    backgroundColor: '#1a1a1a',
-    paddingVertical: 16,
     borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 24,
+    justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#2a2a2a',
+    marginBottom: 24,
   },
   createButtonText: {
-    color: '#000000',
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  createButtonIcon: {
+    // Style no longer used - replaced with Ionicons
   },
   sectionTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#FFFFFF',
     marginTop: 8,
     marginBottom: 16,
   },

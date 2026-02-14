@@ -10,6 +10,7 @@ import {
   Image,
 } from 'react-native';
 import { useAppTheme } from '../contexts/AppThemeContext';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 interface AppPickerScreenProps {
   navigation: any;
@@ -355,7 +356,7 @@ const AppPickerScreen: React.FC<AppPickerScreenProps> = ({ navigation, route }) 
                     <Text style={styles.appName}>{app.name}</Text>
                     <Text style={styles.appBundleId}>{app.bundleId}</Text>
                   </View>
-                  <Text style={[styles.arrow, { color: appThemeColor }]}>→</Text>
+                  <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
                 </TouchableOpacity>
               ))}
             </View>
@@ -553,8 +554,7 @@ const styles = StyleSheet.create({
     color: '#888888',
   },
   arrow: {
-    fontSize: 20,
-    fontWeight: '600',
+    // Style no longer used - replaced with Ionicons
   },
   customSection: {
     marginTop: 32,

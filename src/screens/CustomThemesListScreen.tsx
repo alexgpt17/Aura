@@ -26,12 +26,13 @@ interface CustomTheme {
   text: string;
   link: string;
   keyColor?: string;
+  type?: 'safari' | 'keyboard';
 }
 
 const MAX_CUSTOM_THEMES = 5;
 
 const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigation, route }) => {
-  const { appThemeColor } = useAppTheme();
+  const { appThemeColor, backgroundColor, textColor, sectionBgColor, borderColor } = useAppTheme();
   const forKeyboard = route?.params?.forKeyboard || false;
   const [customThemes, setCustomThemes] = useState<CustomTheme[]>([]);
   const [selectedThemeId, setSelectedThemeId] = useState<string | null>(null);
@@ -61,7 +62,18 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
     try {
       const themeData = await getThemes();
       if (themeData?.customThemes) {
-        setCustomThemes(themeData.customThemes || []);
+        const allThemes = themeData.customThemes || [];
+        // Filter themes based on forKeyboard parameter
+        const filteredThemes = allThemes.filter((theme: CustomTheme) => {
+          if (forKeyboard) {
+            // For keyboard: show themes with type === 'keyboard' or themes without type that have keyColor (backward compatibility)
+            return theme.type === 'keyboard' || (!theme.type && theme.keyColor);
+          } else {
+            // For Safari: show themes with type === 'safari' or themes without type that don't have keyColor (backward compatibility)
+            return theme.type === 'safari' || (!theme.type && !theme.keyColor);
+          }
+        });
+        setCustomThemes(filteredThemes);
       }
     } catch (error) {
       console.error('Error loading custom themes:', error);
@@ -152,7 +164,19 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
                 customThemes: updatedCustomThemes,
               };
               await saveThemes(newThemeData);
-              setCustomThemes(updatedCustomThemes);
+              
+              // Filter themes based on forKeyboard parameter (same logic as loadCustomThemes)
+              const filteredThemes = updatedCustomThemes.filter((theme: CustomTheme) => {
+                if (forKeyboard) {
+                  // For keyboard: show themes with type === 'keyboard' or themes without type that have keyColor (backward compatibility)
+                  return theme.type === 'keyboard' || (!theme.type && theme.keyColor);
+                } else {
+                  // For Safari: show themes with type === 'safari' or themes without type that don't have keyColor (backward compatibility)
+                  return theme.type === 'safari' || (!theme.type && !theme.keyColor);
+                }
+              });
+              
+              setCustomThemes(filteredThemes);
               if (selectedThemeId === themeId) {
                 setSelectedThemeId(null);
               }
@@ -174,22 +198,22 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
   ];
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
+    <View style={[styles.container, { backgroundColor }]}>
+      <View style={[styles.header, { borderBottomColor: borderColor }]}>
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
         >
           <Text style={[styles.backButtonText, { color: appThemeColor }]}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Your Themes</Text>
+        <Text style={[styles.headerTitle, { color: textColor }]}>Your Themes</Text>
         <View style={styles.placeholder} />
       </View>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         {/* Create Theme Button */}
         <TouchableOpacity
-          style={styles.createButton}
+          style={[styles.createButton, { backgroundColor: sectionBgColor, borderColor }]}
           onPress={() => {
             if (hasPurchased) {
               if (forKeyboard) {
@@ -222,8 +246,8 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
             {allItems.map((item) => {
               if (item.isPlaceholder) {
                 return (
-                  <View key={item.id} style={styles.placeholderButton}>
-                    <Text style={styles.placeholderText}>Empty slot</Text>
+                  <View key={item.id} style={[styles.placeholderButton, { backgroundColor: sectionBgColor, borderColor }]}>
+                    <Text style={[styles.placeholderText, { color: textColor }]}>Empty slot</Text>
                   </View>
                 );
               }
@@ -234,7 +258,11 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
               return (
                 <TouchableOpacity
                   key={theme.id}
-                  style={[styles.themeButton, isSelected && [styles.themeButtonSelected, { borderColor: appThemeColor }]]}
+                  style={[
+                    styles.themeButton,
+                    { backgroundColor: sectionBgColor, borderColor },
+                    isSelected && [styles.themeButtonSelected, { borderColor: appThemeColor }]
+                  ]}
                   onPress={() => handleSelectTheme(theme)}
                   onLongPress={() => handleDeleteTheme(theme.id)}
                 >
@@ -256,7 +284,7 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
                     </Text>
                   </View>
                   {isSelected && (
-                    <Text style={styles.themeButtonCheckmark}>✓</Text>
+                    <Text style={[styles.themeButtonCheckmark, { color: appThemeColor }]}>✓</Text>
                   )}
                 </TouchableOpacity>
               );
@@ -280,7 +308,6 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
   },
   header: {
     flexDirection: 'row',
@@ -290,7 +317,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
   },
   backButton: {
     padding: 8,
@@ -303,7 +329,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#FFFFFF',
   },
   placeholder: {
     width: 60,
@@ -315,17 +340,14 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   createButton: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     paddingVertical: 16,
     paddingHorizontal: 20,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#2a2a2a',
     marginBottom: 24,
   },
   createButtonText: {
-    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
@@ -333,7 +355,6 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   themeButton: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     paddingVertical: 16,
     paddingHorizontal: 20,
@@ -342,11 +363,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: '#2a2a2a',
   },
   themeButtonSelected: {
-    borderColor: '#228B22',
-    backgroundColor: '#1a2a1a',
+    // Border color set dynamically
   },
   themeButtonContent: {
     flexDirection: 'row',
@@ -369,23 +388,19 @@ const styles = StyleSheet.create({
     // Color is set dynamically from theme.text
   },
   themeButtonCheckmark: {
-    color: '#228B22',
     fontSize: 18,
     fontWeight: 'bold',
   },
   placeholderButton: {
-    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     paddingVertical: 16,
     paddingHorizontal: 20,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
     borderStyle: 'dashed',
     opacity: 0.5,
   },
   placeholderText: {
-    color: '#888888',
     fontSize: 16,
     fontStyle: 'italic',
   },
@@ -395,13 +410,11 @@ const styles = StyleSheet.create({
   },
   emptyStateText: {
     fontSize: 16,
-    color: '#FFFFFF',
     marginBottom: 8,
     fontWeight: '600',
   },
   emptyStateSubtext: {
     fontSize: 14,
-    color: '#888888',
     textAlign: 'center',
     lineHeight: 20,
   },
