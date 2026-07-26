@@ -42,20 +42,6 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "0B4D19872F27F0BA0015BB6B"
-               BuildableName = "KeyboardExtension.appex"
-               BlueprintName = "KeyboardExtension"
-               ReferencedContainer = "container:TintApp.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
                BlueprintIdentifier = "0BEB585B2E7DFC6100B7D7B1"
                BuildableName = "TintExtension.app"
                BlueprintName = "TintExtension"

@@ -27,5 +27,21 @@ target 'TintApp' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+
+    # Local patch: disable Folly coroutine helpers that depend on
+    # missing `folly/coro/Coroutine.h`, which is not shipped in
+    # the RCT-Folly version bundled with React Native.
+    folly_expected = File.join(__dir__, 'Pods', 'RCT-Folly', 'folly', 'Expected.h')
+    if File.exist?(folly_expected)
+      contents = File.read(folly_expected)
+      needle = '#if FOLLY_HAS_COROUTINES'
+      replacement = '#if 0 && FOLLY_HAS_COROUTINES'
+      if contents.include?(needle) && !contents.include?(replacement)
+        # RCT-Folly headers are often unpacked read-only; ensure writable before patching
+        File.chmod(0644, folly_expected)
+        File.write(folly_expected, contents.sub(needle, replacement))
+        puts 'Patched RCT-Folly Expected.h to disable missing folly/coro/Coroutine.h include'
+      end
+    end
   end
 end

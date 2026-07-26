@@ -14,7 +14,7 @@
     
     // CRITICAL: On iOS Safari, sendMessage doesn't work - go straight to storage
     // The background script should have synced from App Group already
-    console.log('🔥🔥🔥 Tint injected: Loading theme from storage (sendMessage not reliable on iOS)');
+    console.log('Tint injected: Loading theme from storage (sendMessage not reliable on iOS)');
     loadFromStorage();
     
     function loadFromStorage() {
@@ -23,28 +23,28 @@
                 if (result.tintThemeData) {
                     window.__TINT_THEME_DATA__ = result.tintThemeData;
                     window.__TINT_THEME_DATA__._ready = true;
-                    console.log('🔥🔥🔥 Tint injected: Theme data loaded from storage');
+                    console.log('Tint injected: Theme data loaded from storage');
                     if (result.tintThemeData.globalTheme) {
-                        console.log('🔥🔥🔥 Tint injected: Theme - background:', result.tintThemeData.globalTheme.background, 'text:', result.tintThemeData.globalTheme.text);
+                        console.log('Tint injected: Theme - background:', result.tintThemeData.globalTheme.background, 'text:', result.tintThemeData.globalTheme.text);
                         // EARLY: Set theme-color meta tag immediately to prevent white flash
                         // This controls iOS Safari's status bar and overscroll color
                         injectThemeColorMeta(result.tintThemeData.globalTheme.background);
                     }
                 } else {
                     window.__TINT_THEME_DATA__._ready = true;
-                    console.log('🔥🔥🔥 Tint injected: No theme data available in storage');
+                    console.log('Tint injected: No theme data available in storage');
                 }
             }).catch(error => {
-                console.error('🔥🔥🔥 Tint injected: Error loading from storage:', error);
+                console.error('Tint injected: Error loading from storage:', error);
                 window.__TINT_THEME_DATA__._ready = true;
             });
         } else {
             window.__TINT_THEME_DATA__._ready = true;
-            console.log('🔥🔥🔥 Tint injected: browser.storage not available');
+            console.log('Tint injected: browser.storage not available');
         }
     }
     
-    // Listen for storage changes to update global theme data
+    // Listen for storage changes to update global theme data AND trigger content script update
     if (typeof browser !== 'undefined' && browser.storage && browser.storage.onChanged) {
         browser.storage.onChanged.addListener((changes, areaName) => {
             if (areaName === 'local' && changes.tintThemeData) {
@@ -52,6 +52,22 @@
                 if (changes.tintThemeData.newValue) {
                     window.__TINT_THEME_DATA__ = changes.tintThemeData.newValue;
                     window.__TINT_THEME_DATA__._ready = true;
+                    
+                    // UPDATE: Also update the theme-color meta tag
+                    if (changes.tintThemeData.newValue.globalTheme?.background) {
+                        injectThemeColorMeta(changes.tintThemeData.newValue.globalTheme.background);
+                        console.log('Tint injected: Updated theme-color meta tag to:', changes.tintThemeData.newValue.globalTheme.background);
+                    }
+                    
+                    // CRITICAL FIX: Dispatch custom event so content.js can detect storage changes
+                    // (storage.onChanged doesn't fire for injected scripts in iOS Safari)
+                    const event = new CustomEvent('aura-theme-updated', {
+                        detail: {
+                            themeData: changes.tintThemeData.newValue
+                        }
+                    });
+                    window.dispatchEvent(event);
+                    console.log('Tint injected: Dispatched aura-theme-updated event');
                 }
             }
         });
@@ -72,6 +88,7 @@
                 themeColorMeta.setAttribute('content', bgColor);
                 head.appendChild(themeColorMeta);
             }
+            console.log('Tint injected: theme-color meta set to:', bgColor);
         } catch (e) {
             // Ignore errors during early injection
         }

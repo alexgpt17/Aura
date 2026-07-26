@@ -1,0 +1,191 @@
+[
+  {
+    "trigger": {
+      "url-filter": ".*platform\\.twitter\\.com/widgets",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*connect\\.facebook\\.net",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*www\\.facebook\\.com/plugins",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*www\\.facebook\\.com/tr",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*platform\\.linkedin\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*badges\\.linkedin\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*platform\\.instagram\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*apis\\.google\\.com/js/plusone",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*widgets\\.pinterest\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*assets\\.pinterest\\.com/js/pinit",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*s7\\.addthis\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*sharethis\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*disqus\\.com/embed",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*embed\\.reddit\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*www\\.tiktok\\.com/embed",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*static\\.addtoany\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*sumo\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*stumbleupon\\.com/badge",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*w\\.sharethis\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*platform-api\\.sharethis\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": ".fb-like, .fb-share-button, .fb-comments, .fb-page, .fb-follow, .fb-send, .twitter-share-button, .twitter-follow-button, .twitter-timeline, .IN-widget, .pinterest-pin-it-button"
+    }
+  }
+]

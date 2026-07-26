@@ -1,0 +1,342 @@
+[
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": "[class*='cookie-banner'], [class*='cookie-consent'], [class*='cookie-notice'], [class*='cookie-popup'], [id*='cookie-banner'], [id*='cookie-consent'], [id*='cookie-notice'], [id*='cookie-popup'], .cookie-banner, .cookie-consent, .cookie-notice, .cookie-popup, #cookie-banner, #cookie-consent, #cookie-notice, #cookie-popup"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": "[class*='gdpr'], [id*='gdpr'], [class*='consent-banner'], [id*='consent-banner'], [class*='consent-modal'], [id*='consent-modal'], [class*='consent-dialog'], [id*='consent-dialog'], .gdpr-banner, .gdpr-modal, #gdpr-banner, #gdpr-modal"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": "[class*='newsletter-popup'], [class*='newsletter-modal'], [class*='newsletter-overlay'], [id*='newsletter-popup'], [id*='newsletter-modal'], [class*='newsletter-signup'], [id*='newsletter-signup']"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": "[class*='email-signup'], [class*='email-capture'], [class*='subscribe-popup'], [class*='subscribe-modal'], [id*='email-signup'], [id*='subscribe-popup'], [class*='email-popup'], [id*='email-popup']"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": "[class*='app-banner'], [class*='smart-banner'], [class*='smartbanner'], [class*='app-install'], [id*='app-banner'], [id*='smart-banner'], [id*='smartbanner'], .smartbanner, #smartbanner"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": "[class*='notification-bar'], [class*='notification-banner'], [class*='promo-bar'], [class*='promo-banner'], [class*='announcement-bar'], [class*='top-bar-notification']"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": "#CybotCookiebotDialog, #CybotCookiebotDialogBodyUnderlay, .cky-consent-container, .cc-window, .cc-banner, .cc-compliance, #cc-main, [class*='CookieConsent'], [id*='CookieConsent']"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": "#onetrust-consent-sdk, #onetrust-banner-sdk, .onetrust-pc-dark-filter, .ot-sdk-container, [class*='onetrust'], [id*='onetrust']"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": ".qc-cmp-ui-container, .qc-cmp2-container, #qcCmpUi, [class*='qc-cmp'], [id*='qc-cmp']"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": "#usercentrics-root, [class*='usercentrics'], .uc-banner, #uc-banner, .uc-embedding-container"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": ".sp-message-container, [id^='sp_message_container'], #sp-cc, .message-component"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": "[class*='paywall'], [id*='paywall'], [class*='subscribe-wall'], [class*='meter-'], [class*='piano-'], [id*='piano-']"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": "[class*='push-notification'], [id*='push-notification'], [class*='web-push'], [id*='web-push'], [class*='browser-notification'], [id*='browser-notification']"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*"
+    },
+    "action": {
+      "type": "css-display-none",
+      "selector": "[class*='overlay-modal'], [class*='popup-overlay'], [class*='modal-overlay'][class*='cookie'], [class*='modal-overlay'][class*='consent']"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*cookiebot\\.com"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*onetrust\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*cookielaw\\.org",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*trustarc\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*consensu\\.org"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*privacymanager\\.io",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*usercentrics\\.eu",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*pushwoosh\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*onesignal\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*intercom\\.io",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*drift\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*crisp\\.chat",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*tawk\\.to",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*zendesk\\.com/embeddable",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*livechatinc\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*cookie-script\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*iubenda\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*termly\\.io",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*osano\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*cookiefirst\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*cookieyes\\.com",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*consentmanager\\.net",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*didomi\\.io",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*axeptio\\.eu",
+      "load-type": ["third-party"]
+    },
+    "action": {
+      "type": "block"
+    }
+  }
+]

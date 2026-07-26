@@ -8,8 +8,7 @@ import {
   Switch,
   Alert,
 } from 'react-native';
-import { saveThemes, getThemes, hasPurchasedCustomThemes } from '../storage';
-import FocusModeService from '../services/FocusModeService';
+import { saveThemes, getThemes } from '../storage';
 import { useAppTheme } from '../contexts/AppThemeContext';
 import ColorPickerDropdown from '../components/ColorPickerDropdown';
 import ThemeModePicker from '../components/ThemeModePicker';
@@ -17,18 +16,6 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 
 interface SettingsScreenProps {
   navigation: any;
-}
-
-interface FocusModeMapping {
-  work: string | null;
-  sleep: string | null;
-  personal: string | null;
-  doNotDisturb: string | null;
-}
-
-interface FocusModeSettings {
-  enabled: boolean;
-  mappings: FocusModeMapping;
 }
 
 const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
@@ -44,15 +31,6 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
   } = useAppTheme();
   const [globalEnabled, setGlobalEnabled] = useState(true);
   const [focusModeEnabled, setFocusModeEnabled] = useState(false);
-  const [focusModeMappings, setFocusModeMappings] = useState<FocusModeMapping>({
-    work: null,
-    sleep: null,
-    personal: null,
-    doNotDisturb: null,
-  });
-  const [focusModeAvailable, setFocusModeAvailable] = useState(false);
-  const [hasPurchased, setHasPurchased] = useState(false);
-  const [displayUppercaseKeys, setDisplayUppercaseKeys] = useState(true);
 
   useEffect(() => {
     loadSettings();
@@ -72,29 +50,12 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
       if (themeData) {
         setGlobalEnabled(themeData.globalTheme?.enabled ?? true);
         
-        // Load keyboard settings
-        setDisplayUppercaseKeys(themeData.keyboardTheme?.displayUppercaseKeys ?? true);
-        
-        // Load Focus Mode settings
+        // Load Focus Mode enabled state (for display in settings link)
         const focusSettings = themeData.focusModeSettings;
         if (focusSettings) {
           setFocusModeEnabled(focusSettings.enabled || false);
-          setFocusModeMappings(focusSettings.mappings || {
-            work: null,
-            sleep: null,
-            personal: null,
-            doNotDisturb: null,
-          });
         }
       }
-      
-      // Check if Focus Filters are available
-      const available = await FocusModeService.isAvailable();
-      setFocusModeAvailable(available);
-      
-      // Check purchase status
-      const purchased = await hasPurchasedCustomThemes();
-      setHasPurchased(purchased);
     } catch (error) {
       console.error('Error loading settings:', error);
     }
@@ -118,55 +79,10 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
     }
   };
 
-  const handleToggleDisplayUppercaseKeys = async (value: boolean) => {
-    try {
-      const currentData = await getThemes();
-      const newThemeData = {
-        ...currentData,
-        keyboardTheme: {
-          ...currentData?.keyboardTheme,
-          displayUppercaseKeys: value,
-        },
-      };
-      await saveThemes(newThemeData);
-      setDisplayUppercaseKeys(value);
-    } catch (error) {
-      console.error('Error toggling keyboard setting:', error);
-      Alert.alert('Error', 'Failed to update keyboard setting. Please try again.');
-    }
-  };
-
-  const handleToggleFocusMode = async (value: boolean) => {
-    try {
-      await FocusModeService.updateSettings({ enabled: value });
-      setFocusModeEnabled(value);
-      
-      if (value) {
-        await FocusModeService.startMonitoring();
-      } else {
-        FocusModeService.stopMonitoring();
-      }
-    } catch (error) {
-      console.error('Error toggling Focus Mode:', error);
-      Alert.alert('Error', 'Failed to update Focus Mode setting. Please try again.');
-    }
-  };
-
-  const handleSelectFocusPreset = (focusMode: keyof FocusModeMapping) => {
-    navigation.navigate('FocusModePresetSelection', { focusMode });
-  };
-
   return (
     <View style={[styles.container, { backgroundColor }]}>
       <View style={[styles.header, { borderBottomColor: borderColor }]}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={[styles.backButtonText, { color: appThemeColor }]}>← Back</Text>
-        </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: textColor }]}>Settings</Text>
-        <View style={styles.placeholder} />
       </View>
 
       <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
@@ -194,7 +110,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
 
           <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
             <View style={styles.settingContent}>
-              <Text style={[styles.settingLabel, { color: appThemeColor }]}>App Theme</Text>
+              <Text style={[styles.settingLabel, { color: textColor }]}>App Theme</Text>
               <Text style={[styles.settingDescription, { color: textColor }]}>
                 Choose between dark and light mode for the app interface.
               </Text>
@@ -236,31 +152,6 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
 
         </View>
 
-        {/* Keyboard Settings Section */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: textColor }]}>Keyboard Settings</Text>
-          <Text style={[styles.sectionDescription, { color: textColor }]}>
-            Customize the behavior of your Aura keyboard.
-          </Text>
-
-          <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
-            <View style={styles.settingContent}>
-              <Text style={[styles.settingLabel, { color: textColor }]}>Display Uppercase Letters</Text>
-              <Text style={[styles.settingDescription, { color: textColor }]}>
-                {displayUppercaseKeys 
-                  ? 'Keys display in uppercase like iOS (shift affects typing behavior only)'
-                  : 'Keys display in lowercase (shift changes key appearance)'}
-              </Text>
-            </View>
-            <Switch
-              value={displayUppercaseKeys}
-              onValueChange={handleToggleDisplayUppercaseKeys}
-              trackColor={{ false: appThemeMode === 'dark' ? '#333' : '#CCC', true: appThemeColor }}
-              thumbColor={displayUppercaseKeys ? (appThemeMode === 'dark' ? '#FFFFFF' : '#FFFFFF') : (appThemeMode === 'dark' ? '#888' : '#999')}
-            />
-          </View>
-        </View>
-
         {/* Focus Mode Integration Section */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: textColor }]}>Focus Mode Integration</Text>
@@ -268,118 +159,22 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
             Automatically apply Aura presets based on your iOS Focus mode.
           </Text>
           
-          {!focusModeAvailable && (
-            <View style={[styles.warningBox, { backgroundColor: sectionBgColor, borderColor }]}>
-              <Text style={styles.warningText}>
-                Focus Filters require iOS 15.0 or later.
-              </Text>
-            </View>
-          )}
-
-          <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
+          <TouchableOpacity
+            style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}
+            onPress={() => navigation.navigate('MainTabs', { screen: 'FocusTab' })}
+          >
             <View style={styles.settingContent}>
-              <Text style={[styles.settingLabel, { color: textColor }]}>Enabled</Text>
+              <Text style={[styles.settingLabel, { color: appThemeColor }]}>
+                {focusModeEnabled ? 'Focus Mode Enabled' : 'Set Up Focus Mode'}
+              </Text>
               <Text style={[styles.settingDescription, { color: textColor }]}>
-                Aura will automatically change themes when your Focus mode changes.
+                {focusModeEnabled
+                  ? 'Tap to manage Focus mode preset mappings'
+                  : 'Map Aura presets to iOS Focus modes for automatic switching'}
               </Text>
             </View>
-            <Switch
-              value={focusModeEnabled && focusModeAvailable}
-              onValueChange={handleToggleFocusMode}
-              disabled={!focusModeAvailable}
-              trackColor={{ false: appThemeMode === 'dark' ? '#333' : '#CCC', true: appThemeColor }}
-              thumbColor={focusModeEnabled && focusModeAvailable ? (appThemeMode === 'dark' ? '#FFFFFF' : '#FFFFFF') : (appThemeMode === 'dark' ? '#888' : '#999')}
-            />
-          </View>
-
-          {focusModeEnabled && focusModeAvailable && (
-            <>
-              <TouchableOpacity
-                style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}
-                onPress={() => handleSelectFocusPreset('work')}
-              >
-                <View style={styles.settingContent}>
-                  <Text style={[styles.settingLabel, { color: appThemeColor }]}>Work Focus</Text>
-                  <Text style={[styles.settingDescription, { color: textColor }]}>
-                    {focusModeMappings.work ? `Preset: ${focusModeMappings.work}` : 'No preset selected'}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}
-                onPress={() => handleSelectFocusPreset('sleep')}
-              >
-                <View style={styles.settingContent}>
-                  <Text style={[styles.settingLabel, { color: appThemeColor }]}>Sleep Focus</Text>
-                  <Text style={[styles.settingDescription, { color: textColor }]}>
-                    {focusModeMappings.sleep ? `Preset: ${focusModeMappings.sleep}` : 'No preset selected'}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}
-                onPress={() => handleSelectFocusPreset('personal')}
-              >
-                <View style={styles.settingContent}>
-                  <Text style={[styles.settingLabel, { color: appThemeColor }]}>Personal Focus</Text>
-                  <Text style={[styles.settingDescription, { color: textColor }]}>
-                    {focusModeMappings.personal ? `Preset: ${focusModeMappings.personal}` : 'No preset selected'}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}
-                onPress={() => handleSelectFocusPreset('doNotDisturb')}
-              >
-                <View style={styles.settingContent}>
-                  <Text style={[styles.settingLabel, { color: appThemeColor }]}>Do Not Disturb</Text>
-                  <Text style={[styles.settingDescription, { color: textColor }]}>
-                    {focusModeMappings.doNotDisturb ? `Preset: ${focusModeMappings.doNotDisturb}` : 'No preset selected'}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-
-        {/* Purchase Status Section */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: textColor }]}>Custom Themes</Text>
-          <Text style={[styles.sectionDescription, { color: textColor }]}>
-            Create and manage your own custom themes for Safari and Keyboard.
-          </Text>
-          <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
-            <View style={styles.settingContent}>
-              <Text style={[styles.settingLabel, { color: textColor }]}>Purchase Status</Text>
-              <Text style={[styles.settingDescription, { color: textColor }]}>
-                {hasPurchased 
-                  ? 'You have unlocked custom theme creation. You can create up to 5 custom themes.' 
-                  : 'Unlock custom theme creation with a one-time purchase of $4.99.'}
-              </Text>
-            </View>
-            <View style={[styles.purchaseStatusBadge, { backgroundColor: sectionBgColor, borderColor }]}>
-              <Text style={[styles.purchaseStatusText, { color: hasPurchased ? '#4CAF50' : '#FF9800' }]}>
-                {hasPurchased ? '✓ Unlocked' : 'Locked'}
-              </Text>
-            </View>
-          </View>
-          {!hasPurchased && (
-            <TouchableOpacity
-              style={[styles.purchaseButton, { borderColor: appThemeColor, backgroundColor: sectionBgColor }]}
-              onPress={() => navigation.navigate('Purchase')}
-            >
-              <Text style={[styles.purchaseButtonText, { color: appThemeColor }]}>
-                Unlock Custom Themes
-              </Text>
-            </TouchableOpacity>
-          )}
+            <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
+          </TouchableOpacity>
         </View>
 
         {/* About Section */}
@@ -411,28 +206,15 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     paddingTop: 60,
     paddingHorizontal: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
   },
-  backButton: {
-    padding: 8,
-  },
-  backButtonText: {
-    color: '#228B22',
-    fontSize: 16,
-    fontWeight: '600',
-  },
   headerTitle: {
     fontSize: 34,
     fontWeight: 'bold',
-    flex: 1,
-    textAlign: 'center',
-  },
-  placeholder: {
-    width: 60,
   },
   content: {
     flex: 1,
@@ -542,27 +324,6 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
     marginTop: 8,
     textAlign: 'center',
-  },
-  purchaseStatusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  purchaseStatusText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  purchaseButton: {
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    marginTop: 8,
-  },
-  purchaseButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
   },
 });
 

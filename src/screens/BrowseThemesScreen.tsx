@@ -13,24 +13,16 @@ import {
 import { saveThemes, getThemes } from '../storage';
 import { useAppTheme } from '../contexts/AppThemeContext';
 import Snackbar from '../components/Snackbar';
-import KeyboardIcon from '../components/KeyboardIcon';
+import ThemePreview from '../components/ThemePreview';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-
-// Helper function to lighten a hex color for keyboard keys
-const lightenColor = (hex: string, percent: number = 20): string => {
-  const num = parseInt(hex.replace('#', ''), 16);
-  const r = Math.min(255, (num >> 16) + percent);
-  const g = Math.min(255, ((num >> 8) & 0x00FF) + percent);
-  const b = Math.min(255, (num & 0x0000FF) + percent);
-  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
-};
 
 // Theme Button Component
 interface ThemeButtonProps {
   theme: Theme;
   isSelected: boolean;
-  forKeyboard: boolean;
   appThemeColor: string;
+  sectionBgColor: string;
+  borderColor: string;
   isFavorite?: boolean;
   onPress: () => void;
   onLongPress: (e: any) => void;
@@ -41,91 +33,99 @@ interface ThemeButtonProps {
 const ThemeButton: React.FC<ThemeButtonProps> = ({
   theme,
   isSelected,
-  forKeyboard,
   appThemeColor,
+  sectionBgColor,
+  borderColor,
   isFavorite = false,
   onPress,
   onLongPress,
   onPressOut,
   onToggleFavorite,
 }) => {
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-  
-  useEffect(() => {
-    if (isSelected) {
-      Animated.spring(scaleAnim, {
-        toValue: 1.02,
-        useNativeDriver: true,
-        tension: 300,
-        friction: 7,
-      }).start();
-    } else {
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        useNativeDriver: true,
-      }).start();
+
+  // Extract gradient colors from gradient string
+  const extractGradientColors = (gradient: string): { dark: string; light: string } | null => {
+    if (!gradient) return null;
+    // Parse linear-gradient(135deg, #001f3f 0%, #b3d9ff 100%)
+    const match = gradient.match(/#[0-9a-fA-F]{6}/g);
+    if (match && match.length >= 2) {
+      return { dark: match[0], light: match[1] };
     }
-  }, [isSelected, scaleAnim]);
+    return null;
+  };
+
+  const isDualTone =
+    (theme.backgroundType === 'gradient' || theme.backgroundType === 'split') &&
+    !!theme.backgroundGradient;
+  const gradientColors = isDualTone ? extractGradientColors(theme.backgroundGradient!) : null;
+
+  // Use theme background color, but ensure text is readable
+  const getButtonBackground = () => {
+    return theme.background;
+  };
 
   return (
-    <Animated.View
+    <TouchableOpacity
       style={[
-        { transform: [{ scale: scaleAnim }] },
-        isSelected && { shadowColor: appThemeColor, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.8, shadowRadius: 8, elevation: 8 },
+        styles.themeButton,
+        { backgroundColor: getButtonBackground(), borderColor },
+        isSelected && { borderColor: appThemeColor, borderWidth: 2 },
       ]}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      onPressOut={onPressOut}
     >
-      <TouchableOpacity
-        style={[
-          styles.themeButton,
-          styles.presetThemeButton,
-          { backgroundColor: theme.background },
-          isSelected && { borderColor: appThemeColor, borderWidth: 2 },
-        ]}
-        onPress={onPress}
-        onLongPress={onLongPress}
-        onPressOut={onPressOut}
-      >
-        <View style={styles.themeButtonContent}>
-          <View style={styles.themeButtonLeft}>
-            <View style={styles.previewIndicator}>
-              {theme.backgroundType === 'gradient' ? (
-                <View style={[styles.gradientStrip, { backgroundColor: theme.background }]} />
-              ) : (
-                <View style={[styles.colorDot, { backgroundColor: theme.background }]} />
-              )}
+      <View style={styles.themeButtonContent}>
+        <View style={styles.colorDotsContainer}>
+          {/* Background dot — hard diagonal for gradient/split */}
+          {isDualTone && gradientColors ? (
+            <View style={styles.gradientDotContainer}>
+              <View style={[styles.gradientDotHalf, { 
+                left: -3,
+                top: -3,
+                backgroundColor: theme.background,
+                transform: [{ rotate: '45deg' }],
+              }]} />
+              <View style={[styles.gradientDotHalf, { 
+                right: -3,
+                bottom: -3,
+                backgroundColor: gradientColors.light,
+                transform: [{ rotate: '45deg' }],
+              }]} />
             </View>
-            <Text
-              style={[
-                styles.themeButtonText,
-                { color: theme.text },
-              ]}
-            >
-              {theme.name}
-            </Text>
-          </View>
-          <View style={styles.themeButtonRight}>
-            {onToggleFavorite && (
-              <TouchableOpacity
-                onPress={(e) => {
-                  e.stopPropagation();
-                  onToggleFavorite();
-                }}
-                style={styles.favoriteButton}
-              >
-                <Text style={[styles.favoriteIcon, { color: isFavorite ? appThemeColor : '#666666' }]}>
-                  {isFavorite ? '★' : '☆'}
-                </Text>
-              </TouchableOpacity>
-            )}
-            {!forKeyboard && <Text style={[styles.themeIcon, { color: '#666666' }]}>⌘</Text>}
-            {forKeyboard && <KeyboardIcon size={16} color="#666666" />}
-            {isSelected && (
-              <Ionicons name="checkmark" size={18} color={appThemeColor} />
-            )}
-          </View>
+          ) : (
+            <View style={[styles.colorDot, { backgroundColor: theme.background }]} />
+          )}
+          {/* Text dot */}
+          {isDualTone && gradientColors ? (
+            <View style={styles.gradientDotContainer}>
+              <View style={[styles.gradientDotHalf, { 
+                left: -3,
+                top: -3,
+                backgroundColor: theme.text,
+                transform: [{ rotate: '45deg' }],
+              }]} />
+              <View style={[styles.gradientDotHalf, { 
+                right: -3,
+                bottom: -3,
+                backgroundColor: theme.text === '#ffffff' ? '#cccccc' : '#ffffff',
+                transform: [{ rotate: '45deg' }],
+              }]} />
+            </View>
+          ) : (
+            <View style={[styles.colorDot, { backgroundColor: theme.text }]} />
+          )}
+          {/* Link dot */}
+          <View style={[styles.colorDot, { backgroundColor: theme.link }]} />
         </View>
-      </TouchableOpacity>
-    </Animated.View>
+        <View style={styles.themeTextContent}>
+          <Text style={[styles.themeButtonText, { color: theme.text }]}>
+            {theme.name}
+          </Text>
+        </View>
+      </View>
+      {isSelected && <Text style={[styles.checkmark, { color: appThemeColor }]}>✓</Text>}
+    </TouchableOpacity>
   );
 };
 
@@ -133,9 +133,7 @@ interface BrowseThemesScreenProps {
   navigation: any;
   route?: {
     params?: {
-      forKeyboard?: boolean;
       forWebsite?: string;
-      forApp?: string;
     };
   };
 }
@@ -146,21 +144,19 @@ interface Theme {
   background: string;
   text: string;
   link: string;
-  keyColor?: string;
   preview: { background: string; text: string; link: string };
-  backgroundType?: 'color' | 'gradient';
+  backgroundType?: 'color' | 'gradient' | 'split';
   backgroundGradient?: string;
 }
 
 // Preset Themes
-const PRESET_THEMES: Theme[] = [
+export const PRESET_THEMES: Theme[] = [
   {
     id: 'dark',
     name: 'Dark Mode',
     background: '#000000',
     text: '#ffffff',
     link: '#1E90FF',
-    keyColor: '#2a2a2a',
     preview: { background: '#000000', text: '#ffffff', link: '#1E90FF' },
   },
   {
@@ -169,7 +165,6 @@ const PRESET_THEMES: Theme[] = [
     background: '#ffffff',
     text: '#000000',
     link: '#0066cc',
-    keyColor: '#E0E0E0',
     preview: { background: '#ffffff', text: '#000000', link: '#0066cc' },
   },
   {
@@ -178,10 +173,9 @@ const PRESET_THEMES: Theme[] = [
     background: '#000000',
     text: '#ffffff',
     link: '#0066cc',
-    keyColor: '#2a2a2a',
     preview: { background: '#000000', text: '#ffffff', link: '#0066cc' },
-    backgroundType: 'gradient',
-    backgroundGradient: 'linear-gradient(to bottom left, #000000 0%, #ffffff 100%)',
+    backgroundType: 'split',
+    backgroundGradient: 'linear-gradient(135deg, #000000 0%, #ffffff 100%)',
   },
   {
     id: 'forest',
@@ -189,7 +183,6 @@ const PRESET_THEMES: Theme[] = [
     background: '#1a3d1a',
     text: '#c8e6c9',
     link: '#81c784',
-    keyColor: '#2a4d2a',
     preview: { background: '#1a3d1a', text: '#c8e6c9', link: '#81c784' },
   },
   {
@@ -198,7 +191,6 @@ const PRESET_THEMES: Theme[] = [
     background: '#001f3f',
     text: '#b3d9ff',
     link: '#4da6ff',
-    keyColor: '#003366',
     preview: { background: '#001f3f', text: '#b3d9ff', link: '#4da6ff' },
   },
   {
@@ -207,7 +199,6 @@ const PRESET_THEMES: Theme[] = [
     background: '#F1EADF',
     text: '#4A3F35',
     link: '#006A71',
-    keyColor: '#E8DDD0',
     preview: { background: '#F1EADF', text: '#4A3F35', link: '#006A71' },
   },
   {
@@ -216,7 +207,6 @@ const PRESET_THEMES: Theme[] = [
     background: '#1E1E1E',
     text: '#E0E0E0',
     link: '#BB86FC',
-    keyColor: '#2E2E2E',
     preview: { background: '#1E1E1E', text: '#E0E0E0', link: '#BB86FC' },
   },
   {
@@ -225,7 +215,6 @@ const PRESET_THEMES: Theme[] = [
     background: '#0a0e27',
     text: '#6c5ce7',
     link: '#6c5ce7',
-    keyColor: '#1a1e37',
     preview: { background: '#0a0e27', text: '#6c5ce7', link: '#6c5ce7' },
   },
   {
@@ -234,13 +223,78 @@ const PRESET_THEMES: Theme[] = [
     background: '#1a1a2e',
     text: '#f0f0f0',
     link: '#ff6b6b',
-    keyColor: '#2a2a3e',
     preview: { background: '#1a1a2e', text: '#f0f0f0', link: '#ff6b6b' },
+  },
+  {
+    id: 'ocean-split',
+    name: 'Ocean Split',
+    background: '#001f3f',
+    text: '#ffffff',
+    link: '#4da6ff',
+    preview: { background: '#001f3f', text: '#b3d9ff', link: '#4da6ff' },
+    backgroundType: 'split',
+    backgroundGradient: 'linear-gradient(135deg, #001f3f 0%, #b3d9ff 100%)',
+  },
+  {
+    id: 'forest-split',
+    name: 'Forest Split',
+    background: '#0a2e0a',
+    text: '#ffffff',
+    link: '#81c784',
+    preview: { background: '#0a2e0a', text: '#c8e6c9', link: '#81c784' },
+    backgroundType: 'split',
+    backgroundGradient: 'linear-gradient(135deg, #0a2e0a 0%, #c8e6c9 100%)',
+  },
+  {
+    id: 'sunset-split',
+    name: 'Sunset Split',
+    background: '#1a0a2e',
+    text: '#ffffff',
+    link: '#ff6b6b',
+    preview: { background: '#1a0a2e', text: '#ffd4a0', link: '#ff6b6b' },
+    backgroundType: 'split',
+    backgroundGradient: 'linear-gradient(135deg, #1a0a2e 0%, #ff8c42 100%)',
+  },
+  // Battery-efficient themes (optimized for OLED displays)
+  {
+    id: 'amoled-black',
+    name: 'AMOLED Black',
+    background: '#000000',
+    text: '#ffffff',
+    link: '#1E90FF',
+    preview: { background: '#000000', text: '#ffffff', link: '#1E90FF' },
+  },
+  {
+    id: 'deep-black',
+    name: 'Deep Black',
+    background: '#0a0a0a',
+    text: '#e0e0e0',
+    link: '#4da6ff',
+    preview: { background: '#0a0a0a', text: '#e0e0e0', link: '#4da6ff' },
+  },
+  {
+    id: 'ultra-dark',
+    name: 'Ultra Dark',
+    background: '#1a1a1a',
+    text: '#d0d0d0',
+    link: '#5dade2',
+    preview: { background: '#1a1a1a', text: '#d0d0d0', link: '#5dade2' },
+  },
+  {
+    id: 'battery-saver',
+    name: 'Battery Saver',
+    background: '#000000',
+    text: '#b0b0b0',
+    link: '#6c757d',
+    preview: { background: '#000000', text: '#b0b0b0', link: '#6c757d' },
   },
 ];
 
+// Battery-efficient theme IDs for easy filtering
+export const BATTERY_EFFICIENT_THEME_IDS = ['amoled-black', 'deep-black', 'ultra-dark', 'battery-saver', 'amoled', 'dark'];
+
 const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, route }) => {
-  const { appThemeColor } = useAppTheme();
+  const { appThemeColor, backgroundColor, textColor, sectionBgColor, borderColor } = useAppTheme();
   const [selectedThemeId, setSelectedThemeId] = useState<string | null>(null);
   const [previewTheme, setPreviewTheme] = useState<Theme | null>(null);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
@@ -251,9 +305,7 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
   const [filterType, setFilterType] = useState<'all' | 'dark' | 'light' | 'warm' | 'cool'>('all');
   const [favoriteThemes, setFavoriteThemes] = useState<string[]>([]);
   const [quickActionMenu, setQuickActionMenu] = useState<{ visible: boolean; theme: Theme | null; position: { x: number; y: number } }>({ visible: false, theme: null, position: { x: 0, y: 0 } });
-  const forKeyboard = route?.params?.forKeyboard || false;
   const forWebsite = route?.params?.forWebsite;
-  const forApp = route?.params?.forApp;
 
   useEffect(() => {
     loadCurrentTheme();
@@ -269,14 +321,6 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
       if (forWebsite) {
         const cleanHostname = forWebsite.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split('?')[0];
         current = themeData?.siteThemes?.[cleanHostname] || themeData?.globalTheme;
-      } else if (forApp) {
-        if (themeData?.appThemes?.[forApp]) {
-          current = themeData.appThemes[forApp];
-        } else {
-          current = themeData?.keyboardTheme || themeData?.globalTheme;
-        }
-      } else if (forKeyboard) {
-        current = themeData?.keyboardTheme || themeData?.globalTheme;
       } else {
         current = themeData?.globalTheme;
       }
@@ -284,7 +328,8 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
       if (current) {
         const matchingPreset = PRESET_THEMES.find(
           (preset) => {
-            if (current.backgroundType === 'gradient' && preset.backgroundType === 'gradient') {
+            const dual = (t: string | undefined) => t === 'gradient' || t === 'split';
+            if (dual(current.backgroundType) && dual(preset.backgroundType)) {
               return current.backgroundGradient === preset.backgroundGradient &&
                      preset.text === current.text &&
                      preset.link === current.link;
@@ -309,6 +354,8 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
               text: current.text || '#ffffff',
               link: current.link || '#228B22',
             },
+            backgroundType: current.backgroundType,
+            backgroundGradient: current.backgroundGradient,
           });
         }
       } else {
@@ -328,14 +375,6 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
       if (forWebsite) {
         const cleanHostname = forWebsite.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split('?')[0];
         current = themeData?.siteThemes?.[cleanHostname] || themeData?.globalTheme;
-      } else if (forApp) {
-        if (themeData?.appThemes?.[forApp]) {
-          current = themeData.appThemes[forApp];
-        } else {
-          current = themeData?.keyboardTheme || themeData?.globalTheme;
-        }
-      } else if (forKeyboard) {
-        current = themeData?.keyboardTheme || themeData?.globalTheme;
       } else {
         current = themeData?.globalTheme;
       }
@@ -343,7 +382,8 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
       if (current) {
         const matchingPreset = PRESET_THEMES.find(
           (preset) => {
-            if (current.backgroundType === 'gradient' && preset.backgroundType === 'gradient') {
+            const dual = (t: string | undefined) => t === 'gradient' || t === 'split';
+            if (dual(current.backgroundType) && dual(preset.backgroundType)) {
               return current.backgroundGradient === preset.backgroundGradient &&
                      preset.text === current.text &&
                      preset.link === current.link;
@@ -356,10 +396,15 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
         );
         if (matchingPreset) {
           setSelectedThemeId(matchingPreset.id);
+        } else {
+          setSelectedThemeId(null);
         }
+      } else {
+        setSelectedThemeId(null);
       }
     } catch (error) {
       console.error('Error loading current theme:', error);
+      setSelectedThemeId(null);
     }
   };
 
@@ -371,6 +416,24 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
     try {
       const currentData = await getThemes();
       
+      // Check if this theme is already selected - if so, deselect it
+      const isCurrentlySelected = selectedThemeId === theme.id;
+      
+      if (isCurrentlySelected && !forWebsite) {
+        // Deselect the theme
+        const newThemeData = {
+          ...currentData,
+          globalTheme: null,
+        };
+        await saveThemes(newThemeData);
+        setSelectedThemeId(null);
+        await loadPreviewTheme();
+        setSnackbarMessage(`Theme cleared — Undo`);
+        setSnackbarVisible(true);
+        setLastAppliedTheme({ theme, data: currentData });
+        return;
+      }
+      
       setLastAppliedTheme({ theme, data: currentData });
       
       const completeTheme = {
@@ -378,14 +441,30 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
         background: theme.background,
         text: theme.text,
         link: theme.link,
-        keyColor: theme.keyColor,
-        backgroundType: (theme.backgroundType || 'color') as 'color' | 'gradient',
+        backgroundType: (theme.backgroundType || 'color') as 'color' | 'gradient' | 'split',
         backgroundImage: null,
         backgroundGradient: theme.backgroundGradient || null,
       };
 
       if (forWebsite) {
         const cleanHostname = forWebsite.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split('?')[0];
+        
+        // Check if website theme is already selected
+        if (isCurrentlySelected) {
+          // Remove website-specific theme
+          const newSiteThemes = { ...(currentData?.siteThemes || {}) };
+          delete newSiteThemes[cleanHostname];
+          const newThemeData = {
+            ...currentData,
+            siteThemes: newSiteThemes,
+          };
+          await saveThemes(newThemeData);
+          setSnackbarMessage(`Theme cleared — Undo`);
+          setSnackbarVisible(true);
+          navigation.goBack();
+          return;
+        }
+        
         const newSiteThemes = {
           ...(currentData?.siteThemes || {}),
           [cleanHostname]: {
@@ -401,36 +480,6 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
         setSnackbarMessage(`Applied ${theme.name} — Undo`);
         setSnackbarVisible(true);
         navigation.goBack();
-      } else if (forApp) {
-        const newAppThemes = {
-          ...(currentData?.appThemes || {}),
-          [forApp]: {
-            ...completeTheme,
-            enabled: currentData?.appThemes?.[forApp]?.enabled ?? true,
-          },
-        };
-        const newThemeData = {
-          ...currentData,
-          appThemes: newAppThemes,
-        };
-        await saveThemes(newThemeData);
-        setSnackbarMessage(`Applied ${theme.name} — Undo`);
-        setSnackbarVisible(true);
-        navigation.goBack();
-      } else if (forKeyboard) {
-        const newThemeData = {
-          ...currentData,
-          keyboardTheme: {
-            ...completeTheme,
-            enabled: currentData?.keyboardTheme?.enabled ?? true,
-          },
-        };
-        await saveThemes(newThemeData);
-        setSelectedThemeId(theme.id);
-        setPreviewTheme(theme);
-        trackRecentlyUsed(theme, 'keyboard');
-        setSnackbarMessage(`Applied ${theme.name} — Undo`);
-        setSnackbarVisible(true);
       } else {
         const newThemeData = {
           ...currentData,
@@ -497,7 +546,7 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
     }
   };
 
-  const trackRecentlyUsed = async (theme: Theme, type: 'keyboard' | 'safari') => {
+  const trackRecentlyUsed = async (theme: Theme, type: 'safari') => {
     try {
       const currentData = await getThemes();
       const recent = currentData?.recentlyUsedThemes || [];
@@ -570,8 +619,6 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
         <Text style={[styles.headerTitle, { color: textColor }]}>
           {forWebsite 
             ? `Theme for ${forWebsite}` 
-            : forApp
-            ? `Keyboard for ${forApp.split('.').pop() || forApp}`
             : 'Browse Themes'}
         </Text>
         <View style={styles.placeholder} />
@@ -579,154 +626,15 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         {/* Preview Section */}
-        {previewTheme && (
+        {previewTheme && !forWebsite && (
           <View style={styles.previewSection}>
-            {forKeyboard ? (
-              <View style={[styles.previewBox, { backgroundColor: previewTheme.background }]}>
-                <View style={styles.keyboardPreview}>
-                  <View style={styles.keyboardRow}>
-                    {['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'].map((key, index) => (
-                      <View
-                        key={index}
-                        style={[
-                          styles.keyboardKey,
-                          { backgroundColor: lightenColor(previewTheme.background, 15), borderColor: previewTheme.text + '40' },
-                        ]}
-                      >
-                        <Text style={[styles.keyboardKeyText, { color: previewTheme.text }]}>{key}</Text>
-                      </View>
-                    ))}
-                  </View>
-                  <View style={[styles.keyboardRow, styles.keyboardRowCentered]}>
-                    {['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'].map((key, index) => (
-                      <View
-                        key={index}
-                        style={[
-                          styles.keyboardKey,
-                          { backgroundColor: lightenColor(previewTheme.background, 15), borderColor: previewTheme.text + '40' },
-                        ]}
-                      >
-                        <Text style={[styles.keyboardKeyText, { color: previewTheme.text }]}>{key}</Text>
-                      </View>
-                    ))}
-                  </View>
-                  <View style={styles.keyboardRow}>
-                    <View
-                      style={[
-                        styles.keyboardKey,
-                        styles.keyboardSpecialKey,
-                        { backgroundColor: lightenColor(previewTheme.background, 15), borderColor: previewTheme.text + '40' },
-                      ]}
-                    >
-                      <Text style={[styles.keyboardKeyText, { color: previewTheme.text, fontSize: 10 }]}>⇧</Text>
-                    </View>
-                    {['Z', 'X', 'C', 'V', 'B', 'N', 'M'].map((key, index) => (
-                      <View
-                        key={index}
-                        style={[
-                          styles.keyboardKey,
-                          { backgroundColor: lightenColor(previewTheme.background, 15), borderColor: previewTheme.text + '40' },
-                        ]}
-                      >
-                        <Text style={[styles.keyboardKeyText, { color: previewTheme.text }]}>{key}</Text>
-                      </View>
-                    ))}
-                    <View
-                      style={[
-                        styles.keyboardKey,
-                        styles.keyboardSpecialKey,
-                        { backgroundColor: lightenColor(previewTheme.background, 15), borderColor: previewTheme.text + '40' },
-                      ]}
-                    >
-                      <Text style={[styles.keyboardKeyText, { color: previewTheme.text, fontSize: 12 }]}>⌫</Text>
-                    </View>
-                  </View>
-                  <View style={[styles.keyboardRow, styles.keyboardBottomRow]}>
-                    <View
-                      style={[
-                        styles.keyboardKey,
-                        styles.keyboardSpecialKey,
-                        styles.keyboardModeKey,
-                        { backgroundColor: lightenColor(previewTheme.background, 15), borderColor: previewTheme.text + '40' },
-                      ]}
-                    >
-                      <Text style={[styles.keyboardKeyText, { color: previewTheme.text, fontSize: 10 }]}>123</Text>
-                    </View>
-                    <View
-                      style={[
-                        styles.keyboardKey,
-                        styles.keyboardSpecialKey,
-                        styles.keyboardEmojiKey,
-                        { backgroundColor: lightenColor(previewTheme.background, 15), borderColor: previewTheme.text + '40' },
-                      ]}
-                    >
-                      <Ionicons name="happy-outline" size={16} color={previewTheme.text} />
-                    </View>
-                    <View
-                      style={[
-                        styles.keyboardKey,
-                        styles.keyboardSpaceKey,
-                        { backgroundColor: lightenColor(previewTheme.background, 15), borderColor: previewTheme.text + '40' },
-                      ]}
-                    >
-                      <Text style={[styles.keyboardKeyText, { color: previewTheme.text, fontSize: 9 }]}>space</Text>
-                    </View>
-                    <View
-                      style={[
-                        styles.keyboardKey,
-                        styles.keyboardSpecialKey,
-                        styles.keyboardReturnKey,
-                        { backgroundColor: previewTheme.link, borderColor: previewTheme.text + '40' },
-                      ]}
-                    >
-                      <Text style={[styles.keyboardKeyText, { color: '#FFFFFF', fontSize: 10 }]}>return</Text>
-                    </View>
-                  </View>
-                </View>
-              </View>
-            ) : (
-              <View style={[styles.previewBox, { backgroundColor: previewTheme.background }]}>
-                <View style={styles.googlePreview}>
-                  <View style={styles.googleTopBar}>
-                    <View style={styles.googleTopRight}>
-                      <Text style={[styles.googleTopButton, { color: previewTheme.text }]}>Sign in</Text>
-                    </View>
-                  </View>
-                  <View style={[styles.googleSearchBar, { backgroundColor: previewTheme.background }]}>
-                    <View style={[styles.googleSearchInput, { 
-                      backgroundColor: previewTheme.background === '#ffffff' || previewTheme.background === '#FFFFFF' 
-                        ? '#f1f3f4' 
-                        : 'rgba(255, 255, 255, 0.1)',
-                      borderColor: previewTheme.text + '20'
-                    }]}>
-                      <Text style={[styles.googleSearchText, { color: previewTheme.text }]}>
-                        Aura
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={styles.googleTabsContainer}>
-                    <View style={styles.googleTabs}>
-                      <Text style={[styles.googleTab, styles.googleTabActive, { color: previewTheme.link }]}>All</Text>
-                      <Text style={[styles.googleTab, { color: previewTheme.text + 'CC' }]}>Images</Text>
-                      <Text style={[styles.googleTab, { color: previewTheme.text + 'CC' }]}>Results</Text>
-                    </View>
-                  </View>
-                  <View style={styles.googleResults}>
-                    <View style={styles.googleResult}>
-                      <Text style={[styles.googleResultTitle, { color: previewTheme.link }]} numberOfLines={1}>
-                        Aura - Custom Keyboard Themes
-                      </Text>
-                      <Text style={[styles.googleResultUrl, { color: previewTheme.text + 'CC' }]} numberOfLines={1}>
-                        aura.app › keyboard-themes
-                      </Text>
-                      <Text style={[styles.googleResultSnippet, { color: previewTheme.text }]} numberOfLines={2}>
-                        Customize your iOS keyboard with beautiful themes. Aura offers personalized keyboard themes with custom colors.
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              </View>
-            )}
+            <ThemePreview
+              background={previewTheme.background}
+              text={previewTheme.text}
+              link={previewTheme.link}
+              backgroundType={previewTheme.backgroundType}
+              backgroundGradient={previewTheme.backgroundGradient}
+            />
           </View>
         )}
 
@@ -777,8 +685,9 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
                     key={theme.id}
                     theme={theme}
                     isSelected={isSelected}
-                    forKeyboard={forKeyboard}
                     appThemeColor={appThemeColor}
+                    sectionBgColor={sectionBgColor}
+                    borderColor={borderColor}
                     isFavorite={favoriteThemes.includes(theme.id)}
                     onPress={() => {
                       handlePreviewTheme(theme);
@@ -809,8 +718,9 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
                 key={theme.id}
                 theme={theme}
                 isSelected={isSelected}
-                forKeyboard={forKeyboard}
                 appThemeColor={appThemeColor}
+                sectionBgColor={sectionBgColor}
+                borderColor={borderColor}
                 isFavorite={favoriteThemes.includes(theme.id)}
                 onPress={() => {
                   handlePreviewTheme(theme);
@@ -1000,52 +910,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
   },
-  keyboardPreview: {
-    padding: 8,
-  },
-  keyboardRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginBottom: 3,
-    gap: 3,
-  },
-  keyboardRowCentered: {
-    width: '90%',
-    alignSelf: 'center',
-  },
-  keyboardBottomRow: {
-    gap: 2.5,
-  },
-  keyboardKey: {
-    minWidth: 22,
-    height: 26,
-    borderRadius: 4,
-    borderWidth: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 3,
-  },
-  keyboardSpecialKey: {
-    minWidth: 28,
-  },
-  keyboardModeKey: {
-    minWidth: 26,
-  },
-  keyboardEmojiKey: {
-    minWidth: 28,
-  },
-  keyboardSpaceKey: {
-    flex: 1,
-    maxWidth: 100,
-    minWidth: 60,
-  },
-  keyboardReturnKey: {
-    minWidth: 50,
-  },
-  keyboardKeyText: {
-    fontSize: 9,
-    fontWeight: '500',
-  },
   sectionTitle: {
     fontSize: 20,
     fontWeight: 'bold',
@@ -1057,42 +921,52 @@ const styles = StyleSheet.create({
   },
   themeButton: {
     borderRadius: 12,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    marginBottom: 8,
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  presetThemeButton: {
-    // Card style for presets
+    padding: 14,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
   },
   themeButtonContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    flex: 1,
+    gap: 12,
   },
-  themeButtonLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  themeTextContent: {
     flex: 1,
   },
-  themeButtonRight: {
+  checkmark: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  colorDotsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-  },
-  previewIndicator: {
+    gap: 6,
     marginRight: 12,
-  },
-  gradientStrip: {
-    width: 4,
-    height: 40,
-    borderRadius: 2,
   },
   colorDot: {
     width: 12,
     height: 12,
     borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(128,128,128,0.3)',
+  },
+  gradientDotContainer: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(128,128,128,0.3)',
+    position: 'relative',
+  },
+  gradientDotHalf: {
+    position: 'absolute',
+    width: 18,
+    height: 18,
   },
   themeIcon: {
     fontSize: 16,

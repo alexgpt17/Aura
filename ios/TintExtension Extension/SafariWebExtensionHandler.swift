@@ -1,8 +1,6 @@
 import SafariServices
 import os.log
 
-// Native handler - Receives messages from JavaScript content scripts
-// Noir-style architecture: Content script → sendMessage → beginRequest → Read App Group → Return theme config
 class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     
     static let appGroupID = "group.com.alexmartens.tint"
@@ -10,118 +8,122 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     
     override init() {
         super.init()
-        os_log(.fault, "Tint SafariWebExtensionHandler INIT called")
-        NSLog("🔥🔥🔥 Tint: SafariWebExtensionHandler INIT - This should appear in Xcode console")
-        print("🔥🔥🔥 Tint: SafariWebExtensionHandler INIT (print)")
+        os_log(.fault, "Aura SafariWebExtensionHandler INIT called")
+        NSLog("Aura: SafariWebExtensionHandler INIT - This should appear in Xcode console")
+        print("Aura: SafariWebExtensionHandler INIT (print)")
     }
     
     func beginRequest(with context: NSExtensionContext) {
-        NSLog("🔥🔥🔥 beginRequest CALLED - This should appear in Xcode console")
-        print("🔥🔥🔥 beginRequest CALLED (print)")
+        NSLog("beginRequest CALLED - This should appear in Xcode console")
+        print("beginRequest CALLED (print)")
         os_log(.fault, "Tint native handler beginRequest CALLED")
         
-        // Extract message from JavaScript content script
         guard let item = context.inputItems.first as? NSExtensionItem else {
-            NSLog("🔥🔥🔥 beginRequest: No input items found")
+            NSLog("beginRequest: No input items found")
             context.completeRequest(returningItems: nil, completionHandler: nil)
             return
         }
         
         guard let message = item.userInfo?[SFExtensionMessageKey] as? [String: Any] else {
-            NSLog("🔥🔥🔥 beginRequest: No message in userInfo")
+            NSLog("beginRequest: No message in userInfo")
             context.completeRequest(returningItems: nil, completionHandler: nil)
             return
         }
         
         guard let messageType = message["type"] as? String else {
-            NSLog("🔥🔥🔥 beginRequest: No message type found. Message keys: %@", Array(message.keys))
+            NSLog("beginRequest: No message type found. Message keys: %@", Array(message.keys))
             context.completeRequest(returningItems: nil, completionHandler: nil)
             return
         }
         
-        NSLog("🔥🔥🔥 beginRequest: Message type = %@", messageType)
+        NSLog("beginRequest: Message type = %@", messageType)
         
-        // Handle sync request from background script
-        // This is called when Safari loads the extension and background script requests sync
         if messageType == "syncTheme" {
             handleSyncThemeRequest(context: context)
+        } else if messageType == "getTheme" {
+            handleSyncThemeRequest(context: context)
         } else {
-            // Also handle direct getTheme requests (fallback)
-            if messageType == "getTheme" {
-                handleSyncThemeRequest(context: context)
-            } else {
-                context.completeRequest(returningItems: nil, completionHandler: nil)
-            }
+            context.completeRequest(returningItems: nil, completionHandler: nil)
         }
     }
     
     func handleSyncThemeRequest(context: NSExtensionContext) {
-        // Read theme data from App Group
-        // Create a fresh UserDefaults instance each time to avoid caching issues
-        guard let shared = UserDefaults(suiteName: SafariWebExtensionHandler.appGroupID) else {
+        let shared = UserDefaults(suiteName: SafariWebExtensionHandler.appGroupID)
+        
+        guard let freshDefaults = shared else {
             os_log(.error, "Failed to access App Group: %@", SafariWebExtensionHandler.appGroupID)
-            NSLog("🔥 Failed to access App Group")
+            NSLog("Failed to access App Group")
             context.completeRequest(returningItems: nil, completionHandler: nil)
             return
         }
         
-        // CRITICAL: Force synchronization BEFORE reading to ensure we get latest data from disk
-        // UserDefaults can cache data in memory, so synchronize() forces a disk read
-        // Call it multiple times to ensure we get fresh data
-        shared.synchronize()
+        // Force fresh data read with longer delay to ensure App Group writes complete
+        freshDefaults.synchronize()
         
-        // Force UserDefaults to reload from disk by accessing a property
-        // This helps clear any in-memory cache
-        let _ = shared.dictionaryRepresentation()
+        // Wait longer for App Group writes to complete (React Native storage is async)
+        Thread.sleep(forTimeInterval: 0.3)
         
-        // Synchronize again after accessing dictionaryRepresentation
-        shared.synchronize()
+        // Force reload from disk
+        freshDefaults.synchronize()
+        let _ = freshDefaults.dictionaryRepresentation()
+        freshDefaults.synchronize()
         
-        // Read theme data from App Group - try multiple methods to ensure we get fresh data
+        // Read theme data from App Group
         var allThemes: [String: Any] = [:]
         
-        // First, try to read as dictionary (most common case)
-        if let dict = shared.dictionary(forKey: SafariWebExtensionHandler.themeDataKey) {
+        if let dict = freshDefaults.dictionary(forKey: SafariWebExtensionHandler.themeDataKey) {
             allThemes = dict
-            NSLog("🔥 Read theme data as dictionary")
-            // Log the actual theme values for debugging
-            if let globalTheme = allThemes["globalTheme"] as? [String: Any] {
-                NSLog("🔥 Global theme - background: %@, text: %@, enabled: %@", 
-                      globalTheme["background"] as? String ?? "nil",
-                      globalTheme["text"] as? String ?? "nil",
-                      globalTheme["enabled"] as? Bool ?? false ? "YES" : "NO")
-            }
-        } else if let jsonString = shared.string(forKey: SafariWebExtensionHandler.themeDataKey) {
-            NSLog("🔥 Read theme data as string, attempting to parse")
+            NSLog("Read theme data as dictionary")
+        } else if let jsonString = freshDefaults.string(forKey: SafariWebExtensionHandler.themeDataKey) {
+            NSLog("Read theme data as string, attempting to parse")
             if let jsonData = jsonString.data(using: .utf8),
                let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
                 allThemes = parsed
-                NSLog("🔥 Successfully parsed JSON string")
-                // Log the actual theme values for debugging
-                if let globalTheme = allThemes["globalTheme"] as? [String: Any] {
-                    NSLog("🔥 Global theme - background: %@, text: %@", 
-                          globalTheme["background"] as? String ?? "nil",
-                          globalTheme["text"] as? String ?? "nil")
-                }
+                NSLog("Successfully parsed JSON string")
             }
-        } else if let obj = shared.object(forKey: SafariWebExtensionHandler.themeDataKey) as? [String: Any] {
+        } else if let obj = freshDefaults.object(forKey: SafariWebExtensionHandler.themeDataKey) as? [String: Any] {
             allThemes = obj
-            NSLog("🔥 Read theme data as object")
+            NSLog("Read theme data as object")
         } else {
-            NSLog("🔥 No theme data found in App Group")
+            NSLog("No theme data found in App Group")
         }
         
-        // Return all theme data (globalTheme + siteThemes) for storage
+        // CRITICAL FIX: Only send globalTheme and siteThemes to extension
+        // Don't send customThemes, auraPresets, recentlyUsedThemes, etc.
+        // This prevents massive data writes that cause browser.storage to get overwhelmed
+        var filteredData: [String: Any] = [:]
+        
+        if let globalTheme = allThemes["globalTheme"] as? [String: Any] {
+            filteredData["globalTheme"] = globalTheme
+            NSLog("Global theme - background: %@, text: %@",
+                  globalTheme["background"] as? String ?? "nil",
+                  globalTheme["text"] as? String ?? "nil")
+        }
+        
+        if let siteThemes = allThemes["siteThemes"] as? [String: Any] {
+            filteredData["siteThemes"] = siteThemes
+            NSLog("Including site-specific themes (count: %d)", siteThemes.count)
+        }
+        
+        // Time-based day/night rule (resolved color objects + boundary times)
+        // so the content script can switch themes without the full preset catalog.
+        if let timeBasedRule = allThemes["timeBasedRule"] as? [String: Any] {
+            filteredData["timeBasedRule"] = timeBasedRule
+            NSLog("Including timeBasedRule (enabled: %@)",
+                  String(describing: timeBasedRule["enabled"] ?? false))
+        }
+        
+        // Return only filtered theme data
         let responseItem = NSExtensionItem()
         responseItem.userInfo = [
             SFExtensionMessageKey: [
-                "themeData": allThemes
+                "themeData": filteredData
             ]
         ]
         
-        NSLog("🔥 Returning theme data for sync (has globalTheme: %@, siteThemes count: %d)", 
-              allThemes["globalTheme"] != nil ? "YES" : "NO",
-              (allThemes["siteThemes"] as? [String: Any])?.count ?? 0)
+        NSLog("Returning filtered theme data for sync (globalTheme: %@, siteThemes count: %d)",
+              filteredData["globalTheme"] != nil ? "YES" : "NO",
+              (filteredData["siteThemes"] as? [String: Any])?.count ?? 0)
         context.completeRequest(returningItems: [responseItem], completionHandler: nil)
     }
 }

@@ -10,32 +10,11 @@ const THEME_DATA_KEY = 'tintThemeData';
 /**
  * Returns default theme data structure
  */
-const getDefaultThemeData = () => {
+export const getDefaultThemeData = () => {
   return {
-    globalTheme: {
-      backgroundType: "color",
-      background: "#FFFFFF",
-      text: "#000000",
-      link: "#0000EE",
-      enabled: true,
-      backgroundImage: null,
-      backgroundGradient: null,
-    },
+    globalTheme: null, // No theme selected by default
     siteThemes: {},
-    appThemes: {}, // Per-app keyboard themes (bundleId -> theme)
     customThemes: [], // Array of custom themes (max 5)
-    keyboardTheme: {
-      backgroundType: "color",
-      background: "#000000",
-      text: "#FFFFFF",
-      link: "#228B22",
-      keyColor: "#2a2a2a",
-      enabled: true,
-      backgroundImage: null,
-      backgroundGradient: null,
-      displayUppercaseKeys: true, // iOS-style: show keys in uppercase, but shift changes behavior not appearance
-    },
-    auraPresets: [], // Array of custom Aura presets (user-created)
     focusModeSettings: {
       enabled: false,
       mappings: {
@@ -45,19 +24,41 @@ const getDefaultThemeData = () => {
         doNotDisturb: null,
       }
     },
+    timeBasedRule: {
+      enabled: false,
+      mode: 'manual', // 'manual' | 'sunset'
+      dayTheme: null, // Preset/custom theme ID (for UI)
+      nightTheme: null, // Preset/custom theme ID (for UI)
+      // Resolved theme color objects so the Safari extension can apply day/night
+      // without needing the full preset catalog. Written when a theme is selected.
+      dayThemeColors: null,
+      nightThemeColors: null,
+      dayStartTime: '07:00', // HH:MM format (manual mode, or computed sunrise for sunset mode)
+      nightStartTime: '19:00', // HH:MM format (manual mode, or computed sunset for sunset mode)
+      locationLat: null, // Latitude for sunset/sunrise calculation
+      locationLon: null, // Longitude for sunset/sunrise calculation
+    },
+    contentBlockerSettings: {
+      enabled: true,
+      categories: {
+        ads: true,
+        trackers: true,
+        socialWidgets: false,
+        annoyances: true,
+      }
+    },
     appThemeColor: "#228B22", // Default forest green
     appThemeMode: "dark", // Default dark mode
     favoriteThemes: [], // Array of theme IDs (preset or custom)
-    recentlyUsedThemes: [], // Array of { themeId, timestamp, type: 'preset' | 'custom' | 'keyboard' | 'safari' }
+    recentlyUsedThemes: [], // Array of { themeId, timestamp, type: 'preset' | 'custom' | 'safari' }
     hasCompletedOnboarding: false, // Track if user has completed onboarding
-    hasPurchasedCustomThemes: false, // Track if user has purchased custom theme creation
   };
 };
 
 /**
  * Validates theme data structure to prevent corrupted data
  */
-const validateThemeData = (themeData) => {
+export const validateThemeData = (themeData) => {
   if (!themeData || typeof themeData !== 'object') {
     return false;
   }
@@ -75,7 +76,7 @@ const validateThemeData = (themeData) => {
   }
   
   // Check for required structure: must have at least one theme type
-  if (propertyCount > 0 && !themeData.globalTheme && !themeData.siteThemes && !themeData.customThemes && !themeData.keyboardTheme && !themeData.appThemeColor) {
+  if (propertyCount > 0 && !themeData.globalTheme && !themeData.siteThemes && !themeData.customThemes && !themeData.appThemeColor) {
     console.error('Theme data missing required structure:', Object.keys(themeData));
     return false;
   }
@@ -83,12 +84,6 @@ const validateThemeData = (themeData) => {
   // Validate customThemes is an array if it exists
   if (themeData.customThemes && (!Array.isArray(themeData.customThemes) || themeData.customThemes.length > 5)) {
     console.error('customThemes must be an array with max 5 items');
-    return false;
-  }
-  
-  // Validate keyboardTheme is an object if it exists
-  if (themeData.keyboardTheme && (typeof themeData.keyboardTheme !== 'object' || Array.isArray(themeData.keyboardTheme))) {
-    console.error('keyboardTheme is not a valid object:', themeData.keyboardTheme);
     return false;
   }
   
@@ -131,19 +126,13 @@ export const saveThemes = async (themeData) => {
       throw new Error('Invalid theme data structure');
     }
     
-    console.log('🔥🔥🔥 STORAGE: Saving all theme data to App Group');
-    console.log('🔥🔥🔥 STORAGE: Full theme data:', JSON.stringify(themeData, null, 2));
+    console.log('STORAGE: Saving all theme data to App Group');
+    console.log('STORAGE: Full theme data:', JSON.stringify(themeData, null, 2));
     if (themeData.globalTheme) {
-      console.log('🔥🔥🔥 STORAGE: Global theme - background:', themeData.globalTheme.background, 
+      console.log('STORAGE: Global theme - background:', themeData.globalTheme.background, 
                  'text:', themeData.globalTheme.text, 'link:', themeData.globalTheme.link,
                  'enabled:', themeData.globalTheme.enabled);
     }
-    if (themeData.keyboardTheme) {
-      console.log('🔥🔥🔥 STORAGE: Keyboard theme - background:', themeData.keyboardTheme.background, 
-                 'text:', themeData.keyboardTheme.text, 'link:', themeData.keyboardTheme.link,
-                 'enabled:', themeData.keyboardTheme.enabled);
-    }
-    
     // Add metadata to force UserDefaults to recognize the change
     const dataToSave = {
       ...themeData,
@@ -156,7 +145,7 @@ export const saveThemes = async (themeData) => {
     const checksum = calculateChecksum(dataToSave);
     dataToSave._checksum = checksum;
     
-    console.log('🔥🔥🔥 STORAGE: About to save with timestamp:', dataToSave._lastSaved, 'checksum:', checksum);
+    console.log('STORAGE: About to save with timestamp:', dataToSave._lastSaved, 'checksum:', checksum);
     
     // Save with retry logic
     let saved = false;
@@ -167,13 +156,13 @@ export const saveThemes = async (themeData) => {
       try {
         await SharedGroupPreferences.setItem(THEME_DATA_KEY, dataToSave, APP_GROUP);
         saved = true;
-        console.log('🔥🔥🔥 STORAGE: Theme data saved successfully to App Group (attempt', attempts + 1, ')');
+        console.log('STORAGE: Theme data saved successfully to App Group (attempt', attempts + 1, ')');
       } catch (saveError) {
         attempts++;
         if (attempts >= maxAttempts) {
           throw saveError;
         }
-        console.warn('🔥🔥🔥 STORAGE: Save attempt', attempts, 'failed, retrying...', saveError);
+        console.warn('STORAGE: Save attempt', attempts, 'failed, retrying...', saveError);
         await new Promise(resolve => setTimeout(resolve, 100 * attempts)); // Exponential backoff
       }
     }
@@ -181,20 +170,16 @@ export const saveThemes = async (themeData) => {
     // Verify it was saved by reading it back
     try {
       const verify = await SharedGroupPreferences.getItem(THEME_DATA_KEY, APP_GROUP);
-      console.log('🔥🔥🔥 STORAGE: Verification read - got data:', verify ? 'YES' : 'NO');
+      console.log('STORAGE: Verification read - got data:', verify ? 'YES' : 'NO');
       if (verify && typeof verify === 'object') {
-        console.log('🔥🔥🔥 STORAGE: Verification - globalTheme exists:', !!verify.globalTheme);
-        console.log('🔥🔥🔥 STORAGE: Verification - keyboardTheme exists:', !!verify.keyboardTheme);
-        console.log('🔥🔥🔥 STORAGE: Verification - checksum:', verify._checksum);
+        console.log('STORAGE: Verification - globalTheme exists:', !!verify.globalTheme);
+        console.log('STORAGE: Verification - checksum:', verify._checksum);
         if (verify.globalTheme) {
-          console.log('🔥🔥🔥 STORAGE: Verification - globalTheme.background:', verify.globalTheme.background);
-        }
-        if (verify.keyboardTheme) {
-          console.log('🔥🔥🔥 STORAGE: Verification - keyboardTheme.background:', verify.keyboardTheme.background);
+          console.log('STORAGE: Verification - globalTheme.background:', verify.globalTheme.background);
         }
       }
     } catch (verifyError) {
-      console.error('🔥🔥🔥 STORAGE: Verification read failed:', verifyError);
+      console.error('STORAGE: Verification read failed:', verifyError);
     }
     
     // Add a delay to ensure the write completes before extension reads
@@ -203,9 +188,9 @@ export const saveThemes = async (themeData) => {
     // Force a second write to ensure UserDefaults flushes to disk
     try {
       await SharedGroupPreferences.setItem(THEME_DATA_KEY, dataToSave, APP_GROUP);
-      console.log('🔥🔥🔥 STORAGE: Theme data re-saved to force UserDefaults flush.');
+      console.log('STORAGE: Theme data re-saved to force UserDefaults flush.');
     } catch (e) {
-      console.warn('🔥🔥🔥 STORAGE: Second save attempt failed (non-critical):', e);
+      console.warn('STORAGE: Second save attempt failed (non-critical):', e);
     }
   } catch (e) {
     console.error('Error saving theme data:', e);
@@ -287,39 +272,13 @@ export const setOnboardingCompleted = async (completed = true) => {
 export const hasCompletedOnboarding = async () => {
   try {
     const data = await getThemes();
-    return data?.hasCompletedOnboarding === true;
+    // Explicitly check for true - if undefined/null/missing, return false (show onboarding)
+    const completed = data?.hasCompletedOnboarding;
+    console.log('Onboarding status check:', completed, 'Type:', typeof completed);
+    return completed === true;
   } catch (e) {
     console.error('Error checking onboarding status:', e);
-    return false;
-  }
-};
-
-/**
- * Saves custom themes purchase status
- */
-export const setCustomThemesPurchased = async (purchased = true) => {
-  try {
-    const currentData = await getThemes();
-    const updatedData = {
-      ...currentData,
-      hasPurchasedCustomThemes: purchased,
-    };
-    await saveThemes(updatedData);
-  } catch (e) {
-    console.error('Error saving purchase status:', e);
-  }
-};
-
-/**
- * Checks if user has purchased custom themes
- */
-export const hasPurchasedCustomThemes = async () => {
-  try {
-    const data = await getThemes();
-    return data?.hasPurchasedCustomThemes === true;
-  } catch (e) {
-    console.error('Error checking purchase status:', e);
-    return false;
+    return false; // Default to showing onboarding on error
   }
 };
 
@@ -341,7 +300,7 @@ export const getThemes = async () => {
         if (attempts >= maxAttempts) {
           throw readError;
         }
-        console.warn('🔥🔥🔥 STORAGE: Read attempt', attempts, 'failed, retrying...', readError);
+        console.warn('STORAGE: Read attempt', attempts, 'failed, retrying...', readError);
         await new Promise(resolve => setTimeout(resolve, 100 * attempts));
       }
     }
@@ -405,8 +364,13 @@ export const getThemes = async () => {
     if (themeData._checksum) {
       const expectedChecksum = calculateChecksum(themeData);
       if (themeData._checksum !== expectedChecksum) {
-        console.warn('🔥🔥🔥 STORAGE: Checksum mismatch - data may be stale. Expected:', expectedChecksum, 'Got:', themeData._checksum);
+        console.warn('STORAGE: Checksum mismatch - data may be stale. Expected:', expectedChecksum, 'Got:', themeData._checksum);
       }
+    }
+    
+    // Ensure hasCompletedOnboarding exists (for backward compatibility with old data)
+    if (themeData.hasCompletedOnboarding === undefined) {
+      themeData.hasCompletedOnboarding = false;
     }
     
     return themeData;
@@ -432,52 +396,3 @@ export const getThemes = async () => {
   }
 };
 
-/**
- * Saves a custom Aura preset to the auraPresets array
- * @param {object} preset - The Aura preset object to save
- */
-export const saveAuraPreset = async (preset) => {
-  try {
-    const currentData = await getThemes();
-    const auraPresets = currentData?.auraPresets || [];
-    
-    // Add the new preset
-    const updatedAuraPresets = [...auraPresets, preset];
-    
-    const newThemeData = {
-      ...currentData,
-      auraPresets: updatedAuraPresets,
-    };
-    
-    await saveThemes(newThemeData);
-    console.log('Aura preset saved:', preset.id);
-  } catch (error) {
-    console.error('Error saving Aura preset:', error);
-    throw error;
-  }
-};
-
-/**
- * Deletes a custom Aura preset from the auraPresets array
- * @param {string} presetId - The ID of the preset to delete
- */
-export const deleteAuraPreset = async (presetId) => {
-  try {
-    const currentData = await getThemes();
-    const auraPresets = currentData?.auraPresets || [];
-    
-    // Filter out the preset with the given ID
-    const updatedAuraPresets = auraPresets.filter(preset => preset.id !== presetId);
-    
-    const newThemeData = {
-      ...currentData,
-      auraPresets: updatedAuraPresets,
-    };
-    
-    await saveThemes(newThemeData);
-    console.log('Aura preset deleted:', presetId);
-  } catch (error) {
-    console.error('Error deleting Aura preset:', error);
-    throw error;
-  }
-};

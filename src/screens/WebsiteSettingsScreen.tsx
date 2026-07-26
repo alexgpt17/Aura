@@ -8,9 +8,11 @@ import {
   TextInput,
   Switch,
   Alert,
+  Linking,
 } from 'react-native';
 import { saveThemes, getThemes } from '../storage';
 import { useAppTheme } from '../contexts/AppThemeContext';
+import { PRESET_THEMES } from './BrowseThemesScreen';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 interface WebsiteSettingsScreenProps {
@@ -29,6 +31,7 @@ interface WebsiteTheme {
   link: string;
   backgroundType: string;
   backgroundImage: string | null;
+  backgroundGradient?: string | null;
 }
 
 const WebsiteSettingsScreen: React.FC<WebsiteSettingsScreenProps> = ({ navigation, route }) => {
@@ -38,6 +41,7 @@ const WebsiteSettingsScreen: React.FC<WebsiteSettingsScreenProps> = ({ navigatio
   const [websiteTheme, setWebsiteTheme] = useState<WebsiteTheme | null>(null);
   const [enabled, setEnabled] = useState(true);
   const [isNew, setIsNew] = useState(!initialHostname);
+  const [currentThemeName, setCurrentThemeName] = useState<string>('No theme selected');
 
   useEffect(() => {
     if (initialHostname) {
@@ -61,12 +65,21 @@ const WebsiteSettingsScreen: React.FC<WebsiteSettingsScreenProps> = ({ navigatio
           link: globalTheme.link || '#228B22',
           backgroundType: globalTheme.backgroundType || 'color',
           backgroundImage: globalTheme.backgroundImage || null,
+          backgroundGradient: globalTheme.backgroundGradient || null,
         };
         setWebsiteTheme(completeTheme);
         setEnabled(completeTheme.enabled);
+        updateThemeName(completeTheme);
+      } else {
+        // No global theme - show "No theme selected"
+        setWebsiteTheme(null);
+        setCurrentThemeName('No theme selected');
+        setEnabled(true);
       }
     } catch (error) {
       console.error('Error loading global theme:', error);
+      setWebsiteTheme(null);
+      setCurrentThemeName('No theme selected');
     }
   };
 
@@ -83,16 +96,43 @@ const WebsiteSettingsScreen: React.FC<WebsiteSettingsScreenProps> = ({ navigatio
           link: siteTheme.link || '#228B22',
           backgroundType: siteTheme.backgroundType || 'color',
           backgroundImage: siteTheme.backgroundImage || null,
+          backgroundGradient: siteTheme.backgroundGradient || null,
         };
         setWebsiteTheme(completeTheme);
         setEnabled(completeTheme.enabled);
+        updateThemeName(completeTheme);
       } else {
-        // Load global theme as default
-        loadGlobalTheme();
+        // No site-specific theme - check for global theme, otherwise show "No theme selected"
+        const themeData = await getThemes();
+        if (themeData?.globalTheme) {
+          loadGlobalTheme();
+        } else {
+          setWebsiteTheme(null);
+          setCurrentThemeName('No theme selected');
+          setEnabled(true);
+        }
       }
     } catch (error) {
       console.error('Error loading website settings:', error);
     }
+  };
+
+  const updateThemeName = (theme: WebsiteTheme) => {
+    const matchingPreset = PRESET_THEMES.find(
+      (preset) => {
+        const dual = (t: string | undefined) => t === 'gradient' || t === 'split';
+        if (dual(theme.backgroundType) && dual(preset.backgroundType)) {
+          return theme.backgroundGradient === preset.backgroundGradient &&
+                 preset.text === theme.text &&
+                 preset.link === theme.link;
+        } else {
+          return preset.background === theme.background &&
+                 preset.text === theme.text &&
+                 preset.link === theme.link;
+        }
+      }
+    );
+    setCurrentThemeName(matchingPreset ? matchingPreset.name : 'Custom');
   };
 
   const handleToggleEnabled = async (value: boolean) => {
@@ -110,6 +150,7 @@ const WebsiteSettingsScreen: React.FC<WebsiteSettingsScreenProps> = ({ navigatio
         link: baseTheme.link || '#228B22',
         backgroundType: baseTheme.backgroundType || 'color',
         backgroundImage: baseTheme.backgroundImage || null,
+        backgroundGradient: baseTheme.backgroundGradient || null,
       };
       
       const newSiteThemes = {
@@ -123,10 +164,41 @@ const WebsiteSettingsScreen: React.FC<WebsiteSettingsScreenProps> = ({ navigatio
       await saveThemes(newThemeData);
       setEnabled(value);
       setWebsiteTheme(completeTheme);
+      updateThemeName(completeTheme);
     } catch (error) {
       console.error('Error toggling website theme:', error);
       Alert.alert('Error', 'Failed to update setting. Please try again.');
     }
+  };
+
+  const handleOpenInSafari = () => {
+    const url = hostname || initialHostname;
+    if (url) {
+      const cleanUrl = url.startsWith('http') ? url : `https://${url}`;
+      Linking.openURL(cleanUrl).catch(() => {
+        Alert.alert('Error', 'Could not open website in Safari.');
+      });
+    } else {
+      Alert.alert('Error', 'Please enter a website domain first.');
+    }
+  };
+
+  const handleReportIssue = () => {
+    Alert.alert(
+      'Report Issue',
+      'If you\'re experiencing issues with this website, please contact support with details about the problem.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Contact Support',
+          onPress: () => {
+            Linking.openURL('mailto:alexmartens1111@gmail.com?subject=Website Issue Report').catch(() => {
+              Alert.alert('Error', 'Could not open email client.');
+            });
+          },
+        },
+      ]
+    );
   };
 
   const handleSave = async () => {
@@ -153,6 +225,7 @@ const WebsiteSettingsScreen: React.FC<WebsiteSettingsScreenProps> = ({ navigatio
         link: baseTheme.link || '#228B22',
         backgroundType: baseTheme.backgroundType || 'color',
         backgroundImage: baseTheme.backgroundImage || null,
+        backgroundGradient: baseTheme.backgroundGradient || null,
       };
       
       const newSiteThemes = {
@@ -218,7 +291,7 @@ const WebsiteSettingsScreen: React.FC<WebsiteSettingsScreenProps> = ({ navigatio
       <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
         {isNew && (
           <View style={styles.section}>
-            <Text style={styles.label}>Website Domain</Text>
+            <Text style={[styles.sectionHeader, { color: textColor }]}>WEBSITE DOMAIN</Text>
             <TextInput
               style={[styles.input, { backgroundColor: sectionBgColor, borderColor, color: textColor }]}
               placeholder="example.com"
@@ -234,43 +307,72 @@ const WebsiteSettingsScreen: React.FC<WebsiteSettingsScreenProps> = ({ navigatio
           </View>
         )}
 
-        <View style={styles.section}>
-          <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
-            <View style={styles.settingContent}>
-              <Text style={[styles.settingLabel, { color: textColor }]}>Enabled</Text>
-              <Text style={[styles.settingDescription, { color: textColor }]}>
-                Aura will enhance {hostname || initialHostname || 'this website'} when enabled.
-              </Text>
-            </View>
+        {/* Enabled Button - Only show for existing sites */}
+        {!isNew && (
+          <View style={[styles.simpleSettingRow, { backgroundColor: sectionBgColor, borderColor }]}>
+            <Text style={[styles.simpleSettingLabel, { color: enabled ? '#4CAF50' : '#FF4444' }]}>
+              {enabled ? 'Enabled' : 'Disabled'}
+            </Text>
             <Switch
               value={enabled}
               onValueChange={handleToggleEnabled}
-              trackColor={{ false: appThemeMode === 'dark' ? '#333' : '#CCC', true: appThemeColor }}
-              thumbColor={enabled ? (appThemeMode === 'dark' ? '#FFFFFF' : '#FFFFFF') : (appThemeMode === 'dark' ? '#888' : '#999')}
+              trackColor={{ false: appThemeMode === 'dark' ? '#3e3e3e' : '#CCC', true: appThemeColor }}
+              thumbColor="#FFFFFF"
             />
           </View>
+        )}
 
-          <TouchableOpacity
-            style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}
-            onPress={() => navigation.navigate('BrowseThemes', { forWebsite: hostname || initialHostname })}
-          >
-            <View style={styles.settingContent}>
-              <Text style={[styles.settingLabel, { color: textColor }]}>Theme</Text>
-              <Text style={[styles.settingDescription, { color: textColor }]}>
-                Customize how Aura's theme looks on {hostname || initialHostname || 'this website'}.
+        {/* Theme Button */}
+        <TouchableOpacity
+          style={[styles.themeSettingRow, { backgroundColor: sectionBgColor, borderColor }]}
+          onPress={() => navigation.navigate('ThemeSelection', { forWebsite: hostname || initialHostname })}
+        >
+          <View style={styles.themeSettingContent}>
+            <Text style={[styles.themeSettingLabel, { color: textColor }]}>Theme</Text>
+            <View style={styles.themeSettingValueRow}>
+              {websiteTheme && (
+                <View style={styles.colorDotsContainer}>
+                  <View style={[styles.colorDot, { backgroundColor: websiteTheme.background }]} />
+                  <View style={[styles.colorDot, { backgroundColor: websiteTheme.text }]} />
+                  <View style={[styles.colorDot, { backgroundColor: websiteTheme.link }]} />
+                </View>
+              )}
+              <Text style={[styles.themeSettingValue, { color: websiteTheme ? textColor : (textColor === '#FFFFFF' ? '#888888' : '#666666') }]}>
+                {currentThemeName}
               </Text>
             </View>
-            <Ionicons name="chevron-forward" size={20} color={textColor} />
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
+        </TouchableOpacity>
+
+        {/* ACTIONS Section */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionHeader, { color: textColor }]}>ACTIONS</Text>
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: sectionBgColor, borderColor }]}
+            onPress={handleReportIssue}
+          >
+            <Ionicons name="alert-circle-outline" size={20} color="#ff6b6b" />
+            <Text style={[styles.actionButtonText, { color: '#ff6b6b' }]}>Report Issue With This Website</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: sectionBgColor, borderColor }]}
+            onPress={handleOpenInSafari}
+          >
+            <Ionicons name="globe-outline" size={20} color={appThemeColor} />
+            <Text style={[styles.actionButtonText, { color: appThemeColor }]}>Open Website in Safari</Text>
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={[styles.saveButton, { backgroundColor: sectionBgColor, borderColor }]} onPress={handleSave}>
-          <Text style={[styles.saveButtonText, { color: textColor }]}>Save</Text>
-        </TouchableOpacity>
+        {isNew && (
+          <TouchableOpacity style={[styles.saveButton, { backgroundColor: appThemeColor, borderColor: appThemeColor }]} onPress={handleSave}>
+            <Text style={[styles.saveButtonText, { color: '#FFFFFF' }]}>Save</Text>
+          </TouchableOpacity>
+        )}
 
         {!isNew && (
-          <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
-            <Text style={styles.deleteButtonText}>Delete</Text>
+          <TouchableOpacity style={[styles.deleteButton, { backgroundColor: sectionBgColor, borderColor }]} onPress={handleDelete}>
+            <Text style={[styles.deleteButtonText, { color: '#FF4444' }]}>Delete Settings</Text>
           </TouchableOpacity>
         )}
       </ScrollView>
@@ -316,6 +418,14 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 24,
   },
+  sectionHeader: {
+    fontSize: 13,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 12,
+    opacity: 0.7,
+  },
   label: {
     fontSize: 16,
     color: '#FFFFFF',
@@ -333,7 +443,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
   },
-  settingRow: {
+  simpleSettingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -343,8 +453,61 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderWidth: 1,
   },
+  simpleSettingLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  themeSettingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+  },
+  themeSettingContent: {
+    flex: 1,
+    marginRight: 12,
+  },
+  themeSettingLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  themeSettingValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  themeSettingValue: {
+    fontSize: 14,
+  },
+  colorDotsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  colorDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(128,128,128,0.3)',
+  },
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+  },
   settingContent: {
     flex: 1,
+    marginRight: 12,
   },
   settingLabel: {
     fontSize: 16,
@@ -354,6 +517,47 @@ const styles = StyleSheet.create({
   settingDescription: {
     fontSize: 14,
     lineHeight: 18,
+    marginTop: 4,
+  },
+  switchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  switchLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    minWidth: 30,
+  },
+  themeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  themeIcon: {
+    marginRight: 8,
+  },
+  themeTextContainer: {
+    flex: 1,
+  },
+  themeValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    gap: 12,
+  },
+  actionButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
   },
   arrow: {
     // Style no longer used - replaced with Ionicons
@@ -368,20 +572,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   saveButtonText: {
-    color: '#000000',
     fontSize: 18,
     fontWeight: 'bold',
   },
   deleteButton: {
-    backgroundColor: '#2a1a1a',
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#4a2a2a',
+    marginTop: 8,
   },
   deleteButtonText: {
-    color: '#FF4444',
     fontSize: 16,
     fontWeight: '600',
   },

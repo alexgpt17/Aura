@@ -7,8 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		0B4D198F2F27F0BA0015BB6B /* KeyboardExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 0B4D19882F27F0BA0015BB6B /* KeyboardExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		0B954CEF2F15DA07004878D6 /* SafariServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0B954CED2F15D982004878D6 /* SafariServices.framework */; };
+		0BAA10112F5F000100BBBBBB /* ContentBlockerExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 0BAA10102F5F000100BBBBBB /* ContentBlockerExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		0BAA30022F5F000100DDDDDD /* ContentBlockerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BAA30012F5F000100DDDDDD /* ContentBlockerManager.swift */; };
+		0BAA30042F5F000100DDDDDD /* ContentBlockerManagerBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = 0BAA30032F5F000100DDDDDD /* ContentBlockerManagerBridge.m */; };
+		0BAA30062F5F000100DDDDDD /* FocusModeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BAA30052F5F000100DDDDDD /* FocusModeManager.swift */; };
+		0BAA30082F5F000100DDDDDD /* FocusModeManagerBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = 0BAA30072F5F000100DDDDDD /* FocusModeManagerBridge.m */; };
+		0BAA300A2F5F000100DDDDDD /* AuraPresetDefinitions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BAA30092F5F000100DDDDDD /* AuraPresetDefinitions.swift */; };
+		0BAA40022F5F000100EEEEEE /* FocusFilterExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 0BAA40012F5F000100EEEEEE /* FocusFilterExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		0BEB588F2E7DFC6600B7D7B1 /* TintExtension Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0BEB588E2E7DFC6600B7D7B1 /* TintExtension Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0BEB58902E7DFC6600B7D7B2 /* TintExtension Extension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 0BEB588E2E7DFC6600B7D7B1 /* TintExtension Extension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
@@ -20,12 +26,19 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		0B4D198D2F27F0BA0015BB6B /* PBXContainerItemProxy */ = {
+		0BAA10122F5F000100BBBBBB /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = 0B4D19872F27F0BA0015BB6B;
-			remoteInfo = KeyboardExtension;
+			remoteGlobalIDString = 0BAA10132F5F000100BBBBBB;
+			remoteInfo = ContentBlockerExtension;
+		};
+		0BAA40042F5F000100EEEEEE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0BAA40032F5F000100EEEEEE;
+			remoteInfo = FocusFilterExtension;
 		};
 		0BEB58792E7DFC6600B7D7B1 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -69,7 +82,8 @@
 			dstSubfolderSpec = 13;
 			files = (
 				0BEB58902E7DFC6600B7D7B2 /* TintExtension Extension.appex in Embed App Extensions */,
-				0B4D198F2F27F0BA0015BB6B /* KeyboardExtension.appex in Embed App Extensions */,
+				0BAA10112F5F000100BBBBBB /* ContentBlockerExtension.appex in Embed App Extensions */,
+				0BAA40022F5F000100EEEEEE /* FocusFilterExtension.appex in Embed App Extensions */,
 			);
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -77,8 +91,14 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		0B4D19882F27F0BA0015BB6B /* KeyboardExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KeyboardExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		0B954CED2F15D982004878D6 /* SafariServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SafariServices.framework; path = System/Library/Frameworks/SafariServices.framework; sourceTree = SDKROOT; };
+		0BAA10102F5F000100BBBBBB /* ContentBlockerExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ContentBlockerExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		0BAA30012F5F000100DDDDDD /* ContentBlockerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ContentBlockerManager.swift; path = TintApp/ContentBlockerManager.swift; sourceTree = "<group>"; };
+		0BAA30032F5F000100DDDDDD /* ContentBlockerManagerBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = ContentBlockerManagerBridge.m; path = TintApp/ContentBlockerManagerBridge.m; sourceTree = "<group>"; };
+		0BAA30052F5F000100DDDDDD /* FocusModeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FocusModeManager.swift; path = TintApp/FocusModeManager.swift; sourceTree = "<group>"; };
+		0BAA30072F5F000100DDDDDD /* FocusModeManagerBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = FocusModeManagerBridge.m; path = TintApp/FocusModeManagerBridge.m; sourceTree = "<group>"; };
+		0BAA30092F5F000100DDDDDD /* AuraPresetDefinitions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AuraPresetDefinitions.swift; path = TintApp/AuraPresetDefinitions.swift; sourceTree = "<group>"; };
+		0BAA40012F5F000100EEEEEE /* FocusFilterExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FocusFilterExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		0BEB585C2E7DFC6100B7D7B1 /* TintExtension.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TintExtension.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0BEB58782E7DFC6600B7D7B1 /* TintExtensionTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TintExtensionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0BEB58822E7DFC6600B7D7B1 /* TintExtensionUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TintExtensionUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -97,12 +117,19 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		0B4D19922F27F0BA0015BB6B /* Exceptions for "KeyboardExtension" folder in "KeyboardExtension" target */ = {
+		0BAA10142F5F000100BBBBBB /* Exceptions for "ContentBlockerExtension" folder in "ContentBlockerExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 0B4D19872F27F0BA0015BB6B /* KeyboardExtension */;
+			target = 0BAA10132F5F000100BBBBBB /* ContentBlockerExtension */;
+		};
+		0BAA40072F5F000100EEEEEE /* Exceptions for "FocusFilterExtension" folder in "FocusFilterExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 0BAA40032F5F000100EEEEEE /* FocusFilterExtension */;
 		};
 		0BEB58B12E7DFC6700B7D7B1 /* Exceptions for "TintExtension" folder in "TintExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
@@ -128,12 +155,20 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		0B4D19892F27F0BA0015BB6B /* KeyboardExtension */ = {
+		0BAA10152F5F000100BBBBBB /* ContentBlockerExtension */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				0B4D19922F27F0BA0015BB6B /* Exceptions for "KeyboardExtension" folder in "KeyboardExtension" target */,
+				0BAA10142F5F000100BBBBBB /* Exceptions for "ContentBlockerExtension" folder in "ContentBlockerExtension" target */,
 			);
-			path = KeyboardExtension;
+			path = ContentBlockerExtension;
+			sourceTree = "<group>";
+		};
+		0BAA40062F5F000100EEEEEE /* FocusFilterExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				0BAA40072F5F000100EEEEEE /* Exceptions for "FocusFilterExtension" folder in "FocusFilterExtension" target */,
+			);
+			path = FocusFilterExtension;
 			sourceTree = "<group>";
 		};
 		0BEB585D2E7DFC6100B7D7B1 /* TintExtension */ = {
@@ -147,15 +182,11 @@
 		};
 		0BEB587B2E7DFC6600B7D7B1 /* TintExtensionTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = TintExtensionTests;
 			sourceTree = "<group>";
 		};
 		0BEB58852E7DFC6600B7D7B1 /* TintExtensionUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = TintExtensionUITests;
 			sourceTree = "<group>";
 		};
@@ -174,7 +205,14 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		0B4D19852F27F0BA0015BB6B /* Frameworks */ = {
+		0BAA10162F5F000100BBBBBB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0BAA40092F5F000100EEEEEE /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -227,6 +265,11 @@
 				0BEB58B72E7DFD2600B7D7B1 /* TintApp.entitlements */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
+				0BAA30012F5F000100DDDDDD /* ContentBlockerManager.swift */,
+				0BAA30032F5F000100DDDDDD /* ContentBlockerManagerBridge.m */,
+				0BAA30052F5F000100DDDDDD /* FocusModeManager.swift */,
+				0BAA30072F5F000100DDDDDD /* FocusModeManagerBridge.m */,
+				0BAA30092F5F000100DDDDDD /* AuraPresetDefinitions.swift */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
@@ -260,7 +303,8 @@
 				0BEB587B2E7DFC6600B7D7B1 /* TintExtensionTests */,
 				0BEB58852E7DFC6600B7D7B1 /* TintExtensionUITests */,
 				0BEB58922E7DFC6600B7D7B1 /* TintExtension Extension */,
-				0B4D19892F27F0BA0015BB6B /* KeyboardExtension */,
+				0BAA10152F5F000100BBBBBB /* ContentBlockerExtension */,
+				0BAA40062F5F000100EEEEEE /* FocusFilterExtension */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				BBD78D7AC51CEA395F1C20DB /* Pods */,
@@ -278,7 +322,8 @@
 				0BEB58782E7DFC6600B7D7B1 /* TintExtensionTests.xctest */,
 				0BEB58822E7DFC6600B7D7B1 /* TintExtensionUITests.xctest */,
 				0BEB588E2E7DFC6600B7D7B1 /* TintExtension Extension.appex */,
-				0B4D19882F27F0BA0015BB6B /* KeyboardExtension.appex */,
+				0BAA10102F5F000100BBBBBB /* ContentBlockerExtension.appex */,
+				0BAA40012F5F000100EEEEEE /* FocusFilterExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -295,24 +340,44 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		0B4D19872F27F0BA0015BB6B /* KeyboardExtension */ = {
+		0BAA10132F5F000100BBBBBB /* ContentBlockerExtension */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 0B4D19932F27F0BA0015BB6B /* Build configuration list for PBXNativeTarget "KeyboardExtension" */;
+			buildConfigurationList = 0BAA10172F5F000100BBBBBB /* Build configuration list for PBXNativeTarget "ContentBlockerExtension" */;
 			buildPhases = (
-				0B4D19842F27F0BA0015BB6B /* Sources */,
-				0B4D19852F27F0BA0015BB6B /* Frameworks */,
-				0B4D19862F27F0BA0015BB6B /* Resources */,
+				0BAA10182F5F000100BBBBBB /* Sources */,
+				0BAA10162F5F000100BBBBBB /* Frameworks */,
+				0BAA10192F5F000100BBBBBB /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				0B4D19892F27F0BA0015BB6B /* KeyboardExtension */,
+				0BAA10152F5F000100BBBBBB /* ContentBlockerExtension */,
 			);
-			name = KeyboardExtension;
-			productName = KeyboardExtension;
-			productReference = 0B4D19882F27F0BA0015BB6B /* KeyboardExtension.appex */;
+			name = ContentBlockerExtension;
+			productName = ContentBlockerExtension;
+			productReference = 0BAA10102F5F000100BBBBBB /* ContentBlockerExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		0BAA40032F5F000100EEEEEE /* FocusFilterExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0BAA400B2F5F000100EEEEEE /* Build configuration list for PBXNativeTarget "FocusFilterExtension" */;
+			buildPhases = (
+				0BAA40082F5F000100EEEEEE /* Sources */,
+				0BAA40092F5F000100EEEEEE /* Frameworks */,
+				0BAA400A2F5F000100EEEEEE /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				0BAA40062F5F000100EEEEEE /* FocusFilterExtension */,
+			);
+			name = FocusFilterExtension;
+			productName = FocusFilterExtension;
+			productReference = 0BAA40012F5F000100EEEEEE /* FocusFilterExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
 		0BEB585B2E7DFC6100B7D7B1 /* TintExtension */ = {
@@ -416,7 +481,8 @@
 			);
 			dependencies = (
 				0B55D2002F1C848400E73C76 /* PBXTargetDependency */,
-				0B4D198E2F27F0BA0015BB6B /* PBXTargetDependency */,
+				0BAA101A2F5F000100BBBBBB /* PBXTargetDependency */,
+				0BAA40052F5F000100EEEEEE /* PBXTargetDependency */,
 			);
 			name = TintApp;
 			productName = TintApp;
@@ -433,7 +499,10 @@
 				LastSwiftUpdateCheck = 1620;
 				LastUpgradeCheck = 1620;
 				TargetAttributes = {
-					0B4D19872F27F0BA0015BB6B = {
+					0BAA10132F5F000100BBBBBB = {
+						CreatedOnToolsVersion = 16.2;
+					};
+					0BAA40032F5F000100EEEEEE = {
 						CreatedOnToolsVersion = 16.2;
 					};
 					0BEB585B2E7DFC6100B7D7B1 = {
@@ -473,13 +542,21 @@
 				0BEB58772E7DFC6600B7D7B1 /* TintExtensionTests */,
 				0BEB58812E7DFC6600B7D7B1 /* TintExtensionUITests */,
 				0BEB588D2E7DFC6600B7D7B1 /* TintExtension Extension */,
-				0B4D19872F27F0BA0015BB6B /* KeyboardExtension */,
+				0BAA10132F5F000100BBBBBB /* ContentBlockerExtension */,
+				0BAA40032F5F000100EEEEEE /* FocusFilterExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		0B4D19862F27F0BA0015BB6B /* Resources */ = {
+		0BAA10192F5F000100BBBBBB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0BAA400A2F5F000100EEEEEE /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -603,7 +680,14 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		0B4D19842F27F0BA0015BB6B /* Sources */ = {
+		0BAA10182F5F000100BBBBBB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0BAA40082F5F000100EEEEEE /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -643,21 +727,31 @@
 			buildActionMask = 2147483647;
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
+				0BAA30022F5F000100DDDDDD /* ContentBlockerManager.swift in Sources */,
+				0BAA30042F5F000100DDDDDD /* ContentBlockerManagerBridge.m in Sources */,
+				0BAA30062F5F000100DDDDDD /* FocusModeManager.swift in Sources */,
+				0BAA30082F5F000100DDDDDD /* FocusModeManagerBridge.m in Sources */,
+				0BAA300A2F5F000100DDDDDD /* AuraPresetDefinitions.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		0B4D198E2F27F0BA0015BB6B /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 0B4D19872F27F0BA0015BB6B /* KeyboardExtension */;
-			targetProxy = 0B4D198D2F27F0BA0015BB6B /* PBXContainerItemProxy */;
-		};
 		0B55D2002F1C848400E73C76 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 0BEB588D2E7DFC6600B7D7B1 /* TintExtension Extension */;
 			targetProxy = 0BEB58902E7DFC6600B7D7B1 /* PBXContainerItemProxy */;
+		};
+		0BAA101A2F5F000100BBBBBB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0BAA10132F5F000100BBBBBB /* ContentBlockerExtension */;
+			targetProxy = 0BAA10122F5F000100BBBBBB /* PBXContainerItemProxy */;
+		};
+		0BAA40052F5F000100EEEEEE /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0BAA40032F5F000100EEEEEE /* FocusFilterExtension */;
+			targetProxy = 0BAA40042F5F000100EEEEEE /* PBXContainerItemProxy */;
 		};
 		0BEB587A2E7DFC6600B7D7B1 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -677,7 +771,7 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		0B4D19902F27F0BA0015BB6B /* Debug */ = {
+		0BAA101B2F5F000100BBBBBB /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -687,7 +781,7 @@
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CODE_SIGN_ENTITLEMENTS = KeyboardExtension/KeyboardExtension.entitlements;
+				CODE_SIGN_ENTITLEMENTS = ContentBlockerExtension/ContentBlockerExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
@@ -695,10 +789,10 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = KeyboardExtension/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Aura Keyboard";
+				INFOPLIST_FILE = ContentBlockerExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Aura Content Blocker";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -708,7 +802,7 @@
 				MARKETING_VERSION = 1.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.KeyboardExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.ContentBlockerExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
@@ -719,7 +813,7 @@
 			};
 			name = Debug;
 		};
-		0B4D19912F27F0BA0015BB6B /* Release */ = {
+		0BAA101C2F5F000100BBBBBB /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -729,7 +823,7 @@
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CODE_SIGN_ENTITLEMENTS = KeyboardExtension/KeyboardExtension.entitlements;
+				CODE_SIGN_ENTITLEMENTS = ContentBlockerExtension/ContentBlockerExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
@@ -738,10 +832,10 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = KeyboardExtension/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Aura Keyboard";
+				INFOPLIST_FILE = ContentBlockerExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Aura Content Blocker";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -750,7 +844,89 @@
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MARKETING_VERSION = 1.0;
 				MTL_FAST_MATH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.KeyboardExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.ContentBlockerExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		0BAA400C2F5F000100EEEEEE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = FocusFilterExtension/FocusFilterExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FocusFilterExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Aura Focus Filter";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.FocusFilterExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		0BAA400D2F5F000100EEEEEE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_ENTITLEMENTS = FocusFilterExtension/FocusFilterExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 4JV5Y33KJB;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FocusFilterExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Aura Focus Filter";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.TintApp.FocusFilterExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1297,11 +1473,20 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		0B4D19932F27F0BA0015BB6B /* Build configuration list for PBXNativeTarget "KeyboardExtension" */ = {
+		0BAA10172F5F000100BBBBBB /* Build configuration list for PBXNativeTarget "ContentBlockerExtension" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				0B4D19902F27F0BA0015BB6B /* Debug */,
-				0B4D19912F27F0BA0015BB6B /* Release */,
+				0BAA101B2F5F000100BBBBBB /* Debug */,
+				0BAA101C2F5F000100BBBBBB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		0BAA400B2F5F000100EEEEEE /* Build configuration list for PBXNativeTarget "FocusFilterExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0BAA400C2F5F000100EEEEEE /* Debug */,
+				0BAA400D2F5F000100EEEEEE /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

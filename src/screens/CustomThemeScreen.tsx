@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,74 +7,58 @@ import {
   ScrollView,
   TextInput,
   Alert,
+  Animated,
+  PanResponder,
 } from 'react-native';
-import SimpleColorPickerModal from '../components/SimpleColorPickerModal';
-import { saveThemes, getThemes, hasPurchasedCustomThemes } from '../storage';
-import { PurchaseManager } from '../services/PurchaseManager';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import WheelColorPickerModal from '../components/WheelColorPickerModal';
+import HapticService from '../services/HapticService';
+import ThemePreview from '../components/ThemePreview';
+import { saveThemes, getThemes } from '../storage';
 import { useAppTheme } from '../contexts/AppThemeContext';
 
 interface CustomThemeScreenProps {
   navigation: any;
   route?: {
-    params?: {
-      forKeyboard?: boolean;
-      creatingAura?: boolean;
-      returnTo?: string;
-      returnParams?: any;
-    };
+    params?: {};
   };
 }
 
 const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route }) => {
-  const forKeyboard = route?.params?.forKeyboard || false;
-  const creatingAura = route?.params?.creatingAura || false;
-  const returnTo = route?.params?.returnTo;
-  const returnParams = route?.params?.returnParams || {};
   const { appThemeColor, backgroundColor, textColor, sectionBgColor, borderColor } = useAppTheme();
   const [themeName, setThemeName] = useState('');
-  const [background, setBackground] = useState('#000000');
-  const [text, setText] = useState('#FFFFFF');
-  const [link, setLink] = useState('#228B22');
+  const [baseBackground, setBaseBackground] = useState('#000000');
+  const [baseText, setBaseText] = useState('#FFFFFF');
+  const [baseLink, setBaseLink] = useState('#228B22');
+  const [brightness, setBrightness] = useState(100); // 0-200, 100 = no change
   const [colorPickerVisible, setColorPickerVisible] = useState(false);
   const [colorToEdit, setColorToEdit] = useState<{
     type: 'background' | 'text' | 'link';
     value: string;
   } | null>(null);
-  const [hasPurchased, setHasPurchased] = useState(false);
+  const sliderRef = useRef({ width: 280 });
+  const brightnessAnim = useRef(new Animated.Value(100)).current;
 
-  useEffect(() => {
-    checkPurchaseStatus();
-  }, []);
-
-  const checkPurchaseStatus = async () => {
-    const purchased = await hasPurchasedCustomThemes();
-    setHasPurchased(purchased);
+  // Apply brightness to base colors to get display colors
+  const applyBrightness = (color: string, brightnessValue: number): string => {
+    const hex = color.replace('#', '');
+    const r = parseInt(hex.substr(0, 2), 16);
+    const g = parseInt(hex.substr(2, 2), 16);
+    const b = parseInt(hex.substr(4, 2), 16);
     
-    if (!purchased) {
-      // Redirect to purchase screen if not purchased
-      Alert.alert(
-        'Purchase Required',
-        'Creating custom themes requires a one-time purchase of $4.99.',
-        [
-          {
-            text: 'Cancel',
-            style: 'cancel',
-            onPress: () => navigation.goBack(),
-          },
-          {
-            text: 'Purchase',
-            onPress: () => {
-              navigation.navigate('Purchase', {
-                onPurchaseComplete: () => {
-                  checkPurchaseStatus();
-                },
-              });
-            },
-          },
-        ]
-      );
-    }
+    // Brightness multiplier: 0 = black, 100 = original, 200 = white
+    const multiplier = brightnessValue / 100;
+    
+    const newR = Math.min(255, Math.max(0, Math.round(r * multiplier)));
+    const newG = Math.min(255, Math.max(0, Math.round(g * multiplier)));
+    const newB = Math.min(255, Math.max(0, Math.round(b * multiplier)));
+    
+    return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
   };
+
+  const background = applyBrightness(baseBackground, brightness);
+  const text = applyBrightness(baseText, brightness);
+  const link = applyBrightness(baseLink, brightness);
 
   const openColorPicker = (type: 'background' | 'text' | 'link', currentColor: string) => {
     setColorToEdit({ type, value: currentColor });
@@ -85,11 +69,11 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
     if (!colorToEdit) return;
 
     if (colorToEdit.type === 'background') {
-      setBackground(selectedColor);
+      setBaseBackground(selectedColor);
     } else if (colorToEdit.type === 'text') {
-      setText(selectedColor);
+      setBaseText(selectedColor);
     } else if (colorToEdit.type === 'link') {
-      setLink(selectedColor);
+      setBaseLink(selectedColor);
     }
 
     setColorPickerVisible(false);
@@ -97,46 +81,6 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
   };
 
   const handleSaveTheme = async () => {
-    if (!hasPurchased) {
-      Alert.alert(
-        'Purchase Required',
-        'Creating custom themes requires a one-time purchase of $4.99.',
-        [
-          {
-            text: 'Cancel',
-            style: 'cancel',
-          },
-          {
-            text: 'Purchase',
-            onPress: () => {
-              navigation.navigate('Purchase', {
-                onPurchaseComplete: () => {
-                  checkPurchaseStatus();
-                },
-              });
-            },
-          },
-        ]
-      );
-      return;
-    }
-
-    // If creating Aura, navigate back to CreateAuraFlow with updated theme data
-    // Using navigate instead of goBack to ensure we update the existing screen
-    if (creatingAura && returnTo) {
-      // Navigate to the return screen with updated params
-      // React Navigation will update the existing screen if it's in the stack
-      navigation.navigate(returnTo, {
-        ...returnParams,
-        safariTheme: {
-          background,
-          text,
-          link,
-        },
-      });
-      return;
-    }
-
     if (!themeName.trim()) {
       Alert.alert('Error', 'Please enter a theme name.');
       return;
@@ -152,57 +96,41 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
         return;
       }
 
-      // Create new custom theme
+      // Create new custom theme (save base colors, brightness is applied at runtime)
       const newTheme = {
         id: `custom-${Date.now()}`,
         name: themeName.trim(),
-        background,
-        text,
-        link,
-        keyColor: forKeyboard ? '#2a2a2a' : undefined, // Only include keyColor for keyboard themes
-        type: (forKeyboard ? 'keyboard' : 'safari') as const,
+        background: baseBackground,
+        text: baseText,
+        link: baseLink,
+        type: 'safari' as const,
       };
 
       // Add to custom themes array
       const updatedCustomThemes = [...customThemes, newTheme];
 
-      // Apply theme based on context (keyboard or Safari)
+      // Apply to Safari theme (use current display colors with brightness applied)
       const newThemeData = {
         ...currentData,
         customThemes: updatedCustomThemes,
-      };
-
-      if (forKeyboard) {
-        // Apply to keyboard theme
-        newThemeData.keyboardTheme = {
-          enabled: currentData?.keyboardTheme?.enabled ?? true,
-          background,
-          text,
-          link,
-          keyColor: '#2a2a2a', // Default key color
-          backgroundType: 'color',
-          backgroundImage: null,
-        };
-      } else {
-        // Apply to Safari theme
-        newThemeData.globalTheme = {
+        globalTheme: {
           enabled: currentData?.globalTheme?.enabled ?? true,
           background,
           text,
           link,
           backgroundType: 'color',
           backgroundImage: null,
-        };
-      }
+        },
+      };
 
       await saveThemes(newThemeData);
       Alert.alert(
         'Theme Saved',
-        `Your custom theme has been saved and applied to ${forKeyboard ? 'keyboard' : 'Safari'}.`,
+        'Your custom theme has been saved and applied to Safari.',
         [
           {
             text: 'OK',
-            onPress: () => navigation.navigate('CustomThemesList', { forKeyboard }),
+            onPress: () => navigation.navigate('CustomThemesList'),
           },
         ]
       );
@@ -225,6 +153,46 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
     }
   };
 
+  useEffect(() => {
+    brightnessAnim.setValue(brightness);
+  }, []);
+
+  const handleBrightnessChange = (newValue: number) => {
+    const clampedValue = Math.max(0, Math.min(200, newValue));
+    setBrightness(clampedValue);
+    brightnessAnim.setValue(clampedValue);
+  };
+
+  const createSliderPanResponder = (type: 'brightness') => {
+    return PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onShouldBlockNativeResponder: () => false,
+      
+      onPanResponderGrant: (evt) => {
+        if (type === 'brightness') {
+          HapticService.light();
+          const sliderWidth = sliderRef.current.width || 280;
+          const x = evt.nativeEvent.locationX;
+          const newValue = Math.max(0, Math.min(200, (x / sliderWidth) * 200));
+          handleBrightnessChange(newValue);
+        }
+      },
+      onPanResponderMove: (evt) => {
+        if (type === 'brightness') {
+          const sliderWidth = sliderRef.current.width || 280;
+          const x = evt.nativeEvent.locationX;
+          const newValue = Math.max(0, Math.min(200, (x / sliderWidth) * 200));
+          handleBrightnessChange(newValue);
+        }
+      },
+      onPanResponderRelease: () => {
+        // Optional: add release feedback
+      },
+    }).panHandlers;
+  };
+
   return (
     <View style={[styles.container, { backgroundColor }]}>
       <View style={[styles.header, { borderBottomColor: borderColor }]}>
@@ -244,66 +212,150 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
       </View>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        {!creatingAura && (
-          <>
-            <Text style={[styles.label, { color: textColor }]}>Theme Name</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: sectionBgColor, borderColor, color: textColor }]}
-              placeholder="Enter theme name"
-              placeholderTextColor={textColor === '#FFFFFF' ? '#666' : '#999'}
-              value={themeName}
-              onChangeText={setThemeName}
-            />
-          </>
-        )}
+        <Text style={[styles.label, { color: textColor }]}>Theme Name</Text>
+        <TextInput
+          style={[styles.input, { backgroundColor: sectionBgColor, borderColor, color: textColor }]}
+          placeholder="Enter theme name"
+          placeholderTextColor={textColor === '#FFFFFF' ? '#666' : '#999'}
+          value={themeName}
+          onChangeText={setThemeName}
+        />
 
         <Text style={[styles.sectionTitle, { color: textColor }]}>Preview</Text>
-        <View style={[styles.previewBox, { backgroundColor: background }]}>
-          <Text style={[styles.previewText, { color: text }]}>
-            This is how your text will look
-          </Text>
-          <Text style={[styles.previewLink, { color: link }]}>
-            This is how links will appear
-          </Text>
-        </View>
+        <ThemePreview
+          background={background}
+          text={text}
+          link={link}
+        />
 
         <Text style={[styles.sectionTitle, { color: textColor }]}>Colors</Text>
 
         <View style={styles.colorSection}>
-          <Text style={[styles.colorLabel, { color: textColor }]}>Background</Text>
-          <TouchableOpacity
-            style={[styles.colorButton, { backgroundColor: sectionBgColor, borderColor }]}
-            onPress={() => openColorPicker('background', background)}
-          >
-            <View style={[styles.colorPreview, { backgroundColor: background }]} />
-            <Text style={[styles.colorValue, { color: textColor }]}>{background}</Text>
-          </TouchableOpacity>
+          <View style={styles.colorRow}>
+            <View style={styles.colorRowLeft}>
+              <Text style={[styles.colorLabel, { color: textColor }]}>Background</Text>
+              <Text style={[styles.colorHint, { color: textColor === '#FFFFFF' ? '#888888' : '#666666' }]}>Tap to change</Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.colorPill, { backgroundColor: sectionBgColor, borderColor }]}
+              onPress={() => openColorPicker('background', baseBackground)}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.colorPillPreview, { backgroundColor: background }]} />
+              <Text style={[styles.colorPillValue, { color: textColor }]}>{background}</Text>
+              <Ionicons name="chevron-forward" size={16} color={appThemeColor} style={styles.chevron} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.colorSection}>
-          <Text style={[styles.colorLabel, { color: textColor }]}>Text</Text>
-          <TouchableOpacity
-            style={[styles.colorButton, { backgroundColor: sectionBgColor, borderColor }]}
-            onPress={() => openColorPicker('text', text)}
-          >
-            <View style={[styles.colorPreview, { backgroundColor: text }]} />
-            <Text style={[styles.colorValue, { color: textColor }]}>{text}</Text>
-          </TouchableOpacity>
+          <View style={styles.colorRow}>
+            <View style={styles.colorRowLeft}>
+              <Text style={[styles.colorLabel, { color: textColor }]}>Text</Text>
+              <Text style={[styles.colorHint, { color: textColor === '#FFFFFF' ? '#888888' : '#666666' }]}>Tap to change</Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.colorPill, { backgroundColor: sectionBgColor, borderColor }]}
+              onPress={() => openColorPicker('text', baseText)}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.colorPillPreview, { backgroundColor: text }]} />
+              <Text style={[styles.colorPillValue, { color: textColor }]}>{text}</Text>
+              <Ionicons name="chevron-forward" size={16} color={appThemeColor} style={styles.chevron} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.colorSection}>
-          <Text style={[styles.colorLabel, { color: textColor }]}>Link</Text>
-          <TouchableOpacity
-            style={[styles.colorButton, { backgroundColor: sectionBgColor, borderColor }]}
-            onPress={() => openColorPicker('link', link)}
-          >
-            <View style={[styles.colorPreview, { backgroundColor: link }]} />
-            <Text style={[styles.colorValue, { color: textColor }]}>{link}</Text>
-          </TouchableOpacity>
+          <View style={styles.colorRow}>
+            <View style={styles.colorRowLeft}>
+              <Text style={[styles.colorLabel, { color: textColor }]}>Link</Text>
+              <Text style={[styles.colorHint, { color: textColor === '#FFFFFF' ? '#888888' : '#666666' }]}>Tap to change</Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.colorPill, { backgroundColor: sectionBgColor, borderColor }]}
+              onPress={() => openColorPicker('link', baseLink)}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.colorPillPreview, { backgroundColor: link }]} />
+              <Text style={[styles.colorPillValue, { color: textColor }]}>{link}</Text>
+              <Ionicons name="chevron-forward" size={16} color={appThemeColor} style={styles.chevron} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <Text style={[styles.sectionTitle, { color: textColor }]}>Images</Text>
+        
+        <View style={styles.sliderSection}>
+          <Text style={[styles.sliderLabel, { color: textColor }]}>Brightness</Text>
+          <View style={styles.sliderContainer}>
+            <View 
+              style={[styles.sliderTrackWrapper, { backgroundColor: textColor === '#FFFFFF' ? '#333' : '#CCC' }]}
+              onLayout={(e) => {
+                const width = e.nativeEvent.layout.width;
+                if (width > 0) {
+                  sliderRef.current.width = width;
+                }
+              }}
+              {...createSliderPanResponder('brightness')}
+            >
+              <Animated.View 
+                style={[
+                  styles.sliderTrack, 
+                  { backgroundColor: textColor === '#FFFFFF' ? '#333' : '#CCC' }
+                ]}
+              >
+                <Animated.View 
+                  style={[
+                    styles.sliderFill, 
+                    { 
+                      width: brightnessAnim.interpolate({
+                        inputRange: [0, 200],
+                        outputRange: ['0%', '100%'],
+                      }),
+                      backgroundColor: appThemeColor 
+                    }
+                  ]} 
+                />
+                <Animated.View
+                  style={[
+                    styles.sliderThumb,
+                    {
+                      left: brightnessAnim.interpolate({
+                        inputRange: [0, 200],
+                        outputRange: ['0%', '100%'],
+                      }),
+                      transform: [{
+                        translateX: brightnessAnim.interpolate({
+                          inputRange: [0, 200],
+                          outputRange: [-12, -12],
+                        }),
+                      }],
+                      borderColor: appThemeColor,
+                    },
+                  ]}
+                />
+              </Animated.View>
+            </View>
+            <View style={styles.sliderButtons}>
+              <TouchableOpacity
+                style={[styles.sliderButton, { backgroundColor: sectionBgColor, borderColor }]}
+                onPress={() => handleBrightnessChange(brightness - 5)}
+              >
+                <Text style={[styles.sliderButtonText, { color: textColor }]}>−</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.sliderButton, { backgroundColor: sectionBgColor, borderColor }]}
+                onPress={() => handleBrightnessChange(brightness + 5)}
+              >
+                <Text style={[styles.sliderButtonText, { color: textColor }]}>+</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
       </ScrollView>
 
-      <SimpleColorPickerModal
+      <WheelColorPickerModal
         visible={colorPickerVisible}
         initialColor={colorToEdit?.value || '#000000'}
         onColorSelect={handleColorSelect}
@@ -372,10 +424,46 @@ const styles = StyleSheet.create({
   colorSection: {
     marginBottom: 20,
   },
+  colorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  colorRowLeft: {
+    flex: 1,
+    marginRight: 12,
+  },
   colorLabel: {
     fontSize: 16,
-    marginBottom: 8,
+    marginBottom: 4,
     fontWeight: '600',
+  },
+  colorHint: {
+    fontSize: 13,
+  },
+  colorPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    gap: 8,
+  },
+  colorPillPreview: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(128, 128, 128, 0.3)',
+  },
+  colorPillValue: {
+    fontSize: 14,
+    fontFamily: 'monospace',
+    fontWeight: '500',
+  },
+  chevron: {
+    marginLeft: 4,
   },
   colorButton: {
     flexDirection: 'row',
@@ -396,21 +484,60 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: 'monospace',
   },
-  previewBox: {
-    borderRadius: 12,
-    padding: 20,
-    marginTop: 8,
-    minHeight: 100,
-    borderWidth: 1,
-    borderColor: '#333',
+  sliderSection: {
+    marginBottom: 24,
   },
-  previewText: {
+  sliderLabel: {
     fontSize: 16,
+    fontWeight: '600',
     marginBottom: 12,
   },
-  previewLink: {
-    fontSize: 14,
-    textDecorationLine: 'underline',
+  sliderContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  sliderTrackWrapper: {
+    flex: 1,
+    height: 4,
+    borderRadius: 2,
+    position: 'relative',
+  },
+  sliderTrack: {
+    width: '100%',
+    height: 4,
+    borderRadius: 2,
+    position: 'relative',
+  },
+  sliderFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  sliderThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    position: 'absolute',
+    top: -8,
+    marginLeft: -10,
+  },
+  sliderButtons: {
+    flexDirection: 'column',
+    gap: 4,
+  },
+  sliderButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  sliderButtonText: {
+    fontSize: 18,
+    fontWeight: '600',
   },
   saveButton: {
     backgroundColor: '#1a1a1a',

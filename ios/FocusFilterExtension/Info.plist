@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>Aura Keyboard</string>
+	<string>Aura Focus Filter</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -18,21 +18,15 @@
 	<dict>
 		<key>NSExtensionAttributes</key>
 		<dict>
-			<key>IsASCIICapable</key>
-			<false/>
-			<key>PrefersRightToLeft</key>
-			<false/>
-			<key>PrimaryLanguage</key>
-			<string>en-US</string>
-			<key>RequestsOpenAccess</key>
-			<false/>
+			<key>IntentsSupported</key>
+			<array>
+				<string>SetFocusFilterIntent</string>
+			</array>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.keyboard-service</string>
+		<string>com.apple.intents-service</string>
 		<key>NSExtensionPrincipalClass</key>
-		<string>$(PRODUCT_MODULE_NAME).KeyboardViewController</string>
+		<string>$(PRODUCT_MODULE_NAME).AuraFocusFilter</string>
 	</dict>
-	<key>RCTNewArchEnabled</key>
-	<true/>
 </dict>
 </plist>

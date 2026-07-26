@@ -1,5 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions, Animated } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Dimensions,
+  Animated,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import LinearGradient from 'react-native-linear-gradient';
+import HapticService from '../services/HapticService';
 
 const { width } = Dimensions.get('window');
 
@@ -7,33 +19,57 @@ interface OnboardingScreenProps {
   onComplete: () => void;
 }
 
+interface OnboardingPage {
+  icon: string;
+  title: string;
+  description: string;
+}
+
 const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }) => {
+  const insets = useSafeAreaInsets();
   const [currentPage, setCurrentPage] = useState(0);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const [isCompleting, setIsCompleting] = useState(false);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollX = useRef(new Animated.Value(0)).current;
 
-  const pages = [
+  const pages: OnboardingPage[] = [
     {
+      icon: 'color-palette-outline',
       title: 'Welcome to Aura',
-      description: 'Customize your Safari browsing and keyboard experience',
-      showPreview: false,
+      description: 'Transform your Safari browsing experience with beautiful custom themes and powerful focus tools',
     },
     {
-      title: 'Safari Extension',
-      description: 'Apply themes to any website you visit',
-      showPreview: 'safari',
+      icon: 'brush-outline',
+      title: 'Create Custom Themes',
+      description: 'Design your perfect Safari theme with our advanced color picker. Choose any color for backgrounds, text, and links',
     },
     {
-      title: 'Custom Keyboard',
-      description: 'Personalize your keyboard with themes that match your Safari experience.',
-      showPreview: 'keyboard',
+      icon: 'moon-outline',
+      title: 'Focus Mode Integration',
+      description: 'Set different themes for work and personal browsing. Automatically apply themes based on your Focus mode',
     },
     {
-      title: 'Set Your Aura',
-      description: 'Choose from hundreds of available themes or create your own! One click sets one theme across the app.',
-      showPreview: false,
+      icon: 'shield-outline',
+      title: 'Block Distractions',
+      description: 'Stay focused with built-in content blocking. Filter out distracting elements while you work',
+    },
+    {
+      icon: 'checkmark-circle-outline',
+      title: 'Ready to Start?',
+      description: 'You\'re all set! Start customizing your Safari experience and boost your productivity',
     },
   ];
+
+  // Per-page animation refs - create one set of animations per page
+  const pageAnimations = useRef(
+    pages.map(() => ({
+      iconScale: new Animated.Value(0.9),
+      titleOpacity: new Animated.Value(0),
+      descriptionOpacity: new Animated.Value(0),
+      buttonTranslateY: new Animated.Value(20),
+    }))
+  ).current;
 
   useEffect(() => {
     // Fade in animation when component first mounts
@@ -42,17 +78,96 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }) => {
       duration: 500,
       useNativeDriver: true,
     }).start();
+
+    // Animate first page
+    runPageIntroAnimation(0);
   }, []);
+
+  useEffect(() => {
+    // Animate page when it becomes active
+    runPageIntroAnimation(currentPage);
+  }, [currentPage]);
+
+  const runPageIntroAnimation = (pageIndex: number) => {
+    const anims = pageAnimations[pageIndex];
+    if (!anims) return;
+
+    // Reset values
+    anims.iconScale.setValue(0.9);
+    anims.titleOpacity.setValue(0);
+    anims.descriptionOpacity.setValue(0);
+    anims.buttonTranslateY.setValue(20);
+
+    // Run animation sequence
+    Animated.sequence([
+      Animated.spring(anims.iconScale, {
+        toValue: 1,
+        useNativeDriver: true,
+        speed: 18,
+        bounciness: 6,
+      }),
+      Animated.parallel([
+        Animated.timing(anims.titleOpacity, {
+          toValue: 1,
+          duration: 350,
+          useNativeDriver: true,
+        }),
+        Animated.timing(anims.descriptionOpacity, {
+          toValue: 1,
+          duration: 350,
+          delay: 120,
+          useNativeDriver: true,
+        }),
+        Animated.timing(anims.buttonTranslateY, {
+          toValue: 0,
+          duration: 350,
+          delay: 200,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+  };
+
+  const handleScroll = (event: any) => {
+    const page = Math.round(event.nativeEvent.contentOffset.x / width);
+    if (page !== currentPage && page >= 0 && page < pages.length) {
+      // Light haptic feedback when page changes via swipe
+      HapticService.light();
+      setCurrentPage(page);
+    }
+  };
 
   const nextPage = () => {
     if (currentPage < pages.length - 1) {
-      setCurrentPage(currentPage + 1);
+      // Medium haptic feedback for button press
+      HapticService.medium();
+      const nextIndex = currentPage + 1;
+      scrollViewRef.current?.scrollTo({
+        x: nextIndex * width,
+        animated: true,
+      });
+      setCurrentPage(nextIndex);
     } else {
       handleGetStarted();
     }
   };
 
+  const prevPage = () => {
+    if (currentPage > 0) {
+      // Medium haptic feedback for button press
+      HapticService.medium();
+      const prevIndex = currentPage - 1;
+      scrollViewRef.current?.scrollTo({
+        x: prevIndex * width,
+        animated: true,
+      });
+      setCurrentPage(prevIndex);
+    }
+  };
+
   const handleGetStarted = () => {
+    // Success haptic feedback for completing onboarding
+    HapticService.success();
     setIsCompleting(true);
     // Fade out animation before completing
     Animated.timing(fadeAnim, {
@@ -65,162 +180,173 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }) => {
   };
 
   const skip = () => {
+    // Light haptic feedback for skip action
+    HapticService.light();
     handleGetStarted();
   };
 
-  const skipToLast = () => {
-    setCurrentPage(pages.length - 1);
+  const goToPage = (index: number) => {
+    if (index === currentPage) return;
+    // Selection haptic feedback for pagination dot tap
+    HapticService.selection();
+    scrollViewRef.current?.scrollTo({
+      x: index * width,
+      animated: true,
+    });
+    setCurrentPage(index);
   };
 
-  const renderSafariPreview = () => (
-    <View style={styles.previewContainer}>
-      <View style={styles.safariPreview}>
-        {/* Browser chrome */}
-        <View style={styles.browserChrome}>
-          <View style={styles.browserButtons}>
-            <View style={[styles.browserButton, { backgroundColor: '#FF5F57' }]} />
-            <View style={[styles.browserButton, { backgroundColor: '#FFBD2E' }]} />
-            <View style={[styles.browserButton, { backgroundColor: '#28CA42' }]} />
-          </View>
-          <View style={styles.urlBar}>
-            <Text style={styles.urlText}>example.com</Text>
-          </View>
-        </View>
-        {/* Themed content */}
-        <View style={[styles.safariContent, { backgroundColor: '#1a1a2e' }]}>
-          <View style={styles.contentHeader}>
-            <Text style={styles.contentTitle}>Welcome to Example Site</Text>
-            <Text style={styles.contentSubtitle}>Your themed browsing experience</Text>
-          </View>
-          <View style={styles.contentBody}>
-            <Text style={styles.contentParagraph}>
-              This is how websites look with your custom theme applied. The background, text, and link colors all match your chosen theme.
-            </Text>
-            <Text style={styles.contentParagraph}>
-              Navigate through any website and see your theme in action. Every page will reflect your personal style.
-            </Text>
-            <View style={styles.contentLink}>
-              <Text style={styles.linkText}>Learn more about themes →</Text>
-            </View>
-          </View>
-        </View>
-      </View>
-    </View>
-  );
+  const renderPage = (page: OnboardingPage, index: number) => {
+    const isLastPage = index === pages.length - 1;
+    const inputRange = [(index - 1) * width, index * width, (index + 1) * width];
+    const iconParallaxScale = scrollX.interpolate({
+      inputRange,
+      outputRange: [0.9, 1, 0.9],
+      extrapolate: 'clamp',
+    });
 
-  const renderKeyboardPreview = () => (
-    <View style={styles.previewContainer}>
-      <View style={styles.keyboardPreview}>
-        {/* Keyboard rows */}
-        <View style={styles.keyboardRow}>
-          {['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'].map((key, i) => (
-            <View key={i} style={[styles.keyPreview, { backgroundColor: '#2d2d2d' }]}>
-              <Text style={[styles.keyText, { color: '#ffffff' }]}>{key}</Text>
-            </View>
-          ))}
-        </View>
-        <View style={styles.keyboardRow}>
-          {['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'].map((key, i) => (
-            <View key={i} style={[styles.keyPreview, { backgroundColor: '#2d2d2d' }]}>
-              <Text style={[styles.keyText, { color: '#ffffff' }]}>{key}</Text>
-            </View>
-          ))}
-        </View>
-        <View style={styles.keyboardRow}>
-          <View style={[styles.keyPreview, styles.shiftKey, { backgroundColor: '#3d3d3d' }]}>
-            <Text style={[styles.keyText, { color: '#ffffff' }]}>⇧</Text>
-          </View>
-          {['Z', 'X', 'C', 'V', 'B', 'N', 'M'].map((key, i) => (
-            <View key={i} style={[styles.keyPreview, { backgroundColor: '#2d2d2d' }]}>
-              <Text style={[styles.keyText, { color: '#ffffff' }]}>{key}</Text>
-            </View>
-          ))}
-          <View style={[styles.keyPreview, styles.backspaceKey, { backgroundColor: '#3d3d3d' }]}>
-            <Text style={[styles.keyText, { color: '#ffffff' }]}>⌫</Text>
-          </View>
-        </View>
-        <View style={styles.keyboardRow}>
-          <View style={[styles.keyPreview, styles.spaceKey, { backgroundColor: '#2d2d2d' }]}>
-            <Text style={[styles.keyText, { color: '#ffffff' }]}>space</Text>
-          </View>
+    const anims = pageAnimations[index];
+    if (!anims) return null;
+    
+    return (
+      <View key={index} style={styles.page}>
+        <View style={styles.content}>
+          {/* Large Icon with gradient and depth */}
+          <Animated.View
+            style={[
+              styles.iconContainer,
+              { transform: [{ scale: Animated.multiply(anims.iconScale, iconParallaxScale) }] },
+            ]}
+          >
+            <LinearGradient
+              colors={isLastPage ? ['#228B22', '#2fa72f'] : ['#228B22', '#1a6b1a']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={[styles.iconGradient, isLastPage && styles.iconGradientFinal]}
+            >
+              <Ionicons name={page.icon} size={isLastPage ? 48 : 40} color="#FFFFFF" />
+            </LinearGradient>
+          </Animated.View>
+
+          {/* Title */}
+          <Animated.Text style={[styles.title, isLastPage && styles.titleFinal, { opacity: anims.titleOpacity }]}>
+            {page.title}
+          </Animated.Text>
+
+          {/* Description */}
+          <Animated.Text style={[styles.description, { opacity: anims.descriptionOpacity }]}>
+            {page.description}
+          </Animated.Text>
         </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   return (
-    <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
-      {/* Skip All Button */}
-      <TouchableOpacity style={styles.skipAllButton} onPress={skipToLast}>
-        <Text style={styles.skipAllText}>Skip All →</Text>
-      </TouchableOpacity>
+    <LinearGradient
+      colors={['#000000', '#050709', '#0a0f14']}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 0, y: 1 }}
+      style={styles.gradientBackground}
+    >
+      <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+        {/* Skip Button */}
+        <TouchableOpacity
+          style={[styles.skipButton, { top: Math.max(insets.top, 20) + 16 }]}
+          onPress={skip}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.skipButtonText}>Skip</Text>
+        </TouchableOpacity>
 
-      <ScrollView
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={(e) => {
-          const page = Math.round(e.nativeEvent.contentOffset.x / width);
-          setCurrentPage(page);
-        }}
-        style={styles.scrollView}
-      >
-        {pages.map((page, index) => (
-          <View key={index} style={styles.page}>
-            <Text style={styles.title}>{page.title}</Text>
-            <Text style={styles.description}>{page.description}</Text>
-            {page.showPreview === 'safari' && renderSafariPreview()}
-            {page.showPreview === 'keyboard' && renderKeyboardPreview()}
+        {/* Pages ScrollView */}
+        <Animated.ScrollView
+          ref={scrollViewRef as any}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={handleScroll}
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { x: scrollX } } }],
+            { useNativeDriver: false }
+          )}
+          scrollEventThrottle={16}
+          style={styles.scrollView}
+          bounces={false}
+        >
+          {pages.map((page, index) => renderPage(page, index))}
+        </Animated.ScrollView>
+
+        {/* Bottom Bar: pagination + a single, consistent primary action.
+            Anchored here (outside the paged ScrollView) so the button keeps a
+            fixed size and position on every page instead of shifting with
+            per-page content height. */}
+        <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 16) + 8 }]}>
+          <View style={styles.pagination}>
+            {pages.map((_, index) => {
+              const isActive = index === currentPage;
+              return (
+                <TouchableOpacity
+                  key={index}
+                  onPress={() => goToPage(index)}
+                  activeOpacity={0.7}
+                >
+                  <View
+                    style={[
+                      styles.dot,
+                      isActive && styles.dotActive,
+                    ]}
+                  />
+                </TouchableOpacity>
+              );
+            })}
           </View>
-        ))}
-      </ScrollView>
 
-      <View style={styles.pagination}>
-        {pages.map((_, index) => (
-          <View
-            key={index}
-            style={[
-              styles.dot,
-              index === currentPage && styles.dotActive,
-            ]}
-          />
-        ))}
-      </View>
-
-      <View style={styles.buttonContainer}>
-        {currentPage < pages.length - 1 ? (
-          <>
-            <TouchableOpacity style={styles.skipButton} onPress={skip}>
-              <Text style={styles.skipButtonText}>Skip</Text>
+          <View style={styles.buttonShadow}>
+            <TouchableOpacity
+              style={styles.buttonTouchable}
+              onPress={nextPage}
+              activeOpacity={0.9}
+            >
+              <LinearGradient
+                colors={['#228B22', '#1a6b1a']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.primaryButton}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {currentPage === pages.length - 1 ? 'Get Started' : 'Continue'}
+                </Text>
+                <Ionicons
+                  name={currentPage === pages.length - 1 ? 'arrow-forward' : 'chevron-forward'}
+                  size={18}
+                  color="#FFFFFF"
+                  style={styles.buttonIcon}
+                />
+              </LinearGradient>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.nextButton} onPress={nextPage}>
-              <Text style={styles.nextButtonText}>Next</Text>
-            </TouchableOpacity>
-          </>
-        ) : (
-          <TouchableOpacity style={styles.getStartedButton} onPress={handleGetStarted} disabled={isCompleting}>
-            <Text style={styles.getStartedButtonText}>Get Started</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    </Animated.View>
+          </View>
+        </View>
+      </Animated.View>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
+  gradientBackground: {
+    flex: 1,
+  },
   container: {
     flex: 1,
-    backgroundColor: '#000000',
   },
-  skipAllButton: {
+  skipButton: {
     position: 'absolute',
-    top: 60,
     right: 20,
     zIndex: 10,
     paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
   },
-  skipAllText: {
+  skipButtonText: {
     color: '#888888',
     fontSize: 16,
     fontWeight: '500',
@@ -231,189 +357,115 @@ const styles = StyleSheet.create({
   page: {
     width,
     flex: 1,
+    justifyContent: 'space-between',
+    paddingHorizontal: 48,
+  },
+  content: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 40,
-    paddingTop: 100,
+  },
+  iconContainer: {
+    marginBottom: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconGradient: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: 'rgba(34, 139, 34, 0.8)',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.45,
+    shadowRadius: 24,
+  },
+  iconGradientFinal: {
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    shadowRadius: 32,
   },
   title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#228B22',
-    marginBottom: 20,
+    fontSize: 42,
+    fontWeight: '700',
+    color: '#FFFFFF',
     textAlign: 'center',
+    marginBottom: 18,
+    letterSpacing: -0.8,
+    textShadowColor: 'rgba(0, 0, 0, 0.7)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 6,
+  },
+  titleFinal: {
+    fontSize: 38,
+    color: '#2fa72f',
+    textShadowColor: 'rgba(47, 167, 47, 0.6)',
   },
   description: {
-    fontSize: 18,
-    color: '#FFFFFF',
+    fontSize: 17,
+    color: '#B0B0B0',
     textAlign: 'center',
-    lineHeight: 26,
-    opacity: 0.9,
-    marginBottom: 40,
+    lineHeight: 24,
+    paddingHorizontal: 32,
   },
-  previewContainer: {
+  bottomBar: {
+    paddingHorizontal: 32,
+    paddingTop: 8,
+  },
+  buttonShadow: {
     width: '100%',
+    shadowColor: 'rgba(34, 139, 34, 0.9)',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+  },
+  buttonTouchable: {
+    width: '100%',
+  },
+  primaryButton: {
+    width: '100%',
+    paddingVertical: 18,
+    paddingHorizontal: 32,
+    borderRadius: 16,
     alignItems: 'center',
-    marginTop: 20,
-  },
-  safariPreview: {
-    width: width - 80,
-    maxWidth: 400,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: '#1a1a1a',
-  },
-  browserChrome: {
-    backgroundColor: '#2d2d2d',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  browserButtons: {
+    justifyContent: 'center',
+    minHeight: 56,
     flexDirection: 'row',
-    marginBottom: 8,
+    gap: 8,
+    overflow: 'visible',
   },
-  browserButton: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginRight: 6,
-  },
-  urlBar: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  urlText: {
-    color: '#888888',
-    fontSize: 12,
-  },
-  safariContent: {
-    padding: 20,
-    minHeight: 200,
-  },
-  contentHeader: {
-    marginBottom: 20,
-  },
-  contentTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
+  primaryButtonText: {
     color: '#FFFFFF',
-    marginBottom: 8,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
-  contentSubtitle: {
-    fontSize: 16,
-    color: '#228B22',
-    marginBottom: 4,
-  },
-  contentBody: {
-    marginTop: 8,
-  },
-  contentParagraph: {
-    fontSize: 14,
-    color: '#CCCCCC',
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  contentLink: {
-    marginTop: 8,
-  },
-  linkText: {
-    fontSize: 14,
-    color: '#228B22',
-    fontWeight: '500',
-  },
-  keyboardPreview: {
-    width: width - 80,
-    maxWidth: 400,
-    padding: 12,
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
-  },
-  keyboardRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  keyPreview: {
-    width: 32,
-    height: 40,
-    borderRadius: 6,
-    marginHorizontal: 3,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#2d2d2d',
-  },
-  shiftKey: {
-    width: 50,
-  },
-  backspaceKey: {
-    width: 50,
-  },
-  spaceKey: {
-    width: width - 140,
-    maxWidth: 300,
-  },
-  keyText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '500',
+  buttonIcon: {
+    marginLeft: 4,
   },
   pagination: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 20,
+    marginBottom: 24,
   },
   dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: '#333333',
-    marginHorizontal: 4,
+    marginHorizontal: 6,
   },
   dotActive: {
     backgroundColor: '#228B22',
-    width: 24,
-  },
-  buttonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 40,
-    paddingBottom: 40,
-  },
-  skipButton: {
-    paddingVertical: 14,
-    paddingHorizontal: 30,
-  },
-  skipButtonText: {
-    color: '#888888',
-    fontSize: 16,
-  },
-  nextButton: {
-    backgroundColor: '#228B22',
-    paddingVertical: 14,
-    paddingHorizontal: 40,
-    borderRadius: 8,
-  },
-  nextButtonText: {
-    color: '#000000',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  getStartedButton: {
-    backgroundColor: '#228B22',
-    paddingVertical: 16,
-    paddingHorizontal: 60,
-    borderRadius: 8,
-    alignSelf: 'center',
-    minWidth: 200,
-    alignItems: 'center',
-  },
-  getStartedButtonText: {
-    color: '#000000',
-    fontSize: 18,
-    fontWeight: 'bold',
+    width: 28,
+    borderRadius: 5,
+    shadowColor: 'rgba(34, 139, 34, 0.9)',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 8,
   },
 });
 

@@ -1,4 +1,4 @@
-import { NativeModules } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
 import { saveThemes, getThemes } from '../storage';
 
 const { FocusModeManager } = NativeModules;
@@ -15,102 +15,103 @@ interface FocusModeSettings {
   mappings: FocusModeMapping;
 }
 
+interface ThemeInfo {
+  id: string;
+  name: string;
+  background?: string;
+  text?: string;
+  link?: string;
+}
+
 /**
- * Service to handle Focus Mode integration with Aura themes
+ * Service to handle Focus Mode integration with Aura themes.
+ * 
+ * The actual theme switching is handled by the native FocusFilterExtension,
+ * which runs automatically when iOS Focus modes change — even when the app is closed.
+ * 
+ * This service is a simple settings manager that:
+ * - Checks if Focus Filters are available (iOS 16+)
+ * - Checks if the Focus Filter extension is configured
+ * - Updates Focus mode settings (enable/disable, theme mappings)
+ * - Gets available themes for mapping
  */
 class FocusModeService {
-  private listenerInterval: NodeJS.Timeout | null = null;
-  private lastFocusMode: string = 'none';
 
   /**
-   * Checks if Focus Filters are available on this device
+   * Checks if Focus Filters are available on this device (iOS 16+)
    */
   async isAvailable(): Promise<boolean> {
     try {
-      if (!FocusModeManager) {
+      // Focus Filters are only available on iOS
+      if (Platform.OS !== 'ios') {
+        console.log('FocusModeService: Not iOS, returning false');
         return false;
       }
+
+      // Check iOS version directly as a fallback
+      const iosVersion = parseInt(Platform.Version as string, 10);
+      if (iosVersion < 16) {
+        console.log('FocusModeService: iOS version < 16, returning false');
+        return false;
+      }
+
+      if (!FocusModeManager) {
+        // Native module not loaded — but if we're on iOS 16+, Focus Filters should work
+        // The FocusFilterExtension runs independently of this module
+        console.log('FocusModeService: NativeModule is null, but iOS 16+ detected — returning true');
+        return true;
+      }
+
       return await FocusModeManager.isFocusFiltersAvailable();
     } catch (error) {
       console.error('Error checking Focus Filters availability:', error);
+      // Fallback: if on iOS 16+, assume available
+      if (Platform.OS === 'ios') {
+        const iosVersion = parseInt(Platform.Version as string, 10);
+        return iosVersion >= 16;
+      }
       return false;
     }
   }
 
   /**
-   * Gets the current Focus mode
+   * Checks if the Focus Filter extension is properly configured
+   * (i.e., focus mode settings exist and are enabled in App Group storage)
    */
-  async getCurrentFocusMode(): Promise<string> {
+  async isConfigured(): Promise<boolean> {
     try {
       if (!FocusModeManager) {
-        return 'none';
+        // Fallback: check storage directly
+        const themeData = await getThemes();
+        return themeData?.focusModeSettings?.enabled || false;
       }
-      return await FocusModeManager.getCurrentFocusMode() || 'none';
+      return await FocusModeManager.isFocusFilterConfigured();
     } catch (error) {
-      console.error('Error getting Focus mode:', error);
-      return 'none';
+      console.error('Error checking Focus Filter configuration:', error);
+      return false;
     }
   }
 
   /**
-   * Applies the preset mapped to the current Focus mode
+   * Gets the list of available themes (built-in + custom) for Focus mode mapping
    */
-  async applyFocusModePreset(focusMode: string): Promise<void> {
+  async getAvailableThemes(): Promise<ThemeInfo[]> {
     try {
-      const themeData = await getThemes();
-      const focusSettings = themeData?.focusModeSettings;
-
-      if (!focusSettings?.enabled) {
-        return; // Focus mode integration is disabled
+      if (FocusModeManager) {
+        return await FocusModeManager.getAvailablePresets();
       }
-
-      const presetId = focusSettings.mappings[focusMode as keyof FocusModeMapping];
-      if (!presetId) {
-        return; // No preset mapped for this Focus mode
-      }
-
-      // Get the preset from Aura presets (we'll need to import this)
-      // For now, we'll use the preset IDs directly
-      console.log(`Applying preset ${presetId} for Focus mode: ${focusMode}`);
-      
-      // This will be implemented to apply the preset
-      // Similar to handleApplyPreset in HomeScreen
+      // Fallback: return empty array if native module not available
+      return [];
     } catch (error) {
-      console.error('Error applying Focus mode preset:', error);
+      console.error('Error getting available themes:', error);
+      return [];
     }
   }
 
   /**
-   * Starts monitoring Focus mode changes
-   */
-  async startMonitoring(): Promise<void> {
-    if (this.listenerInterval) {
-      return; // Already monitoring
-    }
-
-    // Poll for Focus mode changes every 5 seconds
-    // Note: This is a workaround since iOS doesn't provide direct Focus mode change notifications
-    this.listenerInterval = setInterval(async () => {
-      const currentMode = await this.getCurrentFocusMode();
-      if (currentMode !== this.lastFocusMode) {
-        this.lastFocusMode = currentMode;
-        await this.applyFocusModePreset(currentMode);
-      }
-    }, 5000);
-  }
-
-  /**
-   * Stops monitoring Focus mode changes
-   */
-  stopMonitoring(): void {
-    if (this.listenerInterval) {
-      clearInterval(this.listenerInterval);
-      this.listenerInterval = null;
-    }
-  }
-
-  /**
-   * Updates Focus mode settings
+   * Updates Focus mode settings (enable/disable, theme mappings)
+   * The FocusFilterExtension reads these settings from App Group storage
+   * when iOS triggers a Focus mode change.
    */
   async updateSettings(settings: Partial<FocusModeSettings>): Promise<void> {
     try {
@@ -129,6 +130,19 @@ class FocusModeService {
     } catch (error) {
       console.error('Error updating Focus mode settings:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Gets the current Focus mode settings
+   */
+  async getSettings(): Promise<FocusModeSettings | null> {
+    try {
+      const themeData = await getThemes();
+      return themeData?.focusModeSettings || null;
+    } catch (error) {
+      console.error('Error getting Focus mode settings:', error);
+      return null;
     }
   }
 }

@@ -7,16 +7,11 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
-import { saveThemes, getThemes, hasPurchasedCustomThemes } from '../storage';
+import { saveThemes, getThemes } from '../storage';
 import { useAppTheme } from '../contexts/AppThemeContext';
 
 interface CustomThemesListScreenProps {
   navigation: any;
-  route?: {
-    params?: {
-      forKeyboard?: boolean;
-    };
-  };
 }
 
 interface CustomTheme {
@@ -25,29 +20,20 @@ interface CustomTheme {
   background: string;
   text: string;
   link: string;
-  keyColor?: string;
-  type?: 'safari' | 'keyboard';
+  type?: 'safari';
 }
 
 const MAX_CUSTOM_THEMES = 5;
 
-const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigation, route }) => {
+const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigation }) => {
   const { appThemeColor, backgroundColor, textColor, sectionBgColor, borderColor } = useAppTheme();
-  const forKeyboard = route?.params?.forKeyboard || false;
   const [customThemes, setCustomThemes] = useState<CustomTheme[]>([]);
   const [selectedThemeId, setSelectedThemeId] = useState<string | null>(null);
-  const [hasPurchased, setHasPurchased] = useState(false);
 
   useEffect(() => {
     loadCustomThemes();
     loadCurrentTheme();
-    checkPurchaseStatus();
   }, []);
-
-  const checkPurchaseStatus = async () => {
-    const purchased = await hasPurchasedCustomThemes();
-    setHasPurchased(purchased);
-  };
 
   // Reload when screen comes into focus
   useEffect(() => {
@@ -63,17 +49,7 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
       const themeData = await getThemes();
       if (themeData?.customThemes) {
         const allThemes = themeData.customThemes || [];
-        // Filter themes based on forKeyboard parameter
-        const filteredThemes = allThemes.filter((theme: CustomTheme) => {
-          if (forKeyboard) {
-            // For keyboard: show themes with type === 'keyboard' or themes without type that have keyColor (backward compatibility)
-            return theme.type === 'keyboard' || (!theme.type && theme.keyColor);
-          } else {
-            // For Safari: show themes with type === 'safari' or themes without type that don't have keyColor (backward compatibility)
-            return theme.type === 'safari' || (!theme.type && !theme.keyColor);
-          }
-        });
-        setCustomThemes(filteredThemes);
+        setCustomThemes(allThemes);
       }
     } catch (error) {
       console.error('Error loading custom themes:', error);
@@ -83,7 +59,7 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
   const loadCurrentTheme = async () => {
     try {
       const themeData = await getThemes();
-      const current = forKeyboard ? themeData?.keyboardTheme : themeData?.globalTheme;
+      const current = themeData?.globalTheme;
       if (current) {
         const loadedCustomThemes = themeData?.customThemes || [];
         // Check if current theme matches any custom theme
@@ -95,48 +71,50 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
         );
         if (matchingCustom) {
           setSelectedThemeId(matchingCustom.id);
+        } else {
+          setSelectedThemeId(null);
         }
+      } else {
+        setSelectedThemeId(null);
       }
     } catch (error) {
       console.error('Error loading current theme:', error);
+      setSelectedThemeId(null);
     }
   };
 
   const handleSelectTheme = async (theme: CustomTheme) => {
     try {
       const currentData = await getThemes();
-      if (forKeyboard) {
-        // Apply to keyboard theme
+      
+      // Check if this theme is already selected - if so, deselect it
+      const isCurrentlySelected = selectedThemeId === theme.id;
+      
+      if (isCurrentlySelected) {
+        // Deselect the theme
         const newThemeData = {
           ...currentData,
-          keyboardTheme: {
-            enabled: currentData?.keyboardTheme?.enabled ?? true,
-            background: theme.background,
-            text: theme.text,
-            link: theme.link,
-            keyColor: theme.keyColor || '#2a2a2a',
-            backgroundType: 'color',
-            backgroundImage: null,
-          },
+          globalTheme: null,
         };
         await saveThemes(newThemeData);
-        Alert.alert('Theme Applied', `${theme.name} theme has been applied to keyboard.`);
-      } else {
-        // Apply to Safari theme
-        const newThemeData = {
-          ...currentData,
-          globalTheme: {
-            enabled: currentData?.globalTheme?.enabled ?? true,
-            background: theme.background,
-            text: theme.text,
-            link: theme.link,
-            backgroundType: 'color',
-            backgroundImage: null,
-          },
-        };
-        await saveThemes(newThemeData);
-        Alert.alert('Theme Applied', `${theme.name} theme has been applied to Safari.`);
+        setSelectedThemeId(null);
+        Alert.alert('Theme Cleared', 'The current theme has been cleared.');
+        return;
       }
+      
+      const newThemeData = {
+        ...currentData,
+        globalTheme: {
+          enabled: currentData?.globalTheme?.enabled ?? true,
+          background: theme.background,
+          text: theme.text,
+          link: theme.link,
+          backgroundType: 'color',
+          backgroundImage: null,
+        },
+      };
+      await saveThemes(newThemeData);
+      Alert.alert('Theme Applied', `${theme.name} theme has been applied to Safari.`);
       setSelectedThemeId(theme.id);
     } catch (error) {
       console.error('Error applying theme:', error);
@@ -165,15 +143,9 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
               };
               await saveThemes(newThemeData);
               
-              // Filter themes based on forKeyboard parameter (same logic as loadCustomThemes)
+              // Show Safari themes
               const filteredThemes = updatedCustomThemes.filter((theme: CustomTheme) => {
-                if (forKeyboard) {
-                  // For keyboard: show themes with type === 'keyboard' or themes without type that have keyColor (backward compatibility)
-                  return theme.type === 'keyboard' || (!theme.type && theme.keyColor);
-                } else {
-                  // For Safari: show themes with type === 'safari' or themes without type that don't have keyColor (backward compatibility)
-                  return theme.type === 'safari' || (!theme.type && !theme.keyColor);
-                }
+                return theme.type === 'safari' || !theme.type;
               });
               
               setCustomThemes(filteredThemes);
@@ -214,29 +186,10 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
         {/* Create Theme Button */}
         <TouchableOpacity
           style={[styles.createButton, { backgroundColor: sectionBgColor, borderColor }]}
-          onPress={() => {
-            if (hasPurchased) {
-              if (forKeyboard) {
-                navigation.navigate('CustomKeyboardTheme');
-              } else {
-                navigation.navigate('CustomTheme', { forKeyboard });
-              }
-            } else {
-              navigation.navigate('Purchase', {
-                onPurchaseComplete: () => {
-                  checkPurchaseStatus();
-                  if (forKeyboard) {
-                    navigation.navigate('CustomKeyboardTheme');
-                  } else {
-                    navigation.navigate('CustomTheme', { forKeyboard });
-                  }
-                },
-              });
-            }
-          }}
+          onPress={() => navigation.navigate('CustomTheme')}
         >
           <Text style={[styles.createButtonText, { color: appThemeColor }]}>
-            {hasPurchased ? 'Create Theme' : 'Unlock Custom Themes'}
+            Create Theme
           </Text>
         </TouchableOpacity>
 
@@ -267,12 +220,11 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
                   onLongPress={() => handleDeleteTheme(theme.id)}
                 >
                   <View style={styles.themeButtonContent}>
-                    <View
-                      style={[
-                        styles.themeColorIndicator,
-                        { backgroundColor: theme.background },
-                      ]}
-                    />
+                    <View style={styles.colorDotsContainer}>
+                      <View style={[styles.colorDot, { backgroundColor: theme.background }]} />
+                      <View style={[styles.colorDot, { backgroundColor: theme.text }]} />
+                      <View style={[styles.colorDot, { backgroundColor: theme.link }]} />
+                    </View>
                     <Text
                       style={[
                         styles.themeButtonText,
@@ -372,12 +324,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
   },
-  themeColorIndicator: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+  colorDotsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     marginRight: 12,
+  },
+  colorDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     borderWidth: 1,
+    borderColor: 'rgba(128,128,128,0.3)',
     borderColor: '#333',
   },
   themeButtonText: {

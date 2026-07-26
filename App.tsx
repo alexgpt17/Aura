@@ -1,28 +1,23 @@
-import React, { useState, useEffect } from 'react';
-import { Text, ActivityIndicator, View } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { ActivityIndicator, View, Animated } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppThemeProvider, useAppTheme } from './src/contexts/AppThemeContext';
 import { hasCompletedOnboarding, setOnboardingCompleted } from './src/storage';
-import HomeScreen from './src/screens/HomeScreen';
 import SafariScreen from './src/screens/SafariScreen';
-import KeyboardScreen from './src/screens/KeyboardScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import BrowseThemesScreen from './src/screens/BrowseThemesScreen';
 import CustomThemeScreen from './src/screens/CustomThemeScreen';
-import CustomKeyboardThemeScreen from './src/screens/CustomKeyboardThemeScreen';
 import CustomThemesListScreen from './src/screens/CustomThemesListScreen';
 import WebsiteSettingsScreen from './src/screens/WebsiteSettingsScreen';
-import AppSettingsScreen from './src/screens/AppSettingsScreen';
-import AppPickerScreen from './src/screens/AppPickerScreen';
+import ThemeSelectionScreen from './src/screens/ThemeSelectionScreen';
 import FocusModePresetSelectionScreen from './src/screens/FocusModePresetSelectionScreen';
-import KeyboardIcon from './src/components/KeyboardIcon';
-import AuraPresetsScreen from './src/screens/AuraPresetsScreen';
-import CreateAuraFlowScreen from './src/screens/CreateAuraFlowScreen';
-import PurchaseScreen from './src/screens/PurchaseScreen';
+import ContentBlockerScreen from './src/screens/ContentBlockerScreen';
+import FocusModeScreen from './src/screens/FocusModeScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -54,26 +49,34 @@ const MainTabs = () => {
     >
       <Tab.Screen
         name="HomeTab"
-        component={HomeScreen}
-        options={{
-          tabBarLabel: 'Home',
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>⌂</Text>,
-        }}
-      />
-      <Tab.Screen
-        name="SafariTab"
         component={SafariScreen}
         options={{
-          tabBarLabel: 'Safari',
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20, color }}>⌘</Text>,
+          tabBarLabel: 'Themes',
+          tabBarIcon: ({ color }) => <Ionicons name="brush-outline" size={20} color={color} />,
         }}
       />
       <Tab.Screen
-        name="KeyboardTab"
-        component={KeyboardScreen}
+        name="FocusTab"
+        component={FocusModeScreen}
         options={{
-          tabBarLabel: 'Keyboard',
-          tabBarIcon: ({ color }) => <KeyboardIcon size={20} color={color} />,
+          tabBarLabel: 'Rules',
+          tabBarIcon: ({ color }) => <Ionicons name="list-outline" size={20} color={color} />,
+        }}
+      />
+      <Tab.Screen
+        name="ShieldTab"
+        component={ContentBlockerScreen}
+        options={{
+          tabBarLabel: 'Protection',
+          tabBarIcon: ({ color }) => <Ionicons name="shield-outline" size={20} color={color} />,
+        }}
+      />
+      <Tab.Screen
+        name="SettingsTab"
+        component={SettingsScreen}
+        options={{
+          tabBarLabel: 'Settings',
+          tabBarIcon: ({ color }) => <Ionicons name="settings-outline" size={20} color={color} />,
         }}
       />
     </Tab.Navigator>
@@ -83,14 +86,27 @@ const MainTabs = () => {
 const App = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const mainAppOpacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     checkOnboardingStatus();
   }, []);
 
+  useEffect(() => {
+    if (!isLoading && !showOnboarding) {
+      Animated.timing(mainAppOpacity, {
+        toValue: 1,
+        duration: 400,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [isLoading, showOnboarding]);
+
   const checkOnboardingStatus = async () => {
     try {
       const completed = await hasCompletedOnboarding();
+      console.log('Onboarding check result:', completed);
       setShowOnboarding(!completed);
     } catch (e) {
       console.error('Error checking onboarding status:', e);
@@ -102,8 +118,22 @@ const App = () => {
   };
 
   const handleOnboardingComplete = async () => {
-    await setOnboardingCompleted(true);
-    setShowOnboarding(false);
+    setIsTransitioning(true);
+    mainAppOpacity.setValue(0);
+
+    // Small delay to ensure onboarding overlay is visible, then fade in main app
+    setTimeout(() => {
+      Animated.timing(mainAppOpacity, {
+        toValue: 1,
+        duration: 400,
+        useNativeDriver: true,
+      }).start(async () => {
+        await setOnboardingCompleted(true);
+        setShowOnboarding(false);
+        setIsTransitioning(false);
+        mainAppOpacity.setValue(1);
+      });
+    }, 100);
   };
 
   if (isLoading) {
@@ -114,17 +144,7 @@ const App = () => {
     );
   }
 
-  if (showOnboarding) {
-    return (
-      <AppThemeProvider>
-        <SafeAreaProvider>
-          <OnboardingScreen onComplete={handleOnboardingComplete} />
-        </SafeAreaProvider>
-      </AppThemeProvider>
-    );
-  }
-
-  return (
+  const mainAppContent = (
     <AppThemeProvider>
       <SafeAreaProvider>
         <NavigationContainer>
@@ -134,22 +154,48 @@ const App = () => {
             }}
           >
             <Stack.Screen name="MainTabs" component={MainTabs} />
-            <Stack.Screen name="Settings" component={SettingsScreen} />
             <Stack.Screen name="BrowseThemes" component={BrowseThemesScreen} />
             <Stack.Screen name="CustomThemesList" component={CustomThemesListScreen} />
             <Stack.Screen name="CustomTheme" component={CustomThemeScreen} />
-            <Stack.Screen name="CustomKeyboardTheme" component={CustomKeyboardThemeScreen} />
             <Stack.Screen name="WebsiteSettings" component={WebsiteSettingsScreen} />
-            <Stack.Screen name="AppSettings" component={AppSettingsScreen} />
-            <Stack.Screen name="AppPicker" component={AppPickerScreen} />
+            <Stack.Screen name="ThemeSelection" component={ThemeSelectionScreen} />
             <Stack.Screen name="FocusModePresetSelection" component={FocusModePresetSelectionScreen} />
-            <Stack.Screen name="AuraPresets" component={AuraPresetsScreen} />
-            <Stack.Screen name="CreateAuraFlow" component={CreateAuraFlowScreen} />
-            <Stack.Screen name="Purchase" component={PurchaseScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>
     </AppThemeProvider>
+  );
+
+  if (showOnboarding) {
+    return (
+      <AppThemeProvider>
+        <SafeAreaProvider>
+          <OnboardingScreen onComplete={handleOnboardingComplete} />
+          {/* Pre-render main app for smooth transition */}
+          {isTransitioning && (
+            <Animated.View
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                opacity: mainAppOpacity,
+              }}
+              pointerEvents={isTransitioning ? 'auto' : 'none'}
+            >
+              {mainAppContent}
+            </Animated.View>
+          )}
+        </SafeAreaProvider>
+      </AppThemeProvider>
+    );
+  }
+
+  return (
+    <Animated.View style={{ flex: 1, opacity: mainAppOpacity }}>
+      {mainAppContent}
+    </Animated.View>
   );
 };
 
