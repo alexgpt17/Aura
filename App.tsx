@@ -13,10 +13,9 @@ import CustomThemeScreen from './src/screens/CustomThemeScreen';
 import CustomThemesListScreen from './src/screens/CustomThemesListScreen';
 import WebsiteSettingsScreen from './src/screens/WebsiteSettingsScreen';
 import ThemeSelectionScreen from './src/screens/ThemeSelectionScreen';
-import FocusModePresetSelectionScreen from './src/screens/FocusModePresetSelectionScreen';
 import ContentBlockerScreen from './src/screens/ContentBlockerScreen';
-import FocusModeScreen from './src/screens/FocusModeScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
+import PrivacyPolicyScreen from './src/screens/PrivacyPolicyScreen';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const Stack = createNativeStackNavigator();
@@ -53,14 +52,6 @@ const MainTabs = () => {
         options={{
           tabBarLabel: 'Themes',
           tabBarIcon: ({ color }) => <Ionicons name="brush-outline" size={20} color={color} />,
-        }}
-      />
-      <Tab.Screen
-        name="FocusTab"
-        component={FocusModeScreen}
-        options={{
-          tabBarLabel: 'Rules',
-          tabBarIcon: ({ color }) => <Ionicons name="list-outline" size={20} color={color} />,
         }}
       />
       <Tab.Screen
@@ -159,7 +150,7 @@ const App = () => {
             <Stack.Screen name="CustomTheme" component={CustomThemeScreen} />
             <Stack.Screen name="WebsiteSettings" component={WebsiteSettingsScreen} />
             <Stack.Screen name="ThemeSelection" component={ThemeSelectionScreen} />
-            <Stack.Screen name="FocusModePresetSelection" component={FocusModePresetSelectionScreen} />
+            <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>

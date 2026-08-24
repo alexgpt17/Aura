@@ -14,6 +14,7 @@ import { saveThemes, getThemes } from '../storage';
 import { useAppTheme } from '../contexts/AppThemeContext';
 import { PRESET_THEMES } from './BrowseThemesScreen';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { ThemeColorDots } from '../components/ThemeSwatch';
 
 interface WebsiteSettingsScreenProps {
   navigation: any;
@@ -331,13 +332,14 @@ const WebsiteSettingsScreen: React.FC<WebsiteSettingsScreenProps> = ({ navigatio
             <Text style={[styles.themeSettingLabel, { color: textColor }]}>Theme</Text>
             <View style={styles.themeSettingValueRow}>
               {websiteTheme && (
-                <View style={styles.colorDotsContainer}>
-                  <View style={[styles.colorDot, { backgroundColor: websiteTheme.background }]} />
-                  <View style={[styles.colorDot, { backgroundColor: websiteTheme.text }]} />
-                  <View style={[styles.colorDot, { backgroundColor: websiteTheme.link }]} />
-                </View>
+                <ThemeColorDots
+                  theme={{
+                    ...websiteTheme,
+                    name: currentThemeName,
+                  }}
+                />
               )}
-              <Text style={[styles.themeSettingValue, { color: websiteTheme ? textColor : (textColor === '#FFFFFF' ? '#888888' : '#666666') }]}>
+              <Text style={[styles.themeSettingValue, { color: websiteTheme ? textColor : (textColor === '#FFFFFF' ? '#888888' : '#666666'), flex: 1 }]}>
                 {currentThemeName}
               </Text>
             </View>
@@ -460,9 +462,9 @@ const styles = StyleSheet.create({
   themeSettingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
     marginBottom: 8,
     borderWidth: 1,
   },

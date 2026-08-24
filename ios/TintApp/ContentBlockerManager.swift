@@ -5,7 +5,9 @@ import React
 @objc(ContentBlockerManager)
 class ContentBlockerManager: NSObject {
   
-  private let contentBlockerIdentifier = "org.reactjs.native.example.TintApp.ContentBlockerExtension"
+  private let contentBlockerIdentifier = "com.alexmartens.aura.ContentBlockerExtension"
+  private let appGroupID = "group.com.alexmartens.tint"
+  private let extensionHeartbeatKey = "auraExtensionHeartbeat"
   
   @objc static func requiresMainQueueSetup() -> Bool {
     return false
@@ -35,6 +37,34 @@ class ContentBlockerManager: NSObject {
         "isEnabled": state?.isEnabled ?? false
       ])
     }
+  }
+
+  /// Reports whether the Safari Web Extension has run recently.
+  ///
+  /// iOS has no API to query Safari web extension enablement before iOS 26.2
+  /// (SFSafariExtensionManager is macOS-only), so the extension writes a
+  /// heartbeat into the App Group each time Safari invokes it and we read it here.
+  /// `isEnabled` is therefore "seen running recently", used only to decide whether
+  /// to surface setup guidance — never to gate functionality.
+  @objc func getSafariExtensionState(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    let maxAgeSeconds: TimeInterval = 14 * 24 * 60 * 60
+
+    guard let defaults = UserDefaults(suiteName: appGroupID) else {
+      resolve(["isEnabled": false, "lastSeen": 0])
+      return
+    }
+
+    let lastSeenMs = defaults.double(forKey: extensionHeartbeatKey)
+    guard lastSeenMs > 0 else {
+      resolve(["isEnabled": false, "lastSeen": 0])
+      return
+    }
+
+    let age = Date().timeIntervalSince1970 - (lastSeenMs / 1000)
+    resolve([
+      "isEnabled": age <= maxAgeSeconds,
+      "lastSeen": lastSeenMs
+    ])
   }
   
   /// Gets statistics about the active block rules per category

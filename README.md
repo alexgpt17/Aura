@@ -1,28 +1,34 @@
 # Aura
 
-**Aura** is a Safari theming app for iOS that provides customizable dark themes for web browsing with intelligent per-site rules and focus mode integration.
+**Aura** is a Safari theming app for iOS that recolors websites with selectable themes, custom colours, per-site overrides, and an optional content blocker.
 
 ## Features
 
-- **Safari Theming**: Custom dark themes applied to websites via Safari Web Extension
-- **Per-Site Rules**: Site-specific theme overrides for major websites (Google, Wikipedia, etc.)
-- **Focus Mode Integration**: Automatic theme switching based on iOS Focus modes
-- **Content Blocker**: Block distracting content during focused browsing
-- **Custom Themes**: Create personalized themes with $4.99 in-app purchase
+- **Safari Theming**: Custom themes applied to websites via Safari Web Extension
+- **Per-Site Rules**: Site-specific theme overrides
+- **Content Blocker**: Optional blocking of ads, trackers, social widgets, and annoyances
+- **Custom Themes**: Create up to five personalized colour themes
 
 ## Platform Support
 
-**iOS only** - This app is designed specifically for iOS Safari. The Android project exists as React Native scaffolding but is not actively supported.
+**iOS only** — designed for iOS Safari. The Android project exists as React Native scaffolding but is not actively supported.
+
+## App Store submission
+
+See [APP_REVIEW_NOTES.md](APP_REVIEW_NOTES.md) for reviewer enablement steps. Privacy policy: https://alexgpt17.github.io/Aura/privacy/ (source in `docs/privacy/`). Full Connect checklist: [APP_STORE_SUBMISSION.md](APP_STORE_SUBMISSION.md).
+
+**Ship the `TintApp` scheme only.** Do not archive the legacy `TintExtension` host target.
 
 ## Architecture Overview
 
-Aura uses a React Native app for theme configuration and multiple iOS native extensions for theme application:
+Aura uses a React Native app for theme configuration and iOS native extensions for theme application:
 
-1. **React Native App**: Theme creation, settings, focus mode configuration
+1. **React Native App (`TintApp`)**: Theme creation, settings, content blocker configuration
 2. **Safari Web Extension**: Applies themes to websites using content scripts
 3. **App Group Storage**: Shared data between app and extension (`group.com.alexmartens.tint`)
 4. **Content Blocker Extension**: Blocks distracting content when enabled
-5. **Focus Filter Extension**: Automatic theme switching when iOS Focus modes change
+
+Focus Filter integration is not included in the MVP build.
 
 ### Data Flow
 
@@ -44,22 +50,29 @@ Content Script → Applies CSS to page
 Aura/
 ├── App.tsx                                    # Main React Native app entry point
 ├── index.js                                   # React Native entry point
+├── APP_REVIEW_NOTES.md                        # App Store reviewer notes
+├── docs/
+│   ├── privacy-policy.md
+│   └── privacy-policy.html
 ├── src/
 │   ├── screens/                               # App screens
 │   │   ├── SafariScreen.tsx                   # Main theme configuration hub
 │   │   ├── BrowseThemesScreen.tsx             # Browse preset themes
-│   │   ├── CustomThemeScreen.tsx              # Create/edit custom themes
+│   │   ├── CustomThemeScreen.tsx              # Create custom themes
 │   │   ├── CustomThemesListScreen.tsx         # List of custom themes
+│   │   ├── ThemeSelectionScreen.tsx           # Pick a theme for a website
 │   │   ├── WebsiteSettingsScreen.tsx          # Per-site theme overrides
-│   │   ├── FocusModeScreen.tsx                # Focus mode configuration
-│   │   ├── FocusModePresetSelectionScreen.tsx # Map Focus modes to themes
 │   │   ├── ContentBlockerScreen.tsx           # Content blocker settings
 │   │   ├── SettingsScreen.tsx                 # App settings
-│   │   ├── PurchaseScreen.tsx                 # In-app purchase flow
-│   │   ├── OnboardingScreen.tsx              # First-launch tutorial
+│   │   ├── PrivacyPolicyScreen.tsx            # In-app privacy summary
+│   │   ├── OnboardingScreen.tsx               # First-launch tutorial
 │   │   ├── ThemeOptionsScreen.tsx             # Theme options
-│   │   └── WelcomeScreen.tsx                  # Welcome screen
+│   │   ├── WelcomeScreen.tsx                  # Welcome screen
+│   │   ├── FocusModeScreen.tsx                # (present; hidden from MVP UI)
+│   │   ├── FocusModePresetSelectionScreen.tsx # (present; hidden from MVP UI)
+│   │   └── PurchaseScreen.tsx                 # (present; not used in MVP)
 │   ├── components/                            # Reusable UI components
+│   │   ├── ThemeSwatch.tsx                    # Mini-page theme preview chip
 │   │   ├── ColorPickerDropdown.tsx
 │   │   ├── ColorPickerModal.tsx
 │   │   ├── SimpleColorPickerModal.tsx
@@ -70,25 +83,28 @@ Aura/
 │   ├── contexts/
 │   │   └── AppThemeContext.tsx                # App-wide theme context
 │   ├── services/
-│   │   ├── FocusModeService.ts                # Focus mode detection and automation
-│   │   └── PurchaseManager.ts                 # StoreKit IAP handling
+│   │   ├── HapticService.ts
+│   │   ├── SafariExtensionService.ts          # Extension enablement guidance / heartbeat
+│   │   └── SunsetSunriseService.ts            # (unused for MVP)
+│   ├── constants/
+│   │   └── AppConfig.ts                       # Privacy URL, support email, bundle IDs
 │   └── storage.js                             # App Group storage functions
 ├── ios/
-│   ├── TintApp/                               # Main iOS app target
+│   ├── TintApp/                               # Main iOS app target (ship this)
 │   ├── TintExtension Extension/               # Safari Web Extension
 │   │   ├── SafariWebExtensionHandler.swift    # Native bridge (App Group → extension storage)
+│   │   ├── PrivacyInfo.xcprivacy
 │   │   └── Resources/
 │   │       ├── content.js                     # Theme application engine (CRITICAL)
 │   │       ├── background.js                  # Message routing
 │   │       └── manifest.json                  # Extension manifest
 │   ├── ContentBlockerExtension/               # Content blocker extension
+│   │   ├── PrivacyInfo.xcprivacy
 │   │   ├── blocklist-ads.json
 │   │   ├── blocklist-trackers.json
 │   │   ├── blocklist-social.json
 │   │   └── blocklist-annoyances.json
-│   ├── FocusFilterExtension/                  # Focus mode integration
-│   │   └── AuraPresetDefinitions.swift
-│   └── KeyboardExtension/                     # (Currently empty/placeholder)
+│   └── FocusFilterExtension/                  # Present but hidden from MVP UI
 └── android/                                    # React Native scaffolding (not actively supported)
 ```
 
@@ -96,72 +112,65 @@ Aura/
 
 The app uses React Navigation with a bottom tab navigator and stack navigator:
 
-**Bottom Tabs:**
+**Bottom Tabs (MVP):**
 - **Themes** (`SafariScreen`) - Main theme configuration hub
-- **Rules** (`FocusModeScreen`) - Focus mode and automation settings
 - **Shield** (`ContentBlockerScreen`) - Content blocker configuration
 - **Settings** (`SettingsScreen`) - App settings
 
-**Stack Screens:**
+**Stack Screens (MVP):**
 - `BrowseThemes` - Browse preset themes
 - `CustomThemesList` - List of user-created custom themes
 - `CustomTheme` - Create/edit custom theme
 - `WebsiteSettings` - Configure per-site theme overrides
-- `FocusModePresetSelection` - Map Focus modes to themes
-- `Purchase` - In-app purchase flow
-- `ContentBlocker` - Content blocker settings (also in tabs)
-- `FocusMode` - Focus mode settings (also in tabs)
+- `ThemeSelection` - Choose a theme for a site
+- `PrivacyPolicy` - Privacy policy summary
+
+Focus Mode / Rules and in-app purchase screens exist in the repo but are **not wired** into the MVP navigation.
 
 ## Content Script Architecture
 
-The Safari extension's theme application is handled by `ios/TintExtension Extension/Resources/content.js`. This file has a **critical architecture** that must be understood before making changes.
+The Safari extension's theme application is handled by `ios/TintExtension Extension/Resources/content.js`, with shared predicates in `themeHeuristics.js`.
 
-### Theme Engine (DO NOT MODIFY)
+**Core model:** paint `html`/`body` with the theme, make layout containers transparent so the theme shows through, then run JS safety nets for cases CSS cannot reach (late-applied site styles, non-ARIA popups, light-gray cards, SPA shells).
 
-The **core theme engine** applies universal dark theme rules to all websites. It should **not be modified** unless absolutely necessary. The engine consists of:
+### Theme engine (extend heuristics + JS passes for general cases)
 
-1. **`getFullStyleSheet(theme)`** - Generates universal CSS rules using CSS variables:
-   - CSS variables: `--aura-bg`, `--aura-text`, `--aura-link`, `--aura-surface`, `--aura-border`, `--aura-overlay`
-   - Universal transparency rules for `div`, `main`, `section`, `article`
-   - Inline style overrides for white backgrounds
-   - Text color rules for headings, paragraphs, links
-   - Shadow DOM support
+1. **`getFullStyleSheet(theme)`** — CSS variables (`--aura-bg`, `--aura-text`, `--aura-link`, `--aura-surface`, `--aura-overlay`, …), container transparency, dialog/popover surfaces, text-input *color* (transparent fill so search fields stay seamless), common SPA root IDs (`#app`, `#root`, …).
+2. **`applyTheme` / `removeTheme`** — injects `#aura-core-engine` and reverts inline safety-net changes.
+3. **JS safety nets** (re-run on DOM + `class`/`style`/`hidden`/`open` mutations, full document, 150ms debounce):
+   - **Shell pass** — clears gradient / opaque fills on large app shells (`#app`, `#app-mount`, …). Inline `!important` beats site ID selectors.
+   - **Overlay pass** — opaques `<dialog>`, `[popover]`, ARIA dialogs, and heuristic modal cards. Full-viewport scrims stay transparent; the inner card is painted instead.
+   - **Bright / light-surface pass** — clears near-white and low-chroma light-gray leftovers (not brand-colored fills).
+   - **Contrast pass** — walks to the effective background and picks black or white; does not blindly force `--aura-text`.
+   - **Sticky pass** — re-opaques chrome bars. Still skips full-viewport curtains.
+4. **`themeHeuristics.js`** — unit-tested predicates (`isLightContentSurface`, `isLikelyModalCard`, `effectiveBackground`, gradient vs `url()` classification, …). Prefer adding a heuristic here over a site-specific selector.
 
-2. **`applyTheme(theme)`** - Applies the theme by creating/updating a `<style>` element with ID `aura-core-engine`
+The stylesheet is moved to the end of `head` on each pass so later site sheets cannot win on equal-`!important` cascade order.
 
-3. **`removeTheme()`** - Removes the theme when disabled
+### Site-specific overrides (last resort)
 
-4. **`handleShadowDOM(root)`** - Automatically injects themes into Shadow DOM elements using MutationObserver
+`SITE_FIXES` in `content.js` is an array of `{ match: [hostnames], css }` entries. Use it only when a general pass still misses a unique leftover after device testing. Host matching is suffix-based (`google.com` covers `www.google.com`).
 
-### Site-Specific Overrides (MODIFY HERE)
+**Current leftovers:**
+- `google.com` — Sign-in pill, search text-fade gradient, `#rso` result surfaces
+- `wikipedia.org` — Infobox / navbox / Codex / ReadMore
+- `amazon.com` — Search field
 
-The **`SITE_FIXES` object** (lines 10-27) contains site-specific CSS overrides that handle edge cases the universal engine doesn't cover. **This is where you should add fixes for new websites.**
-
-**Current site overrides:**
-- `google.com` - Search bar styling, header background fixes
-- `wikipedia.org` - Infobox, navbox, sidebar, table styling
-
-**How to add a new site override:**
-
-1. Add an entry to the `SITE_FIXES` object:
 ```javascript
-const SITE_FIXES = {
-    'google.com': `...`,
-    'wikipedia.org': `...`,
-    'newsite.com': `
-        /* Your site-specific CSS rules here */
-        .problematic-element {
-            background-color: var(--aura-bg) !important;
-        }
-    `
-};
+const SITE_FIXES = [
+    {
+        match: ['example.com'],
+        css: `
+            .leftover-widget {
+                background-color: var(--aura-surface) !important;
+                color: var(--aura-text) !important;
+            }
+        `,
+    },
+];
 ```
 
-2. The override is automatically injected after the universal rules in `getFullStyleSheet()`
-
-3. Use CSS variables (`var(--aura-bg)`, `var(--aura-text)`, etc.) to maintain theme consistency
-
-**Important**: Only modify `SITE_FIXES` for new site support. Do not modify the core theme engine functions unless fixing a critical bug.
+Use CSS variables so overrides stay theme-consistent. Do not add Zillow/Discord-style catalogs if a heuristic can cover the pattern.
 
 ## Storage Architecture
 
@@ -297,23 +306,24 @@ npm test
 ```
 
 **Manual Testing Checklist:**
+- [ ] Enable Aura under Settings → Safari → Extensions (All Websites)
 - [ ] Safari themes apply on page load
-- [ ] Site-specific rules work correctly (Google, Wikipedia)
-- [ ] Focus Mode triggers theme changes
-- [ ] Content blocker activates with Focus Mode
+- [ ] Dual-colour themes render without laggy scroll
+- [ ] Wikipedia / design-system sites keep readable text
+- [ ] Content blocker categories reload correctly
 - [ ] Shadow DOM elements get themed
 - [ ] Real-time theme updates work (change theme in app, see update in Safari)
 - [ ] Themes persist across Safari sessions
-- [ ] Custom themes can be created (after purchase)
+- [ ] Custom mono and dual themes can be created (max 5)
 - [ ] Per-site overrides work correctly
 
 ## Key Files Reference
 
 ### React Native App
 - `src/storage.js` - App Group storage functions (`saveThemes`, `getThemes`, etc.)
-- `src/services/FocusModeService.ts` - Focus mode detection and automation
-- `src/services/PurchaseManager.ts` - StoreKit IAP handling ($4.99 custom themes)
+- `src/components/ThemeSwatch.tsx` - Shared mono/dual theme tile
 - `src/contexts/AppThemeContext.tsx` - App-wide theme context (dark/light mode, accent color)
+- `src/constants/AppConfig.ts` - Bundle IDs, privacy policy URL, support email
 
 ### Safari Extension
 - `ios/TintExtension Extension/Resources/content.js` - **Theme application engine** (core + site overrides)
@@ -322,43 +332,20 @@ npm test
 
 ### iOS Extensions
 - `ios/ContentBlockerExtension/` - JSON blocklists for ads, trackers, social widgets, annoyances
-- `ios/FocusFilterExtension/` - Automatic theme switching when iOS Focus modes change
-
-## Focus Mode Integration
-
-Focus Mode integration uses iOS Focus Filters (iOS 16+):
-
-1. **User Setup**: User maps Focus modes to themes in the app
-2. **Settings Storage**: Mappings saved to App Group storage
-3. **Focus Filter Extension**: Runs automatically when Focus mode changes (even when app is closed)
-4. **Theme Switch**: Extension reads mappings from App Group and applies appropriate theme
-5. **Content Blocker**: Can be enabled/disabled per Focus mode
-
-**User must enable Focus Filter in iOS Settings:**
-Settings → Focus → [Mode] → Focus Filters → Aura
-
-## In-App Purchase
-
-- **Product ID**: `com.alexmartens.aura.customthemes`
-- **Price**: $4.99 (one-time purchase)
-- **Feature**: Unlocks ability to create custom themes (max 5)
-- **Implementation**: `src/services/PurchaseManager.ts` + native StoreKit module
 
 ## Troubleshooting
 
 ### Themes not applying in Safari
 
-1. Check App Group is configured: `group.com.alexmartens.tint`
-2. Verify extension is enabled in Safari Settings → Extensions
-3. Check Xcode console for native handler logs
-4. Check Safari console for content script errors
-5. Verify `browser.storage.local` has theme data
+1. Enable the extension: Settings → Safari → Extensions → Aura → Allow All Websites
+2. Check App Group is configured: `group.com.alexmartens.tint`
+3. Check Safari console for content script errors
+4. Verify `browser.storage.local` has theme data
 
 ### Data sync issues
 
-1. Native handler may cache UserDefaults - it calls `synchronize()` multiple times
-2. Check App Group storage directly in Xcode debugger
-3. Verify extension storage via Safari console: `browser.storage.local.get('tintThemeData')`
+1. Check App Group storage in Xcode debugger
+2. Verify extension storage via Safari console: `browser.storage.local.get('tintThemeData')`
 
 ### Content script not running
 

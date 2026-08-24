@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import LinearGradient from 'react-native-linear-gradient';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 interface ThemePreviewProps {
   background: string;
@@ -10,81 +10,84 @@ interface ThemePreviewProps {
   backgroundGradient?: string | null;
 }
 
-function extractSplitColors(gradient?: string | null): { dark: string; light: string } | null {
-  if (!gradient) return null;
-  const match = gradient.match(/#[0-9a-fA-F]{6}/g);
-  if (match && match.length >= 2) {
-    return { dark: match[0], light: match[1] };
+function surfaceFrom(bg: string, _text: string): string {
+  // Subtle elevated surface relative to page bg
+  if (bg === '#ffffff' || bg === '#FFFFFF' || bg === '#F1EADF') {
+    return 'rgba(0,0,0,0.06)';
   }
-  return null;
+  return 'rgba(255,255,255,0.08)';
+}
+
+function mutedFrom(text: string): string {
+  // Approximate muted text
+  if (text === '#000000' || text === '#4A3F35') {
+    return 'rgba(0,0,0,0.45)';
+  }
+  return 'rgba(255,255,255,0.45)';
 }
 
 const ThemePreview: React.FC<ThemePreviewProps> = ({
   background,
   text,
   link,
-  backgroundType,
-  backgroundGradient,
 }) => {
-  const isSplit = backgroundType === 'split';
-  const splitColors = isSplit ? extractSplitColors(backgroundGradient) : null;
-  const useHardDiagonal = !!(isSplit && splitColors);
-
   const borderColor =
     background === '#ffffff' || background === '#FFFFFF'
-      ? 'rgba(0, 0, 0, 0.1)'
-      : 'rgba(255, 255, 255, 0.1)';
+      ? 'rgba(0, 0, 0, 0.12)'
+      : 'rgba(255, 255, 255, 0.12)';
+  const surface = surfaceFrom(background, text);
+  const muted = mutedFrom(text);
 
   const content = (
-    <View style={styles.wikiContent}>
-      <Text style={[styles.wikiTitle, { color: text }]}>
-        Aura - Browser Enhancement Tool
+    <View style={styles.site}>
+      {/* Top chrome */}
+      <View style={styles.topBar}>
+        <Ionicons name="menu-outline" size={16} color={text} />
+        <Text style={[styles.siteName, { color: text }]} numberOfLines={1}>
+          Example
+        </Text>
+        <Ionicons name="search-outline" size={16} color={text} />
+      </View>
+
+      {/* Search pill */}
+      <View style={[styles.searchPill, { backgroundColor: surface }]}>
+        <Ionicons name="search-outline" size={13} color={muted} />
+        <Text style={[styles.searchPlaceholder, { color: muted }]}>Search the web</Text>
+      </View>
+
+      {/* Title + skeleton lines */}
+      <Text style={[styles.title, { color: text }]} numberOfLines={1}>
+        Lunar eclipse
       </Text>
+      <View style={[styles.skelLine, { backgroundColor: muted, width: '92%' }]} />
+      <View style={[styles.skelLine, { backgroundColor: muted, width: '78%', opacity: 0.7 }]} />
+      <View style={[styles.skelLine, { backgroundColor: muted, width: '64%', opacity: 0.55 }]} />
 
-      <View style={styles.articleContainer}>
-        <View style={styles.articleTextContainer}>
-          <Text style={[styles.wikiText, { color: text }]}>
-            Aura is a powerful browser enhancement tool that allows users to customize their Safari browsing experience with beautiful themes and personalized color schemes.
-          </Text>
-
-          <View style={styles.linksContainer}>
-            <Text style={[styles.wikiText, { color: text }]}>
-              See also:{' '}
-              <Text style={[styles.wikiLink, { color: link }]}>Dark Mode</Text>
-              {' • '}
-              <Text style={[styles.wikiLink, { color: link }]}>Theme Customization</Text>
-            </Text>
+      {/* Link + media */}
+      <View style={styles.contentRow}>
+        <View style={styles.textCol}>
+          <Text style={[styles.link, { color: link }]}>Related articles</Text>
+          <View style={styles.dotRow}>
+            <View style={[styles.infoDot, { backgroundColor: muted }]} />
+            <View style={[styles.skelLine, { backgroundColor: muted, width: 72, marginBottom: 0, opacity: 0.6 }]} />
+          </View>
+          <View style={styles.dotRow}>
+            <View style={[styles.infoDot, { backgroundColor: muted }]} />
+            <View style={[styles.skelLine, { backgroundColor: muted, width: 56, marginBottom: 0, opacity: 0.5 }]} />
           </View>
         </View>
+        <View style={[styles.media, { backgroundColor: surface, borderColor: muted }]} />
+      </View>
 
-        <View style={styles.imageContainer}>
-          <View style={styles.imagePlaceholder}>
-            <View style={styles.imagePattern}>
-              <View style={[styles.patternRow, styles.patternRow1]} />
-              <View style={[styles.patternRow, styles.patternRow2]} />
-              <View style={[styles.patternRow, styles.patternRow3]} />
-            </View>
-          </View>
-        </View>
+      {/* URL pill */}
+      <View style={[styles.urlPill, { backgroundColor: surface }]}>
+        <Ionicons name="lock-closed" size={10} color={muted} />
+        <Text style={[styles.urlText, { color: muted }]} numberOfLines={1}>
+          example.com
+        </Text>
       </View>
     </View>
   );
-
-  if (useHardDiagonal && splitColors) {
-    // Hard 135° diagonal: dark lower-left → light upper-right (matches Safari split).
-    return (
-      <View style={[styles.previewBox, { borderColor, overflow: 'hidden' }]}>
-        <LinearGradient
-          colors={[splitColors.dark, splitColors.dark, splitColors.light, splitColors.light]}
-          locations={[0, 0.45, 0.45, 1]}
-          start={{ x: 0, y: 1 }}
-          end={{ x: 1, y: 0 }}
-          style={StyleSheet.absoluteFillObject}
-        />
-        {content}
-      </View>
-    );
-  }
 
   return (
     <View style={[styles.previewBox, { backgroundColor: background, borderColor }]}>
@@ -95,71 +98,94 @@ const ThemePreview: React.FC<ThemePreviewProps> = ({
 
 const styles = StyleSheet.create({
   previewBox: {
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 12,
-    borderWidth: 1,
-    minHeight: 70,
+    borderWidth: StyleSheet.hairlineWidth,
+    minHeight: 168,
   },
-  wikiContent: {
+  site: {
     flex: 1,
   },
-  wikiTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 10,
-    lineHeight: 22,
   },
-  articleContainer: {
+  siteName: {
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  searchPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 12,
+  },
+  searchPlaceholder: {
+    fontSize: 12,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  skelLine: {
+    height: 7,
+    borderRadius: 3,
+    marginBottom: 6,
+    opacity: 0.85,
+  },
+  contentRow: {
     flexDirection: 'row',
     gap: 12,
+    marginTop: 4,
+    marginBottom: 12,
   },
-  articleTextContainer: {
+  textCol: {
     flex: 1,
-  },
-  wikiText: {
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  linksContainer: {
-    marginTop: 8,
-  },
-  wikiLink: {
-    textDecorationLine: 'underline',
-    fontWeight: '500',
-  },
-  imageContainer: {
-    width: 60,
-    alignItems: 'center',
     justifyContent: 'flex-start',
+    gap: 6,
   },
-  imagePlaceholder: {
-    width: 60,
-    height: 60,
+  link: {
+    fontSize: 12,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+    marginBottom: 2,
+  },
+  dotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  infoDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    opacity: 0.7,
+  },
+  media: {
+    width: 56,
+    height: 56,
     borderRadius: 8,
-    backgroundColor: '#E0E0E0',
-    borderWidth: 1,
-    borderColor: '#BDBDBD',
-    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  imagePattern: {
-    width: '100%',
-    height: '100%',
-    justifyContent: 'space-between',
-    padding: 2,
+  urlPill: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
   },
-  patternRow: {
-    flex: 1,
-    borderRadius: 2,
-    marginVertical: 1,
-  },
-  patternRow1: {
-    backgroundColor: '#9E9E9E',
-  },
-  patternRow2: {
-    backgroundColor: '#BDBDBD',
-  },
-  patternRow3: {
-    backgroundColor: '#9E9E9E',
+  urlText: {
+    fontSize: 11,
+    fontWeight: '500',
   },
 });
 

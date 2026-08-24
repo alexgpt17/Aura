@@ -41,7 +41,7 @@ async function syncThemeFromAppGroup() {
             }, 3000);
             
             browser.runtime.sendNativeMessage(
-                "org.reactjs.native.example.TintApp.TintExtensionExtension.Extension",
+                "com.alexmartens.aura.SafariExtension",
                 { type: "syncTheme" },
                 (response) => {
                     if (!messageCompleted) {

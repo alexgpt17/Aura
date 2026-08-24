@@ -52,6 +52,7 @@ export const getDefaultThemeData = () => {
     favoriteThemes: [], // Array of theme IDs (preset or custom)
     recentlyUsedThemes: [], // Array of { themeId, timestamp, type: 'preset' | 'custom' | 'safari' }
     hasCompletedOnboarding: false, // Track if user has completed onboarding
+    hasCompletedSafariSetup: false, // True after Safari extension has run once
   };
 };
 
@@ -125,14 +126,6 @@ export const saveThemes = async (themeData) => {
       console.error('Invalid theme data structure, not saving');
       throw new Error('Invalid theme data structure');
     }
-    
-    console.log('STORAGE: Saving all theme data to App Group');
-    console.log('STORAGE: Full theme data:', JSON.stringify(themeData, null, 2));
-    if (themeData.globalTheme) {
-      console.log('STORAGE: Global theme - background:', themeData.globalTheme.background, 
-                 'text:', themeData.globalTheme.text, 'link:', themeData.globalTheme.link,
-                 'enabled:', themeData.globalTheme.enabled);
-    }
     // Add metadata to force UserDefaults to recognize the change
     const dataToSave = {
       ...themeData,
@@ -145,7 +138,6 @@ export const saveThemes = async (themeData) => {
     const checksum = calculateChecksum(dataToSave);
     dataToSave._checksum = checksum;
     
-    console.log('STORAGE: About to save with timestamp:', dataToSave._lastSaved, 'checksum:', checksum);
     
     // Save with retry logic
     let saved = false;
@@ -156,7 +148,6 @@ export const saveThemes = async (themeData) => {
       try {
         await SharedGroupPreferences.setItem(THEME_DATA_KEY, dataToSave, APP_GROUP);
         saved = true;
-        console.log('STORAGE: Theme data saved successfully to App Group (attempt', attempts + 1, ')');
       } catch (saveError) {
         attempts++;
         if (attempts >= maxAttempts) {
@@ -169,15 +160,7 @@ export const saveThemes = async (themeData) => {
     
     // Verify it was saved by reading it back
     try {
-      const verify = await SharedGroupPreferences.getItem(THEME_DATA_KEY, APP_GROUP);
-      console.log('STORAGE: Verification read - got data:', verify ? 'YES' : 'NO');
-      if (verify && typeof verify === 'object') {
-        console.log('STORAGE: Verification - globalTheme exists:', !!verify.globalTheme);
-        console.log('STORAGE: Verification - checksum:', verify._checksum);
-        if (verify.globalTheme) {
-          console.log('STORAGE: Verification - globalTheme.background:', verify.globalTheme.background);
-        }
-      }
+      await SharedGroupPreferences.getItem(THEME_DATA_KEY, APP_GROUP);
     } catch (verifyError) {
       console.error('STORAGE: Verification read failed:', verifyError);
     }
@@ -188,7 +171,6 @@ export const saveThemes = async (themeData) => {
     // Force a second write to ensure UserDefaults flushes to disk
     try {
       await SharedGroupPreferences.setItem(THEME_DATA_KEY, dataToSave, APP_GROUP);
-      console.log('STORAGE: Theme data re-saved to force UserDefaults flush.');
     } catch (e) {
       console.warn('STORAGE: Second save attempt failed (non-critical):', e);
     }

@@ -1,85 +1,156 @@
-// Injected script - runs before content.js
-// Noir-style: Try to get theme data directly from native handler via sendMessage
-// If that fails, fall back to storage
+// Runs at document_start, before content.js.
+// Paints a sync dark shield so the first frame is never the site's white page,
+// then applies real html/body colors as soon as storage returns — without
+// waiting for content.js safety passes.
 
 (function() {
     'use strict';
-    
-    // Initialize theme data
+
+    var SHIELD_ID = 'aura-early-shield';
+
     window.__TINT_THEME_DATA__ = {
         globalTheme: null,
         siteThemes: {},
         _ready: false
     };
-    
-    // CRITICAL: On iOS Safari, sendMessage doesn't work - go straight to storage
-    // The background script should have synced from App Group already
-    console.log('Tint injected: Loading theme from storage (sendMessage not reliable on iOS)');
+
+    injectEarlyShield();
     loadFromStorage();
-    
+
+    function injectEarlyShield() {
+        try {
+            if (document.getElementById(SHIELD_ID)) return;
+            var style = document.createElement('style');
+            style.id = SHIELD_ID;
+            style.textContent =
+                'html{background-color:#121212!important;color-scheme:dark!important;}';
+            (document.documentElement || document.head).appendChild(style);
+        } catch (e) {}
+    }
+
+    function resolveEarlyTheme(themeData) {
+        if (!themeData) return null;
+        var Resolve = typeof AuraThemeResolve !== 'undefined' ? AuraThemeResolve : null;
+        if (Resolve && Resolve.resolveTheme) {
+            try {
+                return Resolve.resolveTheme(
+                    themeData,
+                    typeof location !== 'undefined' ? location.hostname : ''
+                );
+            } catch (e) {}
+        }
+        return themeData.globalTheme || null;
+    }
+
+    function paintEarlyTheme(theme) {
+        if (!theme || theme.enabled === false) return;
+        var bg = theme.background || '#121212';
+        var Split = typeof AuraSplitTheme !== 'undefined' ? AuraSplitTheme : null;
+        var splitColors = Split && Split.isSplitTheme(theme)
+            ? Split.parseSplitColors(theme.backgroundGradient || theme)
+            : null;
+        var isSplit = !!(splitColors && splitColors.dark && splitColors.light);
+        var isGradient = !isSplit && theme.backgroundType === 'gradient' && !!theme.backgroundGradient;
+        var bodyTransparent = isSplit || isGradient;
+        var splitLayerCss = (isSplit && Split && Split.liveSplitPaintCss)
+            ? Split.liveSplitPaintCss(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START)
+            : (isSplit && Split && Split.liveSplitLayerCss)
+                ? Split.liveSplitLayerCss(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START)
+                : '';
+        var H = typeof AuraThemeHeuristics !== 'undefined' ? AuraThemeHeuristics : null;
+        var scheme = (H && H.isThemeBackgroundLight && H.isThemeBackgroundLight(bg))
+            ? 'light'
+            : 'dark';
+        injectThemeColorMeta(isSplit ? splitColors.dark : bg);
+        try {
+            var de = document.documentElement && document.documentElement.style;
+            if (de) {
+                de.setProperty('color-scheme', scheme, 'important');
+                if (isSplit) {
+                    var paint = Split.liveSplitBackground
+                        ? Split.liveSplitBackground(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START)
+                        : null;
+                    var grad = paint
+                        ? paint.image
+                        : Split.buildSplitGradient(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START);
+                    de.setProperty('background-color', splitColors.dark, 'important');
+                    de.setProperty('background-image', grad, 'important');
+                    de.setProperty('background-repeat', 'no-repeat', 'important');
+                    de.setProperty('background-attachment', 'fixed', 'important');
+                    de.setProperty('background-position', '0 0', 'important');
+                    de.setProperty('background-size', paint && paint.size ? paint.size : '100vw 100lvh', 'important');
+                } else {
+                    de.setProperty('background-color', bg, 'important');
+                    if (isGradient) {
+                        de.setProperty('background-image', theme.backgroundGradient, 'important');
+                        de.setProperty('background-attachment', 'fixed', 'important');
+                        de.setProperty('background-repeat', 'no-repeat', 'important');
+                        de.setProperty('background-size', 'cover', 'important');
+                    }
+                }
+            }
+            if (document.body) {
+                if (bodyTransparent) {
+                    document.body.style.setProperty('background-color', 'transparent', 'important');
+                } else {
+                    document.body.style.setProperty('background-color', bg, 'important');
+                    document.body.style.setProperty('background', bg, 'important');
+                }
+            }
+        } catch (e) {}
+        var shield = document.getElementById(SHIELD_ID);
+        if (shield) {
+            if (isSplit) {
+                shield.textContent =
+                    'html{background-color:' + splitColors.dark + '!important;color-scheme:' + scheme + '!important;}' +
+                    splitLayerCss +
+                    'body{background-color:transparent!important;}';
+            } else {
+                shield.textContent =
+                    'html{background-color:' + bg + '!important;color-scheme:' + scheme + '!important;}' +
+                    'body{background-color:' + (bodyTransparent ? 'transparent' : bg) + '!important;}';
+            }
+        }
+    }
+
     function loadFromStorage() {
         if (typeof browser !== 'undefined' && browser.storage) {
-            browser.storage.local.get('tintThemeData').then(result => {
+            browser.storage.local.get('tintThemeData').then(function (result) {
                 if (result.tintThemeData) {
                     window.__TINT_THEME_DATA__ = result.tintThemeData;
                     window.__TINT_THEME_DATA__._ready = true;
-                    console.log('Tint injected: Theme data loaded from storage');
-                    if (result.tintThemeData.globalTheme) {
-                        console.log('Tint injected: Theme - background:', result.tintThemeData.globalTheme.background, 'text:', result.tintThemeData.globalTheme.text);
-                        // EARLY: Set theme-color meta tag immediately to prevent white flash
-                        // This controls iOS Safari's status bar and overscroll color
-                        injectThemeColorMeta(result.tintThemeData.globalTheme.background);
-                    }
+                    paintEarlyTheme(resolveEarlyTheme(result.tintThemeData));
                 } else {
                     window.__TINT_THEME_DATA__._ready = true;
-                    console.log('Tint injected: No theme data available in storage');
                 }
-            }).catch(error => {
-                console.error('Tint injected: Error loading from storage:', error);
+            }).catch(function () {
                 window.__TINT_THEME_DATA__._ready = true;
             });
         } else {
             window.__TINT_THEME_DATA__._ready = true;
-            console.log('Tint injected: browser.storage not available');
         }
     }
-    
-    // Listen for storage changes to update global theme data AND trigger content script update
+
     if (typeof browser !== 'undefined' && browser.storage && browser.storage.onChanged) {
-        browser.storage.onChanged.addListener((changes, areaName) => {
-            if (areaName === 'local' && changes.tintThemeData) {
-                console.log('Tint injected: Storage changed, updating theme data');
-                if (changes.tintThemeData.newValue) {
-                    window.__TINT_THEME_DATA__ = changes.tintThemeData.newValue;
-                    window.__TINT_THEME_DATA__._ready = true;
-                    
-                    // UPDATE: Also update the theme-color meta tag
-                    if (changes.tintThemeData.newValue.globalTheme?.background) {
-                        injectThemeColorMeta(changes.tintThemeData.newValue.globalTheme.background);
-                        console.log('Tint injected: Updated theme-color meta tag to:', changes.tintThemeData.newValue.globalTheme.background);
-                    }
-                    
-                    // CRITICAL FIX: Dispatch custom event so content.js can detect storage changes
-                    // (storage.onChanged doesn't fire for injected scripts in iOS Safari)
-                    const event = new CustomEvent('aura-theme-updated', {
-                        detail: {
-                            themeData: changes.tintThemeData.newValue
-                        }
-                    });
-                    window.dispatchEvent(event);
-                    console.log('Tint injected: Dispatched aura-theme-updated event');
-                }
+        browser.storage.onChanged.addListener(function (changes, areaName) {
+            if (areaName === 'local' && changes.tintThemeData && changes.tintThemeData.newValue) {
+                window.__TINT_THEME_DATA__ = changes.tintThemeData.newValue;
+                window.__TINT_THEME_DATA__._ready = true;
+                paintEarlyTheme(resolveEarlyTheme(changes.tintThemeData.newValue));
+                var event = new CustomEvent('aura-theme-updated', {
+                    detail: { themeData: changes.tintThemeData.newValue }
+                });
+                window.dispatchEvent(event);
             }
         });
     }
-    
-    // Inject theme-color meta tag for iOS Safari overscroll/status bar
+
     function injectThemeColorMeta(bgColor) {
         if (!bgColor) return;
         try {
-            const head = document.head || document.documentElement;
+            var head = document.head || document.documentElement;
             if (!head) return;
-            let themeColorMeta = document.querySelector('meta[name="theme-color"]');
+            var themeColorMeta = document.querySelector('meta[name="theme-color"]');
             if (themeColorMeta) {
                 themeColorMeta.setAttribute('content', bgColor);
             } else {
@@ -88,33 +159,28 @@
                 themeColorMeta.setAttribute('content', bgColor);
                 head.appendChild(themeColorMeta);
             }
-            console.log('Tint injected: theme-color meta set to:', bgColor);
-        } catch (e) {
-            // Ignore errors during early injection
-        }
+        } catch (e) {}
     }
-    
-    // Inject viewport meta tag for safe area support
+
     function injectViewportMeta() {
-        if (document.head) {
-            // Check if viewport meta already exists
-            let viewportMeta = document.querySelector('meta[name="viewport"]');
-            if (!viewportMeta) {
-                viewportMeta = document.createElement('meta');
-                viewportMeta.setAttribute('name', 'viewport');
-                viewportMeta.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover');
-                document.head.appendChild(viewportMeta);
-            } else {
-                // Update existing viewport meta to include viewport-fit=cover
-                const content = viewportMeta.getAttribute('content') || '';
-                if (!content.includes('viewport-fit=cover')) {
-                    viewportMeta.setAttribute('content', content + ', viewport-fit=cover');
-                }
+        if (!document.head) return;
+        var viewportMeta = document.querySelector('meta[name="viewport"]');
+        if (!viewportMeta) {
+            viewportMeta = document.createElement('meta');
+            viewportMeta.setAttribute('name', 'viewport');
+            viewportMeta.setAttribute(
+                'content',
+                'width=device-width, initial-scale=1, viewport-fit=cover'
+            );
+            document.head.appendChild(viewportMeta);
+        } else {
+            var content = viewportMeta.getAttribute('content') || '';
+            if (content.indexOf('viewport-fit=cover') === -1) {
+                viewportMeta.setAttribute('content', content + ', viewport-fit=cover');
             }
         }
     }
-    
-    // Inject viewport meta immediately if head exists, otherwise wait for DOM
+
     if (document.head) {
         injectViewportMeta();
     } else {

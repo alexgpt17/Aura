@@ -37,27 +37,28 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ onComplete }) => {
     {
       icon: 'color-palette-outline',
       title: 'Welcome to Aura',
-      description: 'Transform your Safari browsing experience with beautiful custom themes and powerful focus tools',
+      description: 'Recolor Safari with beautiful themes, custom colours, and per-site overrides — all on your device.',
+    },
+    {
+      icon: 'extension-puzzle-outline',
+      title: 'Enable the Safari Extension',
+      description:
+        'Aura needs its Safari extension to apply themes. Open Settings → Safari → Extensions, turn on Aura, and allow All Websites.',
     },
     {
       icon: 'brush-outline',
       title: 'Create Custom Themes',
-      description: 'Design your perfect Safari theme with our advanced color picker. Choose any color for backgrounds, text, and links',
-    },
-    {
-      icon: 'moon-outline',
-      title: 'Focus Mode Integration',
-      description: 'Set different themes for work and personal browsing. Automatically apply themes based on your Focus mode',
+      description: 'Design your perfect theme with the colour picker. Choose backgrounds, text, and links.',
     },
     {
       icon: 'shield-outline',
       title: 'Block Distractions',
-      description: 'Stay focused with built-in content blocking. Filter out distracting elements while you work',
+      description: 'Optionally enable Aura’s content blocker in Protection to filter ads, trackers, and annoyances.',
     },
     {
       icon: 'checkmark-circle-outline',
       title: 'Ready to Start?',
-      description: 'You\'re all set! Start customizing your Safari experience and boost your productivity',
+      description: 'Pick a theme on the Themes tab, then open Safari. If pages look unchanged, double-check that the extension is enabled.',
     },
   ];
 

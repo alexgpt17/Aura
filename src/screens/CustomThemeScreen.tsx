@@ -11,6 +11,7 @@ import {
   PanResponder,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { CommonActions } from '@react-navigation/native';
 import WheelColorPickerModal from '../components/WheelColorPickerModal';
 import HapticService from '../services/HapticService';
 import ThemePreview from '../components/ThemePreview';
@@ -60,7 +61,10 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
   const text = applyBrightness(baseText, brightness);
   const link = applyBrightness(baseLink, brightness);
 
-  const openColorPicker = (type: 'background' | 'text' | 'link', currentColor: string) => {
+  const openColorPicker = (
+    type: 'background' | 'text' | 'link',
+    currentColor: string,
+  ) => {
     setColorToEdit({ type, value: currentColor });
     setColorPickerVisible(true);
   };
@@ -96,29 +100,34 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
         return;
       }
 
-      // Create new custom theme (save base colors, brightness is applied at runtime)
+      // Create new custom theme (brightness baked into saved colors at save time)
       const newTheme = {
         id: `custom-${Date.now()}`,
         name: themeName.trim(),
-        background: baseBackground,
-        text: baseText,
-        link: baseLink,
+        background,
+        text,
+        link,
         type: 'safari' as const,
+        backgroundType: 'color' as const,
+        backgroundGradient: null,
       };
 
       // Add to custom themes array
       const updatedCustomThemes = [...customThemes, newTheme];
 
-      // Apply to Safari theme (use current display colors with brightness applied)
+      // Apply to Safari theme
       const newThemeData = {
         ...currentData,
         customThemes: updatedCustomThemes,
         globalTheme: {
           enabled: currentData?.globalTheme?.enabled ?? true,
+          id: newTheme.id,
+          name: newTheme.name,
           background,
           text,
           link,
-          backgroundType: 'color',
+          backgroundType: newTheme.backgroundType,
+          backgroundGradient: newTheme.backgroundGradient,
           backgroundImage: null,
         },
       };
@@ -130,9 +139,20 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
         [
           {
             text: 'OK',
-            onPress: () => navigation.navigate('CustomThemesList'),
+            onPress: () => {
+              // Replace create screen with Your Themes so OK never leaves you stuck here.
+              navigation.dispatch(
+                CommonActions.reset({
+                  index: 1,
+                  routes: [
+                    { name: 'MainTabs' },
+                    { name: 'CustomThemesList' },
+                  ],
+                }),
+              );
+            },
           },
-        ]
+        ],
       );
     } catch (error) {
       console.error('Error saving theme:', error);
@@ -226,6 +246,7 @@ const CustomThemeScreen: React.FC<CustomThemeScreenProps> = ({ navigation, route
           background={background}
           text={text}
           link={link}
+          backgroundType="color"
         />
 
         <Text style={[styles.sectionTitle, { color: textColor }]}>Colors</Text>
@@ -419,7 +440,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     marginTop: 8,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   colorSection: {
     marginBottom: 20,

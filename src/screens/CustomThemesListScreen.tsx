@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { saveThemes, getThemes } from '../storage';
 import { useAppTheme } from '../contexts/AppThemeContext';
+import { ThemeListRow } from '../components/ThemeSwatch';
 
 interface CustomThemesListScreenProps {
   navigation: any;
@@ -21,6 +22,8 @@ interface CustomTheme {
   text: string;
   link: string;
   type?: 'safari';
+  backgroundType?: 'color' | 'gradient' | 'split';
+  backgroundGradient?: string | null;
 }
 
 const MAX_CUSTOM_THEMES = 5;
@@ -106,10 +109,13 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
         ...currentData,
         globalTheme: {
           enabled: currentData?.globalTheme?.enabled ?? true,
+          id: theme.id,
+          name: theme.name,
           background: theme.background,
           text: theme.text,
           link: theme.link,
-          backgroundType: 'color',
+          backgroundType: theme.backgroundType || 'color',
+          backgroundGradient: theme.backgroundGradient || null,
           backgroundImage: null,
         },
       };
@@ -195,53 +201,37 @@ const CustomThemesListScreen: React.FC<CustomThemesListScreenProps> = ({ navigat
 
         {/* Your Themes List */}
         {allItems.length > 0 && (
-          <View style={styles.themesList}>
-            {allItems.map((item) => {
-              if (item.isPlaceholder) {
-                return (
-                  <View key={item.id} style={[styles.placeholderButton, { backgroundColor: sectionBgColor, borderColor }]}>
-                    <Text style={[styles.placeholderText, { color: textColor }]}>Empty slot</Text>
-                  </View>
-                );
-              }
-
-              const theme = item as CustomTheme;
-              const isSelected = selectedThemeId === theme.id;
-
-              return (
-                <TouchableOpacity
-                  key={theme.id}
-                  style={[
-                    styles.themeButton,
-                    { backgroundColor: sectionBgColor, borderColor },
-                    isSelected && [styles.themeButtonSelected, { borderColor: appThemeColor }]
-                  ]}
-                  onPress={() => handleSelectTheme(theme)}
-                  onLongPress={() => handleDeleteTheme(theme.id)}
-                >
-                  <View style={styles.themeButtonContent}>
-                    <View style={styles.colorDotsContainer}>
-                      <View style={[styles.colorDot, { backgroundColor: theme.background }]} />
-                      <View style={[styles.colorDot, { backgroundColor: theme.text }]} />
-                      <View style={[styles.colorDot, { backgroundColor: theme.link }]} />
+          <>
+            <Text style={[styles.librarySectionHeader, { color: textColor }]}>YOUR THEMES</Text>
+            <View style={[styles.themesGroup, { backgroundColor: sectionBgColor }]}>
+              {allItems.map((item) => {
+                if ('isPlaceholder' in item && item.isPlaceholder) {
+                  return (
+                    <View key={item.id} style={[styles.placeholderButton, { borderColor }]}>
+                      <Text style={[styles.placeholderText, { color: textColor }]}>Empty slot</Text>
                     </View>
-                    <Text
-                      style={[
-                        styles.themeButtonText,
-                        { color: theme.text },
-                        isSelected && styles.themeButtonTextSelected,
-                      ]}
-                    >
-                      {theme.name}
-                    </Text>
-                  </View>
-                  {isSelected && (
-                    <Text style={[styles.themeButtonCheckmark, { color: appThemeColor }]}>✓</Text>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                  );
+                }
+
+                const theme = item as CustomTheme;
+                const isSelected = selectedThemeId === theme.id;
+
+                return (
+                  <ThemeListRow
+                    key={theme.id}
+                    theme={theme}
+                    label={theme.name || 'Custom'}
+                    selected={isSelected}
+                    accentColor={appThemeColor}
+                    textColor={textColor}
+                    surfaceColor={sectionBgColor}
+                    onPress={() => handleSelectTheme(theme)}
+                    onLongPress={() => handleDeleteTheme(theme.id)}
+                  />
+                );
+              })}
+            </View>
+          </>
         )}
 
         {allItems.length === 0 && (
@@ -304,58 +294,29 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   themesList: {
-    marginBottom: 20,
+    marginBottom: 12,
   },
-  themeButton: {
+  themesGroup: {
     borderRadius: 12,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    marginBottom: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
+    overflow: 'hidden',
+    marginBottom: 4,
   },
-  themeButtonSelected: {
-    // Border color set dynamically
-  },
-  themeButtonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  colorDotsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginRight: 12,
-  },
-  colorDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(128,128,128,0.3)',
-    borderColor: '#333',
-  },
-  themeButtonText: {
-    fontSize: 16,
+  librarySectionHeader: {
+    fontSize: 12,
     fontWeight: '600',
-  },
-  themeButtonTextSelected: {
-    // Color is set dynamically from theme.text
-  },
-  themeButtonCheckmark: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    opacity: 0.45,
+    marginTop: 8,
+    marginBottom: 8,
+    paddingHorizontal: 4,
   },
   placeholderButton: {
-    borderRadius: 12,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderStyle: 'dashed',
+    borderRadius: 0,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginBottom: 0,
+    borderWidth: 0,
     opacity: 0.5,
   },
   placeholderText: {

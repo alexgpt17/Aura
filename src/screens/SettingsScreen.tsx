@@ -7,36 +7,37 @@ import {
   ScrollView,
   Switch,
   Alert,
+  Linking,
 } from 'react-native';
 import { saveThemes, getThemes } from '../storage';
 import { useAppTheme } from '../contexts/AppThemeContext';
-import ColorPickerDropdown from '../components/ColorPickerDropdown';
-import ThemeModePicker from '../components/ThemeModePicker';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { SUPPORT_EMAIL } from '../constants/AppConfig';
+import {
+  getSafariExtensionEnableInstructions,
+  getSafariExtensionState,
+} from '../services/SafariExtensionService';
 
 interface SettingsScreenProps {
   navigation: any;
 }
 
 const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
-  const { 
-    appThemeColor, 
-    setAppThemeColor, 
-    appThemeMode, 
-    setAppThemeMode,
+  const {
+    appThemeColor,
+    appThemeMode,
     backgroundColor,
     textColor,
     sectionBgColor,
     borderColor,
   } = useAppTheme();
   const [globalEnabled, setGlobalEnabled] = useState(true);
-  const [focusModeEnabled, setFocusModeEnabled] = useState(false);
+  const [safariExtensionEnabled, setSafariExtensionEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
     loadSettings();
   }, []);
 
-  // Reload when screen comes into focus
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
       loadSettings();
@@ -49,13 +50,9 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
       const themeData = await getThemes();
       if (themeData) {
         setGlobalEnabled(themeData.globalTheme?.enabled ?? true);
-        
-        // Load Focus Mode enabled state (for display in settings link)
-        const focusSettings = themeData.focusModeSettings;
-        if (focusSettings) {
-          setFocusModeEnabled(focusSettings.enabled || false);
-        }
       }
+      const ext = await getSafariExtensionState();
+      setSafariExtensionEnabled(ext.isEnabled);
     } catch (error) {
       console.error('Error loading settings:', error);
     }
@@ -86,49 +83,6 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
       </View>
 
       <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
-        {/* App Appearance Section */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: textColor }]}>App Appearance</Text>
-          <Text style={[styles.sectionDescription, { color: textColor }]}>
-            Customize the accent color and theme used throughout the app.
-          </Text>
-
-          <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
-            <View style={styles.settingContent}>
-              <Text style={[styles.settingLabel, { color: appThemeColor }]}>App Color</Text>
-              <Text style={[styles.settingDescription, { color: textColor }]}>
-                Choose the accent color for buttons, highlights, and UI elements.
-              </Text>
-            </View>
-          </View>
-          <View style={[styles.colorPickerContainer, { marginBottom: 16 }]}>
-            <ColorPickerDropdown
-              selectedColor={appThemeColor}
-              onColorSelect={setAppThemeColor}
-            />
-          </View>
-
-          <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
-            <View style={styles.settingContent}>
-              <Text style={[styles.settingLabel, { color: textColor }]}>App Theme</Text>
-              <Text style={[styles.settingDescription, { color: textColor }]}>
-                Choose between dark and light mode for the app interface.
-              </Text>
-            </View>
-          </View>
-          <View style={styles.colorPickerContainer}>
-            <ThemeModePicker
-              selectedMode={appThemeMode}
-              onModeSelect={setAppThemeMode}
-              backgroundColor={sectionBgColor}
-              textColor={textColor}
-              borderColor={borderColor}
-              sectionBgColor={backgroundColor}
-            />
-          </View>
-        </View>
-
-        {/* Safari Settings Section */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: textColor }]}>Safari Settings</Text>
           <Text style={[styles.sectionDescription, { color: textColor }]}>
@@ -146,51 +100,53 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
               value={globalEnabled}
               onValueChange={handleToggleGlobal}
               trackColor={{ false: appThemeMode === 'dark' ? '#333' : '#CCC', true: appThemeColor }}
-              thumbColor={globalEnabled ? (appThemeMode === 'dark' ? '#FFFFFF' : '#FFFFFF') : (appThemeMode === 'dark' ? '#888' : '#999')}
+              thumbColor="#FFFFFF"
             />
           </View>
 
-        </View>
-
-        {/* Focus Mode Integration Section */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: textColor }]}>Focus Mode Integration</Text>
-          <Text style={[styles.sectionDescription, { color: textColor }]}>
-            Automatically apply Aura presets based on your iOS Focus mode.
-          </Text>
-          
           <TouchableOpacity
             style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}
-            onPress={() => navigation.navigate('MainTabs', { screen: 'FocusTab' })}
+            onPress={() =>
+              Alert.alert('Enable Safari Extension', getSafariExtensionEnableInstructions())
+            }
+            accessibilityRole="button"
+            accessibilityLabel="How to enable the Safari extension"
           >
             <View style={styles.settingContent}>
               <Text style={[styles.settingLabel, { color: appThemeColor }]}>
-                {focusModeEnabled ? 'Focus Mode Enabled' : 'Set Up Focus Mode'}
+                {safariExtensionEnabled ? 'Safari Extension Active' : 'Finish Safari Setup'}
               </Text>
               <Text style={[styles.settingDescription, { color: textColor }]}>
-                {focusModeEnabled
-                  ? 'Tap to manage Focus mode preset mappings'
-                  : 'Map Aura presets to iOS Focus modes for automatic switching'}
+                Tap for step-by-step instructions to turn on Aura in Safari.
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
           </TouchableOpacity>
         </View>
 
-        {/* About Section */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: textColor }]}>About</Text>
           <View style={[styles.aboutContent, { backgroundColor: sectionBgColor, borderBottomColor: borderColor }]}>
             <Text style={[styles.aboutLabel, { color: textColor }]}>Version</Text>
             <Text style={[styles.aboutValue, { color: textColor }]}>1.0</Text>
           </View>
+          <TouchableOpacity
+            style={[styles.aboutContent, { backgroundColor: sectionBgColor, borderBottomColor: borderColor }]}
+            onPress={() => navigation.navigate('PrivacyPolicy')}
+            accessibilityRole="button"
+            accessibilityLabel="Privacy Policy"
+          >
+            <Text style={[styles.aboutLabel, { color: textColor }]}>Privacy Policy</Text>
+            <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
+          </TouchableOpacity>
           <View style={[styles.aboutContentContact, { backgroundColor: sectionBgColor, borderBottomColor: borderColor }]}>
             <Text style={[styles.aboutLabel, { color: textColor }]}>Contact Developer:</Text>
-            <TouchableOpacity onPress={() => {
-              // Open email client
-              Alert.alert('Contact', 'Email: alexmartens1111@gmail.com');
-            }}>
-              <Text style={[styles.aboutValue, styles.aboutLink]}>alexmartens1111@gmail.com</Text>
+            <TouchableOpacity
+              onPress={() => Linking.openURL(`mailto:${SUPPORT_EMAIL}`)}
+              accessibilityRole="link"
+              accessibilityLabel={`Email ${SUPPORT_EMAIL}`}
+            >
+              <Text style={[styles.aboutValue, styles.aboutLink]}>{SUPPORT_EMAIL}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -244,6 +200,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 8,
     borderWidth: 1,
+    minHeight: 44,
   },
   settingContent: {
     flex: 1,
@@ -257,37 +214,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 18,
   },
-  arrow: {
-    // Style no longer used - replaced with Ionicons
-    marginLeft: 12,
-  },
-  emptyState: {
-    padding: 24,
-    alignItems: 'center',
-  },
-  emptyStateText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    marginBottom: 8,
-    fontWeight: '600',
-  },
-  emptyStateSubtext: {
-    fontSize: 14,
-    color: '#888888',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  warningBox: {
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-  },
-  warningText: {
-    fontSize: 14,
-    color: '#ff6b6b',
-    lineHeight: 20,
-  },
   colorPickerContainer: {
     marginTop: 8,
   },
@@ -300,6 +226,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderRadius: 12,
     marginBottom: 8,
+    minHeight: 44,
   },
   aboutContentContact: {
     flexDirection: 'column',
@@ -318,12 +245,12 @@ const styles = StyleSheet.create({
   },
   aboutValue: {
     fontSize: 16,
+    fontWeight: '600',
   },
   aboutLink: {
-    color: '#007AFF',
+    color: '#228B22',
     textDecorationLine: 'underline',
     marginTop: 8,
-    textAlign: 'center',
   },
 });
 

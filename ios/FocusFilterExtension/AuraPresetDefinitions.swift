@@ -54,9 +54,7 @@ struct AuraPresetDefinitions {
             theme: SafariTheme(
                 background: "#000000",
                 text: "#ffffff",
-                link: "#0066cc",
-                backgroundType: "split",
-                backgroundGradient: "linear-gradient(135deg, #000000 0%, #ffffff 100%)"
+                link: "#0066cc"
             )
         ),
         ThemeDefinition(
@@ -111,39 +109,6 @@ struct AuraPresetDefinitions {
                 background: "#1a1a2e",
                 text: "#f0f0f0",
                 link: "#ff6b6b"
-            )
-        ),
-        ThemeDefinition(
-            id: "ocean-split",
-            name: "Ocean Split",
-            theme: SafariTheme(
-                background: "#001f3f",
-                text: "#ffffff",
-                link: "#4da6ff",
-                backgroundType: "split",
-                backgroundGradient: "linear-gradient(135deg, #001f3f 0%, #b3d9ff 100%)"
-            )
-        ),
-        ThemeDefinition(
-            id: "forest-split",
-            name: "Forest Split",
-            theme: SafariTheme(
-                background: "#0a2e0a",
-                text: "#ffffff",
-                link: "#81c784",
-                backgroundType: "split",
-                backgroundGradient: "linear-gradient(135deg, #0a2e0a 0%, #c8e6c9 100%)"
-            )
-        ),
-        ThemeDefinition(
-            id: "sunset-split",
-            name: "Sunset Split",
-            theme: SafariTheme(
-                background: "#1a0a2e",
-                text: "#ffffff",
-                link: "#ff6b6b",
-                backgroundType: "split",
-                backgroundGradient: "linear-gradient(135deg, #1a0a2e 0%, #ff8c42 100%)"
             )
         ),
     ]

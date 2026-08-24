@@ -9,8 +9,8 @@ import {
 } from 'react-native';
 import { saveThemes, getThemes } from '../storage';
 import { useAppTheme } from '../contexts/AppThemeContext';
-import { PRESET_THEMES } from './BrowseThemesScreen';
-import Ionicons from 'react-native-vector-icons/Ionicons';
+import { PRESET_THEMES, THEME_SECTIONS } from './BrowseThemesScreen';
+import { ThemeListRow } from '../components/ThemeSwatch';
 
 interface ThemeSelectionScreenProps {
   navigation: any;
@@ -177,16 +177,6 @@ const ThemeSelectionScreen: React.FC<ThemeSelectionScreenProps> = ({ navigation,
     }
   };
 
-  // Extract gradient colors from gradient string
-  const extractGradientColors = (gradient: string): { dark: string; light: string } | null => {
-    if (!gradient) return null;
-    const match = gradient.match(/#[0-9a-fA-F]{6}/g);
-    if (match && match.length >= 2) {
-      return { dark: match[0], light: match[1] };
-    }
-    return null;
-  };
-
   return (
     <View style={[styles.container, { backgroundColor }]}>
       <View style={[styles.header, { borderBottomColor: borderColor }]}>
@@ -201,97 +191,46 @@ const ThemeSelectionScreen: React.FC<ThemeSelectionScreenProps> = ({ navigation,
       </View>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        <View style={styles.themesList}>
-          {customThemes.length > 0 && (
-            <Text style={[styles.sectionLabel, { color: textColor === '#FFFFFF' ? '#888888' : '#666666' }]}>
-              Custom Themes
-            </Text>
-          )}
-          {[...customThemes, ...PRESET_THEMES].map((theme, index) => {
-            // Insert a section label before the first preset when customs exist
-            const showPresetLabel = customThemes.length > 0 && index === customThemes.length;
-            const isSelected = selectedThemeId === theme.id;
-            const isDualTone =
-              (theme.backgroundType === 'gradient' || theme.backgroundType === 'split') &&
-              !!theme.backgroundGradient;
-            const gradientColors = isDualTone ? extractGradientColors(theme.backgroundGradient!) : null;
-
-            return (
-              <React.Fragment key={theme.id}>
-                {showPresetLabel && (
-                  <Text style={[styles.sectionLabel, { color: textColor === '#FFFFFF' ? '#888888' : '#666666' }]}>
-                    Safari Themes
-                  </Text>
-                )}
-              <TouchableOpacity
-                style={[
-                  styles.themeButton,
-                  { backgroundColor: sectionBgColor, borderColor },
-                  isSelected && { borderColor: appThemeColor, borderWidth: 2 },
-                ]}
-                onPress={() => handleSelectTheme(theme)}
-              >
-                <View style={styles.themeButtonContent}>
-                  <View style={styles.colorDotsContainer}>
-                    {/* Background dot */}
-                    {isDualTone && gradientColors ? (
-                      <View style={styles.gradientDotContainer}>
-                        <View style={[styles.gradientDotHalf, { 
-                          left: -3,
-                          top: -3,
-                          backgroundColor: theme.background,
-                          transform: [{ rotate: '45deg' }],
-                        }]} />
-                        <View style={[styles.gradientDotHalf, { 
-                          right: -3,
-                          bottom: -3,
-                          backgroundColor: gradientColors.light,
-                          transform: [{ rotate: '45deg' }],
-                        }]} />
-                      </View>
-                    ) : (
-                      <View style={[styles.colorDot, { backgroundColor: theme.background }]} />
-                    )}
-                    {/* Text dot */}
-                    {isDualTone && gradientColors ? (
-                      <View style={styles.gradientDotContainer}>
-                        <View style={[styles.gradientDotHalf, { 
-                          left: -3,
-                          top: -3,
-                          backgroundColor: theme.text,
-                          transform: [{ rotate: '45deg' }],
-                        }]} />
-                        <View style={[styles.gradientDotHalf, { 
-                          right: -3,
-                          bottom: -3,
-                          backgroundColor: theme.text === '#ffffff' ? '#cccccc' : '#ffffff',
-                          transform: [{ rotate: '45deg' }],
-                        }]} />
-                      </View>
-                    ) : (
-                      <View style={[styles.colorDot, { backgroundColor: theme.text }]} />
-                    )}
-                    {/* Link dot */}
-                    <View style={[styles.colorDot, { backgroundColor: theme.link }]} />
-                  </View>
-                  <Text
-                    style={[
-                      styles.themeButtonText,
-                      { color: textColor },
-                      isSelected && { color: appThemeColor, fontWeight: '600' },
-                    ]}
-                  >
-                    {theme.name}
-                  </Text>
-                </View>
-                {isSelected && (
-                  <Ionicons name="checkmark-circle" size={24} color={appThemeColor} />
-                )}
-              </TouchableOpacity>
-              </React.Fragment>
-            );
-          })}
-        </View>
+        {customThemes.length > 0 && (
+          <>
+            <Text style={[styles.librarySectionHeader, { color: textColor }]}>CUSTOM THEMES</Text>
+            <View style={[styles.themesGroup, { backgroundColor: sectionBgColor }]}>
+              {customThemes.map(theme => (
+                <ThemeListRow
+                  key={theme.id}
+                  theme={theme}
+                  selected={selectedThemeId === theme.id}
+                  accentColor={appThemeColor}
+                  textColor={textColor}
+                  surfaceColor={sectionBgColor}
+                  onPress={() => handleSelectTheme(theme)}
+                />
+              ))}
+            </View>
+          </>
+        )}
+        {THEME_SECTIONS.map(section => {
+          const themes = PRESET_THEMES.filter(t => t.category === section.id);
+          if (themes.length === 0) return null;
+          return (
+            <React.Fragment key={section.id}>
+              <Text style={[styles.librarySectionHeader, { color: textColor }]}>{section.title}</Text>
+              <View style={[styles.themesGroup, { backgroundColor: sectionBgColor }]}>
+                {themes.map(theme => (
+                  <ThemeListRow
+                    key={theme.id}
+                    theme={theme}
+                    selected={selectedThemeId === theme.id}
+                    accentColor={appThemeColor}
+                    textColor={textColor}
+                    surfaceColor={sectionBgColor}
+                    onPress={() => handleSelectTheme(theme)}
+                  />
+                ))}
+              </View>
+            </React.Fragment>
+          );
+        })}
       </ScrollView>
     </View>
   );
@@ -331,61 +270,23 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 20,
   },
-  themesList: {
-    gap: 12,
-  },
-  sectionLabel: {
-    fontSize: 13,
+  librarySectionHeader: {
+    fontSize: 12,
     fontWeight: '600',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
-    marginTop: 8,
+    opacity: 0.45,
+    marginTop: 16,
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  themesGroup: {
+    borderRadius: 12,
+    overflow: 'hidden',
     marginBottom: 4,
   },
-  themeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  themeButtonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  colorDotsContainer: {
-    flexDirection: 'row',
-    gap: 8,
-    marginRight: 12,
-    alignItems: 'center',
-  },
-  colorDot: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  gradientDotContainer: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#333',
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  gradientDotHalf: {
-    position: 'absolute',
-    width: 14,
-    height: 14,
-  },
-  themeButtonText: {
-    fontSize: 16,
-    fontWeight: '500',
+  themesList: {
+    gap: 0,
   },
 });
 

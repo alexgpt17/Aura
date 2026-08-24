@@ -10,10 +10,19 @@
     // Elements we forced opaque because they are position:fixed/sticky.
     // Tracked so removeTheme() can cleanly revert them.
     const stickyModified = new Set();
-    // Near-white opaque surfaces cleared by rethemeBrightSurfaces().
+    // Near-white / light-gray opaque surfaces cleared by rethemeBrightSurfaces().
     const brightModified = new Set();
-    // Visible dialogs / alertdialogs we forced opaque with --aura-overlay.
+    const contrastModified = new Set();
+    // Visible dialogs / modal cards we forced opaque with --aura-overlay.
     const overlayModified = new Set();
+    // SPA shells / large gradients we forced transparent.
+    const shellModified = new Set();
+    // Top app-bar / search chrome we painted or cleared.
+    const chromeModified = new Set();
+    let ignoreMutations = false;
+    let ignoreMutationsTimer = null;
+    let scrollListenerAttached = false;
+    let scrollPassTimer = null;
 
     const H = (typeof AuraThemeHeuristics !== 'undefined' && AuraThemeHeuristics)
         ? AuraThemeHeuristics
@@ -25,9 +34,91 @@
         ? AuraThemeResolve
         : null;
 
-    let splitScrollAttached = false;
-    let splitRafPending = false;
-    let splitMonochromeActive = false;
+    let lastAppliedThemeKey = '';
+    let mutationDebounceTimer = null;
+    let safetyPassesRaf = 0;
+    const SPLIT_LAYER_ID = 'aura-split-bg';
+    let bodyPositionForced = false;
+    let walkGeneration = 0;
+    let walkSliceRaf = 0;
+    const WALK_SLICE = 4000;
+
+    function isActiveSplitTheme(theme) {
+        if (!theme || !Split || !Split.isSplitTheme(theme)) return false;
+        return !!Split.parseSplitColors(theme.backgroundGradient || theme);
+    }
+
+    // Mosaic tiles hidden while the Images viewer is open (reverted each pass).
+    const googleImagesMosaicHidden = new Set();
+
+    function isGoogleHost() {
+        try {
+            const host = String(window.location.hostname || '').toLowerCase();
+            return host === 'google.com' || host.endsWith('.google.com');
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /** Images tab: legacy tbm=isch or current udm=2 unified search. */
+    function isGoogleImagesPage() {
+        if (!isGoogleHost()) return false;
+        try {
+            const href = String(window.location.href || '');
+            if (/[?&]tbm=isch(?:&|$|#)/.test(href) || /[?&]udm=2(?:&|$|#)/.test(href)) {
+                return true;
+            }
+            const tab = document.querySelector('[aria-current="page"], [aria-current="true"]');
+            if (tab && /images/i.test(String(tab.textContent || ''))) return true;
+        } catch (e) {}
+        return false;
+    }
+
+    function removeSplitLayer() {
+        const el = document.getElementById(SPLIT_LAYER_ID);
+        if (el) el.remove();
+        if (bodyPositionForced && document.body) {
+            document.body.style.removeProperty('position');
+            bodyPositionForced = false;
+        }
+    }
+
+    function cancelWalkSlices() {
+        walkGeneration += 1;
+        if (walkSliceRaf) {
+            try { cancelAnimationFrame(walkSliceRaf); } catch (e) {}
+            walkSliceRaf = 0;
+        }
+    }
+
+    function collectElements(root) {
+        try {
+            return root.nodeType === 1
+                ? [root, ...root.querySelectorAll('*')]
+                : Array.from(root.querySelectorAll('*'));
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function forEachSliced(elements, visit, onDone) {
+        const gen = walkGeneration;
+        let i = 0;
+        function step() {
+            if (gen !== walkGeneration) return;
+            const end = Math.min(i + WALK_SLICE, elements.length);
+            for (; i < end; i++) {
+                const el = elements[i];
+                if (el && el.nodeType === 1) visit(el);
+            }
+            if (i < elements.length) {
+                walkSliceRaf = requestAnimationFrame(step);
+            } else if (onDone) {
+                onDone();
+            }
+        }
+        step();
+    }
 
     // 1. SITE-SPECIFIC OVERRIDES
     // Each entry: { match: [hostnames], css }. A site matches when the current
@@ -66,6 +157,28 @@
                    residual and must be pinned on-device if it needs removal. */
                 #rso div:not([role="dialog"]):not([role="menu"]) {
                     background-color: transparent !important;
+                }
+
+                /* Images tab: tap opens a second in-page screen on top of
+                   the mosaic. Universal div-transparency (and the #rso rule
+                   above, for non-dialog sheets) makes that screen glass.
+                   Beat #rso div { transparent } for dialog/modal sheets
+                   (1,1,1 vs 1,0,1). Hashed viewer classes are a fallback
+                   for the older tbm=isch layout. Do not change .gb_A,
+                   .u4frDf, or the #rso rule above. */
+                #rso [role="dialog"],
+                #rso [aria-modal="true"],
+                .tvh9oe,
+                .EIehLd,
+                .fHE6De,
+                #islsp {
+                    background-color: var(--aura-bg) !important;
+                }
+                body:has([aria-modal="true"]) #islrg,
+                body:has([role="dialog"] [aria-label="Close"]) #islrg,
+                body:has(.tvh9oe:not([aria-hidden="true"])) #islrg,
+                body:has([aria-modal="true"]) #islmp {
+                    visibility: hidden !important;
                 }
             `
         },
@@ -233,106 +346,208 @@
         if (!theme) return '';
         const bgColor = theme.background || '#121212';
         const textColor = theme.text || '#e0e0e0';
-        // Gradient themes: soft CSS gradient. Split themes: hard diagonal with
-        // --aura-split-pct updated on scroll (light wedge grows while scrolling).
-        const isSplit = !!(Split && Split.isSplitTheme(theme));
+        const linkColor = theme.link || '#8ab4f8';
+        // Consistency: only true split when colors parse successfully.
+        const wantsSplit = !!(Split && Split.isSplitTheme(theme));
+        const splitColors = wantsSplit ? Split.parseSplitColors(theme.backgroundGradient || theme) : null;
+        const isSplit = !!(wantsSplit && splitColors);
         const isGradient = !isSplit && theme.backgroundType === 'gradient' && !!theme.backgroundGradient;
-        const splitColors = isSplit ? Split.parseSplitColors(theme.backgroundGradient || theme) : null;
         const bgGradient = isGradient ? theme.backgroundGradient : null;
-        const splitGradient = (isSplit && splitColors)
-            ? Split.buildSplitGradient(splitColors.dark, splitColors.light, 'var(--aura-split-pct)')
-            : null;
 
         const siteFix = getSiteFix(window.location.hostname);
-        // Soft gradients still paint on html. Split diagonals also paint on html
-        // (not ::before) so mix-blend-mode:difference can see the wedges — a
-        // sibling/pseudo layer is not a valid blend backdrop on iOS Safari.
-        // Viewport lock: background-size 100vw/100vh + scroll-synced position.
         const usesGradientBg = !!bgGradient;
-        const bodyTransparent = !!(usesGradientBg || isSplit);
-        const splitPctStart = (Split && Split.SPLIT_PCT_START) || 52;
-        // White base + difference blend so glyphs invert across both wedges.
-        const splitTextColor = isSplit ? '#ffffff' : textColor;
+        const invertText = (Split && Split.SPLIT_INVERT_TEXT) || '#ffffff';
+        const resolvedText = isSplit ? invertText : textColor;
+        const resolvedLink = isSplit ? invertText : linkColor;
+        const splitLayerCss = (isSplit && Split && Split.liveSplitPaintCss)
+            ? Split.liveSplitPaintCss(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START)
+            : (isSplit && Split && Split.liveSplitLayerCss)
+                ? Split.liveSplitLayerCss(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START)
+                : '';
+
+        const surface = isSplit
+            ? 'rgba(128, 128, 128, 0.22)'
+            : 'rgba(255, 255, 255, 0.08)';
+        const elevated = isSplit
+            ? 'rgba(128, 128, 128, 0.32)'
+            : 'rgba(255, 255, 255, 0.14)';
+        const border = isSplit
+            ? 'rgba(128, 128, 128, 0.35)'
+            : 'rgba(255, 255, 255, 0.15)';
+
+        const layoutTags = `
+                div, main, section, article, header, nav, aside,
+                ul, ol, li, footer, figure, figcaption,
+                table, thead, tbody, tfoot, tr, td, th,
+                form, fieldset, a
+        `;
+        const overlayNot =
+            ':not([role="dialog"]):not([role="alertdialog"]):not([role="menu"]):not([role="listbox"]):not([aria-modal="true"]):not(dialog):not([popover])';
+        const textBlend = 'normal';
+        const splitTextFill = (isSplit && Split && Split.liveSplitTextFillCss && Split.liveSplitTextGradient)
+            ? Split.liveSplitTextFillCss(Split.liveSplitTextGradient(Split.SPLIT_PCT_START))
+            : '';
+        const splitLinkFill = (isSplit && Split && Split.liveSplitTextFillCss && Split.liveSplitLinkGradient)
+            ? Split.liveSplitTextFillCss(Split.liveSplitLinkGradient(Split.SPLIT_PCT_START))
+            : '';
+        const colorScheme = (H && H.isThemeBackgroundLight && H.isThemeBackgroundLight(bgColor))
+            ? 'light'
+            : 'dark';
 
         return `
             :root {
                 --aura-bg: ${bgColor};
-                --aura-text: ${splitTextColor};
-                --aura-link: ${theme.link || '#8ab4f8'};
-                --aura-surface: rgba(255, 255, 255, 0.08);
-                --aura-elevated: rgba(255, 255, 255, 0.14);
+                --aura-text: ${resolvedText};
+                --aura-link: ${resolvedLink};
+                --aura-surface: ${surface};
+                --aura-elevated: ${elevated};
                 --aura-muted: color-mix(in srgb, var(--aura-text) 65%, transparent);
-                --aura-border: rgba(255, 255, 255, 0.15);
-                /* Solid (no alpha) so modal sheets never glass the page. */
+                --aura-border: ${border};
                 --aura-overlay: color-mix(in srgb, var(--aura-bg) 82%, #000000);
-                --aura-split-pct: ${splitPctStart}%;
-                ${splitColors ? `--aura-split-dark: ${splitColors.dark};
-                --aura-split-light: ${splitColors.light};` : ''}
+                /* Semantic / design-system tokens (Wikipedia Codex, etc.) */
+                --color-base: var(--aura-text);
+                --color-emphasized: var(--aura-text);
+                --color-subtle: var(--aura-muted);
+                --color-progressive: var(--aura-link);
+                --color-visited: var(--aura-link);
+                --color-link: var(--aura-link);
+                --color-link-red: var(--aura-link);
+                --color-base-fixed: var(--aura-text);
+                --color-emphasized-fixed: var(--aura-text);
+                --background-color-base: var(--aura-bg);
+                --background-color-neutral: var(--aura-surface);
+                --background-color-neutral-subtle: transparent;
+                --background-color-interactive: var(--aura-elevated);
+                --background-color-interactive-subtle: var(--aura-surface);
+                /* Discord / common app-shell tokens */
+                --background-primary: var(--aura-bg);
+                --background-secondary: var(--aura-surface);
+                --background-tertiary: var(--aura-elevated);
+                --md-sys-color-surface: var(--aura-surface);
+                --bg-primary: var(--aura-bg);
+                --color-background: var(--aura-bg);
             }
-            html { 
-                color-scheme: dark !important;
-                background-color: ${bgColor} !important;
-                ${isSplit && splitGradient
-                    ? `background-image: ${splitGradient} !important;
-                background-repeat: no-repeat !important;
-                background-size: 100vw 100vh !important;
-                background-attachment: scroll !important;
-                background-position: 0 0 !important;`
-                    : usesGradientBg
-                    ? `background-image: ${bgGradient} !important;
+            html {
+                color-scheme: ${colorScheme} !important;
+                background-color: ${isSplit ? splitColors.dark : bgColor} !important;
+                ${isSplit ? '' : 'background-image: none !important;'}
+            }
+            ${isSplit ? `
+            /* Dual: corner-to-corner on the visual viewport. html background is
+               the mix-blend backdrop; html::before is the compositor lock. */
+            ${splitLayerCss}
+            body {
+                background-color: transparent !important;
+                background-image: none !important;
+                color: var(--aura-text) !important;
+            }
+            ` : usesGradientBg ? `
+            html {
+                background-image: ${bgGradient} !important;
                 background-attachment: fixed !important;
                 background-repeat: no-repeat !important;
-                background-size: cover !important;`
-                    : `background-image: none !important;
-                background: ${bgColor} !important;`}
+                background-size: cover !important;
             }
-            body { 
-                ${bodyTransparent
-                    ? `background-color: transparent !important;
-                background-image: none !important;`
-                    : `background-color: ${bgColor} !important;
-                background: ${bgColor} !important;`}
-                color: var(--aura-text) !important; 
-            }
-            
-            /* Universal Transparency - strip container backgrounds so the
-               themed html/body background shows through. Background IMAGES
-               survive (only background-color is cleared); sticky/fixed bars are
-               re-made opaque by reopaqueStickyFixed() so they don't bleed.
-               Do NOT include a/button/input/li — that collapses CTAs and cards.
-               Dialog ROOTS are excluded here and painted opaque below; their
-               children stay transparent so white inner cards don't glass text. */
-            :is(
-                div, main, section, article, header, nav, aside,
-                ul, ol, footer, figure, figcaption,
-                table, thead, tbody, tfoot, tr,
-                form, fieldset
-            ):not([role="dialog"]):not([role="alertdialog"]):not([role="menu"]):not([aria-modal="true"]) {
+            body {
                 background-color: transparent !important;
+                background-image: none !important;
+                color: var(--aura-text) !important;
+            }` : `
+            html {
+                background: ${bgColor} !important;
+            }
+            body {
+                background-color: ${bgColor} !important;
+                background: ${bgColor} !important;
+                color: var(--aura-text) !important;
+            }`}
+
+
+            :is(${layoutTags})${overlayNot} {
+                background-color: transparent !important;
+                backdrop-filter: none !important;
+                -webkit-backdrop-filter: none !important;
             }
 
-            /* Popups / modals: opaque sheet + themed text; children transparent
-               so the sheet shows through (avoids white-on-white inner cards). */
+            /* Common SPA roots: first-paint assist. JS inline !important is the guarantee. */
+            #app, #app-mount, #root, #__next, #__nuxt {
+                background-color: transparent !important;
+                background-image: none !important;
+            }
+
+            dialog,
+            [popover],
             [role="dialog"],
             [role="alertdialog"],
+            [role="menu"],
+            [role="listbox"],
             [aria-modal="true"] {
                 background-color: var(--aura-overlay) !important;
                 color: var(--aura-text) !important;
+                -webkit-text-fill-color: var(--aura-text) !important;
+                background-image: none !important;
+                mix-blend-mode: normal !important;
             }
-            [role="dialog"] *:not(img):not(svg):not(video):not(canvas):not(iframe),
-            [role="alertdialog"] *:not(img):not(svg):not(video):not(canvas):not(iframe),
-            [aria-modal="true"] *:not(img):not(svg):not(video):not(canvas):not(iframe) {
-                background-color: transparent !important;
+            dialog *,
+            [popover] *,
+            [role="dialog"] *,
+            [role="alertdialog"] *,
+            [role="menu"] *,
+            [role="listbox"] *,
+            [aria-modal="true"] * {
+                mix-blend-mode: normal !important;
+                -webkit-text-fill-color: var(--aura-text) !important;
                 color: var(--aura-text) !important;
+                background-clip: border-box !important;
+                -webkit-background-clip: border-box !important;
             }
+            dialog::backdrop {
+                background-color: rgba(0, 0, 0, 0.45) !important;
+            }
+            dialog a,
+            [popover] a,
             [role="dialog"] a,
             [role="alertdialog"] a,
+            [role="menu"] a,
+            [role="listbox"] a,
             [aria-modal="true"] a {
                 color: var(--aura-link) !important;
             }
 
-            /* White / light fills that survive tag-based transparency.
-               Exclude controls, icons, and overlay ROOTS (children may clear). */
+            /* Unused light/dark copies Google stacks in Images viewer, etc. */
+            [aria-hidden="true"],
+            [aria-hidden="true"] * {
+                color: transparent !important;
+                -webkit-text-fill-color: transparent !important;
+            }
+
+            /* Color only — do NOT paint --aura-surface. A fill here shows up as a
+               highlight inside Google's search / AI "Ask anything" fields (those
+               were already seamless via inherited transparency). White leftover
+               inputs are cleared by the light-surface pass where safe. */
+            input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="hidden"]),
+            textarea,
+            select {
+                background-color: transparent !important;
+                color: var(--aura-text) !important;
+                caret-color: var(--aura-text) !important;
+                mix-blend-mode: ${textBlend} !important;
+                ${isSplit && splitTextFill ? splitTextFill : ''}
+            }
+            ::placeholder {
+                color: var(--aura-muted) !important;
+                opacity: 0.75;
+            }
+            input:-webkit-autofill,
+            input:-webkit-autofill:hover,
+            input:-webkit-autofill:focus,
+            textarea:-webkit-autofill,
+            select:-webkit-autofill {
+                -webkit-text-fill-color: var(--aura-text) !important;
+                caret-color: var(--aura-text) !important;
+                transition: background-color 99999s ease-out 0s;
+            }
+
             :is(
                 [style*="background-color:#fff"],
                 [style*="background-color: #fff"],
@@ -359,104 +574,68 @@
                 [class*="bg-slate-50"],
                 [class*="bg-neutral-50"],
                 [class*="bg-stone-50"]
-            ):not(button):not([role="button"]):not(input):not(select):not(textarea):not(svg):not(img):not([class*="icon" i]):not([class*="Icon"]):not([role="dialog"]):not([role="alertdialog"]):not([role="menu"]):not([aria-modal="true"]) {
+            ):not(button):not([role="button"]):not(input):not(select):not(textarea):not(svg):not(img):not([class*="icon" i]):not([class*="Icon"]):not([role="dialog"]):not([role="alertdialog"]):not([role="menu"]):not([role="listbox"]):not([aria-modal="true"]):not(dialog):not([popover]) {
                 background-color: transparent !important;
             }
 
-            h1, h2, h3, h4, h5, h6, p, li, span, td, th, label, figcaption, dt, dd {
+            h1, h2, h3, h4, h5, h6, p, li, td, th, label, figcaption, dt, dd,
+            strong, em, b, i, small, blockquote, cite, code, pre, summary {
+                ${isSplit && splitTextFill ? splitTextFill : `
                 color: var(--aura-text) !important;
-                ${isSplit
-                    ? `mix-blend-mode: difference !important;`
-                    : ''}
+                mix-blend-mode: ${textBlend} !important;
+                `}
             }
-            /* Dialogs/modals: solid sheet — disable difference so text stays readable. */
-            ${isSplit ? `
-            [role="dialog"] :is(h1, h2, h3, h4, h5, h6, p, li, span, td, th, label, figcaption, dt, dd),
-            [role="alertdialog"] :is(h1, h2, h3, h4, h5, h6, p, li, span, td, th, label, figcaption, dt, dd),
-            [aria-modal="true"] :is(h1, h2, h3, h4, h5, h6, p, li, span, td, th, label, figcaption, dt, dd),
-            [role="dialog"] a,
-            [role="alertdialog"] a,
-            [aria-modal="true"] a {
-                mix-blend-mode: normal !important;
-            }` : ''}
             a {
-                color: ${isSplit ? '#ffffff' : 'var(--aura-link)'} !important;
-                ${isSplit
-                    ? `mix-blend-mode: difference !important;`
-                    : 'mix-blend-mode: normal !important;'}
+                ${isSplit && splitLinkFill ? splitLinkFill : `
+                color: var(--aura-link) !important;
+                mix-blend-mode: ${textBlend} !important;
+                `}
+            }
+            img, svg, video, canvas, iframe {
+                mix-blend-mode: normal !important;
             }
 
             ${siteFix}
         `;
     }
 
-    function updateSplitProgress() {
-        if (!Split || !currentTheme || !Split.isSplitTheme(currentTheme)) return;
-        const doc = document.documentElement;
-        const body = document.body;
-        const scrollY = window.scrollY || doc.scrollTop || 0;
-        const scrollHeight = Math.max(
-            body ? body.scrollHeight : 0,
-            doc.scrollHeight || 0
-        );
-        const viewportHeight = window.innerHeight || doc.clientHeight || 0;
-        const progress = Split.computeScrollProgress(scrollY, scrollHeight, viewportHeight);
-        const pct = Split.scrollProgressToSplitPct(progress);
-        doc.style.setProperty('--aura-split-pct', pct + '%');
-        // Pin the viewport-sized gradient to the visible area without relying on
-        // background-attachment:fixed (broken on iOS Safari).
-        doc.style.setProperty('background-size', '100vw 100vh', 'important');
-        doc.style.setProperty('background-position', '0px ' + scrollY + 'px', 'important');
-    }
-
-    function onSplitScrollOrResize() {
-        if (splitRafPending) return;
-        splitRafPending = true;
-        requestAnimationFrame(() => {
-            splitRafPending = false;
-            updateSplitProgress();
-        });
-    }
-
-    function attachSplitScrollListeners() {
-        if (splitScrollAttached) return;
-        window.addEventListener('scroll', onSplitScrollOrResize, { passive: true, capture: true });
-        window.addEventListener('resize', onSplitScrollOrResize, { passive: true });
-        splitScrollAttached = true;
-    }
-
-    function detachSplitScrollListeners() {
-        if (!splitScrollAttached) return;
-        window.removeEventListener('scroll', onSplitScrollOrResize, true);
-        window.removeEventListener('resize', onSplitScrollOrResize);
-        splitScrollAttached = false;
-    }
-
     // 3. APPLY BACKGROUND DIRECTLY TO HTML/BODY
     function applyBackgroundColors(theme) {
         const bgColor = theme.background || '#121212';
-        const isSplit = !!(Split && Split.isSplitTheme(theme));
+        const wantsSplit = !!(Split && Split.isSplitTheme(theme));
+        const splitColors = wantsSplit ? Split.parseSplitColors(theme.backgroundGradient || theme) : null;
+        const isSplit = !!(wantsSplit && splitColors);
         const isGradient = !isSplit && theme.backgroundType === 'gradient' && !!theme.backgroundGradient;
-        const splitColors = isSplit ? Split.parseSplitColors(theme.backgroundGradient || theme) : null;
-        const splitImage = (isSplit && splitColors)
-            ? Split.buildSplitGradient(splitColors.dark, splitColors.light, 'var(--aura-split-pct)')
-            : null;
-        const imageBg = splitImage || (isGradient ? theme.backgroundGradient : null);
+        const imageBg = (!isSplit && isGradient) ? theme.backgroundGradient : null;
         const bodyTransparent = !!(imageBg || isSplit);
 
-        // Method 1: Direct style properties (inline, so they win over site CSS)
         if (document.documentElement) {
             const de = document.documentElement.style;
-            de.setProperty('background-color', bgColor, 'important');
-            de.setProperty('color-scheme', 'dark', 'important');
-            if (isSplit && splitColors && splitImage) {
-                de.setProperty('--aura-split-dark', splitColors.dark);
-                de.setProperty('--aura-split-light', splitColors.light);
-                de.setProperty('background-image', splitImage, 'important');
+            const scheme = (H && H.isThemeBackgroundLight && H.isThemeBackgroundLight(bgColor))
+                ? 'light'
+                : 'dark';
+            de.setProperty('color-scheme', scheme, 'important');
+            if (isSplit) {
+                const paint = (Split && Split.liveSplitBackground)
+                    ? Split.liveSplitBackground(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START)
+                    : null;
+                const grad = paint
+                    ? paint.image
+                    : Split.buildSplitGradient(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START);
+                de.setProperty('background-color', splitColors.dark, 'important');
+                de.setProperty('background-image', grad, 'important');
                 de.setProperty('background-repeat', 'no-repeat', 'important');
-                de.setProperty('background-attachment', 'scroll', 'important');
-                updateSplitProgress();
+                de.setProperty('background-attachment', 'fixed', 'important');
+                de.setProperty('background-position', '0 0', 'important');
+                de.setProperty('background-size', paint && paint.sizeFallback ? paint.sizeFallback : '100vw 100vh', 'important');
+                if (paint && paint.sizeMid) {
+                    de.setProperty('background-size', paint.sizeMid, 'important');
+                }
+                if (paint && paint.size) {
+                    de.setProperty('background-size', paint.size, 'important');
+                }
             } else if (imageBg) {
+                de.setProperty('background-color', bgColor, 'important');
                 de.setProperty('background-image', imageBg, 'important');
                 de.setProperty('background-attachment', 'fixed', 'important');
                 de.setProperty('background-repeat', 'no-repeat', 'important');
@@ -469,11 +648,10 @@
                 de.removeProperty('background-size');
             }
         }
-        
+
         if (document.body) {
             const bs = document.body.style;
             if (bodyTransparent) {
-                // Let the html split/gradient show through the body
                 bs.setProperty('background-color', 'transparent', 'important');
                 bs.setProperty('background-image', 'none', 'important');
             } else {
@@ -481,121 +659,299 @@
                 bs.setProperty('background', bgColor, 'important');
             }
         }
-        
-        // Method 2: Force repaint by toggling a class
-        const dummyClass = 'aura-bg-' + Date.now();
-        const tempStyle = document.createElement('style');
-        tempStyle.id = 'aura-temp-' + Date.now();
-        tempStyle.textContent = imageBg
-            ? `html.${dummyClass} { background-image: ${imageBg} !important; }`
-            : `html.${dummyClass} { background-color: ${bgColor} !important; background: ${bgColor} !important; }`;
-        document.head?.appendChild(tempStyle);
-        document.documentElement.classList.add(dummyClass);
-        
-        // Clean up dummy class after repaint - use requestAnimationFrame for safer timing
-        requestAnimationFrame(() => {
-            document.documentElement.classList.remove(dummyClass);
-            if (tempStyle && tempStyle.parentNode) {
-                tempStyle.parentNode.removeChild(tempStyle);
-            }
-        });
+
+        // Live split paints on html. Drop any leftover sibling wallpaper.
+        removeSplitLayer();
     }
 
-    // 3b. BRIGHT-SURFACE SAFETY NET
+    // 3b. BRIGHT / LIGHT-SURFACE SAFETY NET
     // CSS tag/class rules lose to high-specificity or CSS-variable whites on
-    // random sites. Clear only near-white opaque leftovers; never touch
-    // controls, icons, media, dialogs, floating banners, or tiny tiles.
-    function rethemeBrightSurfaces(root) {
-        if (!root || !currentTheme || !H) return;
+    // random sites. Clear near-white and low-chroma light-gray leftovers;
+    // never touch controls, icons, media, dialogs, modal cards, or tiny tiles.
+    function visitBrightElement(el, vh, vw) {
+        if (!el || el.nodeType !== 1 || !H || overlayModified.has(el)) return;
+        if (el === document.documentElement || el === document.body) return;
+        if (el.id === 'aura-core-engine') return;
 
-        let elements;
-        try {
-            elements = root.nodeType === 1
-                ? [root, ...root.querySelectorAll('*')]
-                : Array.from(root.querySelectorAll('*'));
-        } catch (e) {
+        let style;
+        try { style = getComputedStyle(el); } catch (e) { return; }
+
+        let rect;
+        try { rect = el.getBoundingClientRect(); } catch (e) { return; }
+
+        const mask = style.webkitMaskImage || style.maskImage;
+        const overlayRoot = H.isOverlayRoot(el);
+        const floatingBannerRoot = H.isFloatingBannerRoot(el, getComputedStyle, { vh, vw });
+        const modalCard = !!(H.isLikelyModalCard && H.isLikelyModalCard(el, getComputedStyle, { vh, vw }));
+        const isControl = !!(H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[el.tagName]);
+
+        if (H.shouldSkipBrightElement({
+            tag: el.tagName,
+            role: el.getAttribute('role'),
+            className: typeof el.className === 'string' ? el.className : '',
+            inSvg: typeof el.closest === 'function' && !!el.closest('svg'),
+            mask: mask || 'none',
+            visibility: style.visibility,
+            opacity: style.opacity,
+            width: rect.width,
+            height: rect.height,
+            overlayRoot,
+            floatingBannerRoot,
+            modalCard,
+        })) {
             return;
         }
 
-        const MAX = 4000;
-        let seen = 0;
+        if (H.shouldClearLayoutGradient && H.shouldClearLayoutGradient({
+            id: el.id,
+            tag: el.tagName,
+            width: rect.width,
+            height: rect.height,
+            vh,
+            vw,
+            overlayRoot,
+            overlayChrome: H.isOverlayChrome(el),
+            backgroundImage: style.backgroundImage,
+            isControl,
+        })) {
+            el.style.setProperty('background-image', 'none', 'important');
+            brightModified.add(el);
+        }
+
+        const isLight = H.isLightContentSurface || H.isNearWhiteSurface;
+        const parsed = H.parseCssRgb(style.backgroundColor);
+        if (!isLight(parsed)) return;
+
+        // Light themes (Sepia, Paper, Light Mode): Google Images viewer cards
+        // are beige/white stacked layers. Clearing them makes Visit/Share/Save
+        // and captions overlap. Keep author fills when the page is already light.
+        if (H.isThemeBackgroundLight && currentTheme && H.isThemeBackgroundLight(currentTheme.background)) {
+            return;
+        }
+
+        el.style.setProperty('background-color', 'transparent', 'important');
+        brightModified.add(el);
+    }
+
+    function rethemeBrightSurfaces(root) {
+        if (!root || !currentTheme || !H) return;
         const vh = window.innerHeight || 0;
         const vw = window.innerWidth || 0;
-
-        for (const el of elements) {
-            if (!el || el.nodeType !== 1) continue;
-            if (++seen > MAX) break;
-
-            let style;
-            try { style = getComputedStyle(el); } catch (e) { continue; }
-
-            let rect;
-            try { rect = el.getBoundingClientRect(); } catch (e) { continue; }
-
-            const mask = style.webkitMaskImage || style.maskImage;
-            const overlayRoot = H.isOverlayRoot(el);
-            const floatingBannerRoot = H.isFloatingBannerRoot(el, getComputedStyle, { vh, vw });
-
-            if (H.shouldSkipBrightElement({
-                tag: el.tagName,
-                role: el.getAttribute('role'),
-                className: typeof el.className === 'string' ? el.className : '',
-                inSvg: typeof el.closest === 'function' && !!el.closest('svg'),
-                mask: mask || 'none',
-                visibility: style.visibility,
-                opacity: style.opacity,
-                width: rect.width,
-                height: rect.height,
-                overlayRoot,
-                floatingBannerRoot,
-            })) {
-                continue;
-            }
-
-            const parsed = H.parseCssRgb(style.backgroundColor);
-            if (!H.isNearWhiteSurface(parsed)) continue;
-
-            el.style.setProperty('background-color', 'transparent', 'important');
-            brightModified.add(el);
+        const elements = collectElements(root);
+        const limit = Math.min(elements.length, WALK_SLICE);
+        for (let i = 0; i < limit; i++) {
+            visitBrightElement(elements[i], vh, vw);
         }
     }
 
     // 3c. OVERLAY / POPUP SAFETY NET
     // Sticky pass skips dialogs (hidden cookie sheets, etc.). Visible modals
     // still need an opaque sheet so theming cannot leave them glass-like.
+    // Full-viewport scrims are left transparent (Maps / cookie-curtain guard);
+    // their inner card is painted instead.
+    function paintOverlaySheet(el) {
+        el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
+        el.style.setProperty('mix-blend-mode', 'normal', 'important');
+        overlayModified.add(el);
+    }
+
     function reopaqueOverlays(root) {
         if (!root || !currentTheme || !H) return;
 
-        let candidates;
+        const vh = window.innerHeight || 0;
+        const vw = window.innerWidth || 0;
+        const seen = new Set();
+        const scope = root.nodeType === 1 ? root : document.documentElement;
+        const candidates = [];
+
         try {
-            const scope = root.nodeType === 1 ? root : document.documentElement;
-            candidates = scope.querySelectorAll(
-                '[role="dialog"], [role="alertdialog"], [aria-modal="true"]'
+            const listed = scope.querySelectorAll(
+                (H && H.OVERLAY_SELECTOR) ||
+                'dialog, [popover], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [aria-modal="true"]'
             );
-            if (root.nodeType === 1 && H.isOverlayChrome(root)
-                && (root.getAttribute('role') === 'dialog'
-                    || root.getAttribute('role') === 'alertdialog'
-                    || root.getAttribute('aria-modal') === 'true')) {
-                candidates = [root, ...candidates];
+            listed.forEach(el => candidates.push(el));
+            if (root.nodeType === 1 && H.isOverlayRoot(root)) {
+                candidates.unshift(root);
             }
         } catch (e) {
             return;
         }
 
-        for (const el of candidates) {
-            if (!el || el.nodeType !== 1) continue;
+        function consider(el) {
+            if (!el || el.nodeType !== 1 || seen.has(el)) return;
+            seen.add(el);
+            if (H.isSearchChrome && H.isSearchChrome(el)) return;
 
             let style;
-            try { style = getComputedStyle(el); } catch (e) { continue; }
-            if (style.visibility === 'hidden' || style.opacity === '0') continue;
+            try { style = getComputedStyle(el); } catch (e) { return; }
+            if (style.visibility === 'hidden' || style.opacity === '0') return;
+            if (style.display === 'none') return;
 
             let rect;
-            try { rect = el.getBoundingClientRect(); } catch (e) { continue; }
-            if (rect.width < 1 || rect.height < 1) continue;
+            try { rect = el.getBoundingClientRect(); } catch (e) { return; }
+            if (rect.width < 1 || rect.height < 1) return;
 
-            el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
-            overlayModified.add(el);
+            if (H.isFullViewportRect(rect, vh, vw)) {
+                // Google Images viewer is a full-screen second page, not a
+                // cookie scrim. Leave it opaque so the mosaic cannot show
+                // through. Inline !important is required: a stylesheet
+                // SITE_FIX loses to this pass's previous transparent write.
+                if (isGoogleImagesPage()) {
+                    el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
+                    el.style.setProperty('background-image', 'none', 'important');
+                    overlayModified.add(el);
+                    return;
+                }
+                el.style.setProperty('background-color', 'transparent', 'important');
+                overlayModified.add(el);
+                const inner = H.findInnerModalCard
+                    ? H.findInnerModalCard(el, getComputedStyle, { vh, vw })
+                    : null;
+                if (inner) paintOverlaySheet(inner);
+                return;
+            }
+
+            paintOverlaySheet(el);
         }
+
+        candidates.forEach(consider);
+    }
+
+    function visitOverlayModalWalk(el, vh, vw, seen) {
+        if (!el || el.nodeType !== 1 || !H || seen.has(el)) return;
+        if (H.isLikelyModalCard && H.isLikelyModalCard(el, getComputedStyle, { vh, vw })) {
+            seen.add(el);
+            if (H.isSearchChrome && H.isSearchChrome(el)) return;
+            let style;
+            try { style = getComputedStyle(el); } catch (e) { return; }
+            if (style.visibility === 'hidden' || style.opacity === '0') return;
+            if (style.display === 'none') return;
+            let rect;
+            try { rect = el.getBoundingClientRect(); } catch (e) { return; }
+            if (rect.width < 1 || rect.height < 1) return;
+            if (H.isFullViewportRect(rect, vh, vw)) {
+                if (isGoogleImagesPage()) {
+                    el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
+                    el.style.setProperty('background-image', 'none', 'important');
+                    overlayModified.add(el);
+                    return;
+                }
+                el.style.setProperty('background-color', 'transparent', 'important');
+                overlayModified.add(el);
+                const inner = H.findInnerModalCard
+                    ? H.findInnerModalCard(el, getComputedStyle, { vh, vw })
+                    : null;
+                if (inner) paintOverlaySheet(inner);
+                return;
+            }
+            paintOverlaySheet(el);
+        }
+    }
+
+    function revertGoogleImagesMosaic() {
+        googleImagesMosaicHidden.forEach(el => {
+            try { el.style.removeProperty('visibility'); } catch (e) {}
+        });
+        googleImagesMosaicHidden.clear();
+    }
+
+    function paintGoogleImagesSheet(el) {
+        if (!el || el === document.body || el === document.documentElement) return;
+        el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
+        el.style.setProperty('background-image', 'none', 'important');
+        overlayModified.add(el);
+    }
+
+    function hideGoogleImagesMosaicEl(el) {
+        if (!el || el.nodeType !== 1) return;
+        el.style.setProperty('visibility', 'hidden', 'important');
+        googleImagesMosaicHidden.add(el);
+    }
+
+    /**
+     * Current Images UI (udm=2) does not use #islrg / .tvh9oe. The viewer is
+     * a covering sheet with a Close control; hashed classes change. Walk from
+     * the close button / dialog to a large ancestor and paint it opaque, then
+     * hide mosaic siblings so the original grid cannot show through.
+     */
+    function paintGoogleImagesViewer(root) {
+        revertGoogleImagesMosaic();
+        if (!isGoogleImagesPage() || !H) return;
+
+        const vh = window.innerHeight || 0;
+        const vw = window.innerWidth || 0;
+        const scope = root && root.nodeType === 1 ? root : document.documentElement;
+        const covers = new Set();
+
+        function considerCover(el) {
+            if (!el || el.nodeType !== 1 || covers.has(el)) return;
+            if (el === document.body || el === document.documentElement) return;
+            let rect;
+            try { rect = el.getBoundingClientRect(); } catch (e) { return; }
+            if (rect.width < vw * 0.7 || rect.height < vh * 0.45) return;
+            let style;
+            try { style = getComputedStyle(el); } catch (e2) { return; }
+            if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') return;
+            covers.add(el);
+            paintGoogleImagesSheet(el);
+        }
+
+        function coverFrom(start) {
+            if (!start) return;
+            let node = start;
+            while (
+                node &&
+                node.nodeType === 1 &&
+                node !== document.body &&
+                node !== document.documentElement
+            ) {
+                let rect;
+                try { rect = node.getBoundingClientRect(); } catch (e) { break; }
+                if (rect.width >= vw * 0.7 && rect.height >= vh * 0.45) {
+                    considerCover(node);
+                    return;
+                }
+                node = node.parentElement;
+            }
+        }
+
+        let listed;
+        try {
+            listed = scope.querySelectorAll(
+                '[aria-modal="true"], [role="dialog"], [role="alertdialog"]'
+            );
+        } catch (e) {
+            listed = [];
+        }
+        listed.forEach(considerCover);
+
+        let closers;
+        try {
+            closers = scope.querySelectorAll(
+                '[aria-label="Close"], [aria-label="Close image"], [aria-label="Close dialog"]'
+            );
+        } catch (e2) {
+            closers = [];
+        }
+        closers.forEach(btn => coverFrom(btn));
+
+        covers.forEach(cover => {
+            const parent = cover.parentElement;
+            if (!parent) return;
+            for (let i = 0; i < parent.children.length; i++) {
+                const sib = parent.children[i];
+                if (!sib || sib === cover) continue;
+                if (sib.contains(cover) || cover.contains(sib)) continue;
+                hideGoogleImagesMosaicEl(sib);
+            }
+        });
+
+        try {
+            const mosaic = scope.querySelectorAll('#islrg, #islmp');
+            if (covers.size > 0) {
+                mosaic.forEach(hideGoogleImagesMosaicEl);
+            }
+        } catch (e3) {}
     }
 
     // 3d. STICKY/FIXED SAFETY NET
@@ -606,99 +962,333 @@
     // NOT be painted — doing so creates a solid theme-colored curtain over the
     // page (seen on usopen.com / wta.com) with content only peeking on overscroll.
     // Visible dialogs are handled by reopaqueOverlays instead.
-    function reopaqueStickyFixed(root) {
-        if (!root || !currentTheme || !H) return;
-
-        let elements;
-        try {
-            elements = root.nodeType === 1
-                ? [root, ...root.querySelectorAll('*')]
-                : Array.from(root.querySelectorAll('*'));
-        } catch (e) {
+    function visitStickyElement(el, vh, vw) {
+        if (!el || el.nodeType !== 1 || !H) return;
+        let style;
+        try { style = getComputedStyle(el); } catch (e) { return; }
+        let rect;
+        try { rect = el.getBoundingClientRect(); } catch (e) { return; }
+        const mask = style.webkitMaskImage || style.maskImage;
+        if (H.shouldSkipStickyElement({
+            position: style.position,
+            mask: mask || 'none',
+            visibility: style.visibility,
+            opacity: style.opacity,
+            overlayChrome: H.isOverlayChrome(el),
+            width: rect.width,
+            height: rect.height,
+            vh,
+            vw,
+        })) {
             return;
         }
+        el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
+        stickyModified.add(el);
+    }
+
+    function reopaqueStickyFixed(root) {
+        if (!root || !currentTheme || !H) return;
+        const vh = window.innerHeight || 0;
+        const vw = window.innerWidth || 0;
+        const elements = collectElements(root);
+        const limit = Math.min(elements.length, WALK_SLICE);
+        for (let i = 0; i < limit; i++) {
+            visitStickyElement(elements[i], vh, vw);
+        }
+    }
+
+    // 3d-bis. TOP CHROME — headers/search bars that are not sticky/fixed yet
+    // (Google Shopping <header>, many SERP toolbars). Site color-scheme:dark
+    // fills beat the universal `header { transparent }` rule. Paint the
+    // outermost bar and clear inner layout fills so scroll doesn't leave a
+    // gray slab stacked on a themed one.
+    function reopaqueTopChrome(root) {
+        if (!root || !currentTheme || !H || !H.isTopChromeBar) return;
 
         const vh = window.innerHeight || 0;
         const vw = window.innerWidth || 0;
+        const scope = root.nodeType === 1 ? root : document.documentElement;
+        const painted = new Set();
 
-        for (const el of elements) {
-            if (!el || el.nodeType !== 1) continue;
-
-            let style;
-            try { style = getComputedStyle(el); } catch (e) { continue; }
-
-            let rect;
-            try { rect = el.getBoundingClientRect(); } catch (e) { continue; }
-
-            const mask = style.webkitMaskImage || style.maskImage;
-            if (H.shouldSkipStickyElement({
-                position: style.position,
-                mask: mask || 'none',
-                visibility: style.visibility,
-                opacity: style.opacity,
-                overlayChrome: H.isOverlayChrome(el),
-                width: rect.width,
-                height: rect.height,
-                vh,
-                vw,
-            })) {
-                continue;
+        function outermost(el) {
+            let best = null;
+            let node = el;
+            while (
+                node &&
+                node.nodeType === 1 &&
+                node !== document.body &&
+                node !== document.documentElement
+            ) {
+                if (H.isTopChromeBar(node, getComputedStyle, { vh, vw })) {
+                    best = node;
+                }
+                node = node.parentElement;
             }
-
-            el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
-            stickyModified.add(el);
+            return best;
         }
+
+        function paintChrome(el) {
+            if (!el || painted.has(el)) return;
+            painted.add(el);
+            el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
+            el.style.setProperty('background-image', 'none', 'important');
+            chromeModified.add(el);
+
+            let inners;
+            try {
+                inners = el.querySelectorAll(
+                    'div, nav, header, form, section, ul, ol, li, fieldset'
+                );
+            } catch (e) {
+                return;
+            }
+            let n = 0;
+            for (const inner of inners) {
+                if (!inner || inner.nodeType !== 1) continue;
+                if (++n > 250) break;
+                if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[inner.tagName]) continue;
+                if (inner.getAttribute('role') === 'button') continue;
+                inner.style.setProperty('background-color', 'transparent', 'important');
+                chromeModified.add(inner);
+                let img = '';
+                try { img = getComputedStyle(inner).backgroundImage; } catch (e2) { img = ''; }
+                if (H.isGradientBackgroundImage && H.isGradientBackgroundImage(img)) {
+                    inner.style.setProperty('background-image', 'none', 'important');
+                }
+            }
+        }
+
+        let seeds;
+        try {
+            seeds = scope.querySelectorAll(
+                'header, nav, [role="banner"], [role="search"], form, #searchform'
+            );
+        } catch (e) {
+            return;
+        }
+        seeds.forEach(el => {
+            const rootEl = outermost(el);
+            if (rootEl) paintChrome(rootEl);
+        });
+    }
+
+
+    // 3d. TEXT CONTRAST SAFETY NET — pick black/white against the visible stack.
+    // Skipped for split themes so invert (white + difference) is not flattened.
+    function visitContrastElement(el) {
+        if (!el || el.nodeType !== 1 || !H || !H.hasPoorContrast || !currentTheme) return;
+        if (isActiveSplitTheme(currentTheme)) return;
+        const tag = el.tagName;
+        if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[tag]) return;
+        if (typeof el.className === 'string' && /icon/i.test(el.className)) return;
+        if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return;
+        if (el.closest && el.closest('[aria-hidden="true"]')) return;
+        if (H.isStackedDuplicateLabel && H.isStackedDuplicateLabel(el)) return;
+        let style;
+        try { style = getComputedStyle(el); } catch (e) { return; }
+        if (style.visibility === 'hidden' || style.opacity === '0') return;
+        const fg = H.parseCssRgb(style.color);
+        const bgParsed = H.effectiveBackground
+            ? H.effectiveBackground(el, getComputedStyle, currentTheme.background)
+            : (H.parseHexColor && H.parseHexColor(currentTheme.background));
+        if (!fg || !bgParsed) return;
+        if (!H.hasPoorContrast(fg, bgParsed, 3.0)) return;
+        const themeText = currentTheme.text || '#ffffff';
+        const themeLink = currentTheme.link || '#8ab4f8';
+        const isLink = tag === 'A' || (el.closest && el.closest('a'));
+        const preferred = isLink ? themeLink : themeText;
+        const picked = H.pickReadableAgainstSurface
+            ? H.pickReadableAgainstSurface(bgParsed, preferred, 3.0)
+            : preferred;
+        el.style.setProperty('color', picked, 'important');
+        contrastModified.add(el);
+    }
+
+    function rethemePoorContrast(root) {
+        if (!root || !currentTheme || !H || !H.hasPoorContrast) return;
+        if (isActiveSplitTheme(currentTheme)) return;
+        const elements = collectElements(root);
+        const limit = Math.min(elements.length, WALK_SLICE);
+        for (let i = 0; i < limit; i++) {
+            visitContrastElement(elements[i]);
+        }
+    }
+
+    // 3e. SPA SHELL / GRADIENT SAFETY NET
+    // Sites like Discord paint #app with a gradient or ID+!important fill after
+    // first paint. Inline !important beats those rules; never clear photos.
+    function visitShellElement(el, vh, vw) {
+        if (!el || el.nodeType !== 1 || !H || !H.shouldClearShellBackground) return;
+        if (el === document.documentElement || el === document.body) return;
+        if (overlayModified.has(el)) return;
+        if (el.id === 'aura-core-engine' || el.id === 'aura-split-bg') return;
+        if (el.closest && el.closest('#aura-split-bg')) return;
+
+        let style;
+        try { style = getComputedStyle(el); } catch (e) { return; }
+        if (style.visibility === 'hidden' || style.opacity === '0') return;
+
+        let rect;
+        try { rect = el.getBoundingClientRect(); } catch (e) { return; }
+
+        const parsed = H.parseCssRgb(style.backgroundColor);
+        const opaqueFill = !!(parsed && parsed.a >= 0.5);
+        const info = {
+            id: el.id,
+            tag: el.tagName,
+            width: rect.width,
+            height: rect.height,
+            vh,
+            vw,
+            overlayRoot: H.isOverlayRoot(el),
+            overlayChrome: H.isOverlayChrome(el),
+            backgroundImage: style.backgroundImage,
+            isControl: !!(H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[el.tagName]),
+            opaqueFill,
+        };
+        if (!H.shouldClearShellBackground(info)) return;
+
+        el.style.setProperty('background-color', 'transparent', 'important');
+        el.style.setProperty('background-image', 'none', 'important');
+        shellModified.add(el);
+    }
+
+    function rethemeKnownShells(root) {
+        if (!root || !currentTheme || !H) return;
+        const vh = window.innerHeight || 0;
+        const vw = window.innerWidth || 0;
+        const scope = root.nodeType === 1 ? root : document.documentElement;
+        try {
+            const listed = scope.querySelectorAll('#app, #app-mount, #root, #__next, #__nuxt');
+            listed.forEach(el => visitShellElement(el, vh, vw));
+        } catch (e) {}
+    }
+
+    function rethemeOpaqueShells(root) {
+        if (!root || !currentTheme || !H || !H.shouldClearShellBackground) return;
+        const vh = window.innerHeight || 0;
+        const vw = window.innerWidth || 0;
+        rethemeKnownShells(root);
+        const elements = collectElements(root);
+        const limit = Math.min(elements.length, WALK_SLICE);
+        for (let i = 0; i < limit; i++) {
+            visitShellElement(elements[i], vh, vw);
+        }
+    }
+
+    function promoteEngineStylesheet() {
+        const el = document.getElementById('aura-core-engine');
+        if (!el || !el.parentNode) return;
+        if (el.parentNode.lastElementChild === el) return;
+        el.parentNode.appendChild(el);
+    }
+
+    function runSafetyPasses(root) {
+        if (!root || !currentTheme) return;
+        cancelWalkSlices();
+        const gen = walkGeneration;
+        ignoreMutations = true;
+        promoteEngineStylesheet();
+        handleShadowDOM(root);
+
+        const vh = window.innerHeight || 0;
+        const vw = window.innerWidth || 0;
+        rethemeKnownShells(root);
+        reopaqueOverlays(root);
+        paintGoogleImagesViewer(root);
+        reopaqueTopChrome(root);
+
+        const overlaySeen = new Set();
+        const skipContrast = isActiveSplitTheme(currentTheme);
+        const elements = collectElements(root);
+
+        function finish() {
+            if (gen !== walkGeneration) return;
+            paintGoogleImagesViewer(root);
+            if (ignoreMutationsTimer) clearTimeout(ignoreMutationsTimer);
+            ignoreMutationsTimer = setTimeout(() => {
+                ignoreMutations = false;
+                ignoreMutationsTimer = null;
+            }, 50);
+        }
+
+        ignoreMutations = true;
+        forEachSliced(elements, function (el) {
+            visitShellElement(el, vh, vw);
+            visitOverlayModalWalk(el, vh, vw, overlaySeen);
+            visitBrightElement(el, vh, vw);
+            if (!skipContrast) visitContrastElement(el);
+            visitStickyElement(el, vh, vw);
+        }, finish);
     }
 
     // 4. THEME APPLICATION
     function applyTheme(theme) {
-        if (!theme || theme.enabled === false) return removeTheme();
-        currentTheme = theme;
-        
-        const bgColor = theme.background || '#121212';
-        
-        // Remove old style element
-        const oldStyleEl = document.getElementById('aura-core-engine');
-        if (oldStyleEl) {
-            oldStyleEl.remove();
+        if (!theme || theme.enabled === false) {
+            lastAppliedThemeKey = '';
+            return removeTheme();
         }
-        
-        // Create and inject new style element
+        const themeKey = [
+            theme.background, theme.text, theme.link,
+            theme.backgroundType || '', theme.backgroundGradient || '',
+            theme.enabled === false ? '0' : '1'
+        ].join('|');
+        if (themeKey === lastAppliedThemeKey && document.getElementById('aura-core-engine')) {
+            return;
+        }
+        lastAppliedThemeKey = themeKey;
+        currentTheme = theme;
+        cancelWalkSlices();
+
+        const oldStyleEl = document.getElementById('aura-core-engine');
+        if (oldStyleEl) oldStyleEl.remove();
+
         const styleEl = document.createElement('style');
         styleEl.id = 'aura-core-engine';
         styleEl.textContent = getFullStyleSheet(theme);
         (document.head || document.documentElement).appendChild(styleEl);
 
-        // Apply background colors with multiple methods (handles solid + gradient)
         applyBackgroundColors(theme);
+        const earlyShield = document.getElementById('aura-early-shield');
+        if (earlyShield) earlyShield.remove();
+        scheduleSafetyPasses();
+    }
 
-        // Handle Shadow DOM
-        handleShadowDOM(document.documentElement);
-
-        // Clear leftover near-white surfaces, paint visible popups opaque, then
-        // re-opaque sticky/fixed chrome bars (dialogs handled separately).
-        rethemeBrightSurfaces(document.documentElement);
-        reopaqueOverlays(document.documentElement);
-        reopaqueStickyFixed(document.documentElement);
-
-        // Scroll-linked hard diagonal for split presets.
-        if (Split && Split.isSplitTheme(theme)) {
-            splitMonochromeActive = Split.isMonochromeSplit(theme);
-            attachSplitScrollListeners();
-            updateSplitProgress();
-        } else {
-            splitMonochromeActive = false;
-            detachSplitScrollListeners();
+    function scheduleSafetyPasses() {
+        if (safetyPassesRaf) {
+            try { cancelAnimationFrame(safetyPassesRaf); } catch (e) {}
+            safetyPassesRaf = 0;
         }
-        
-        console.log("Aura: Theme applied - background:", bgColor);
+        const run = function () {
+            safetyPassesRaf = 0;
+            if (currentTheme && document.documentElement) {
+                runSafetyPasses(document.documentElement);
+            }
+        };
+        if (typeof requestAnimationFrame === 'function') {
+            safetyPassesRaf = requestAnimationFrame(function () {
+                safetyPassesRaf = requestAnimationFrame(run);
+            });
+        } else {
+            setTimeout(run, 0);
+        }
     }
 
     function removeTheme() {
-        detachSplitScrollListeners();
-        splitMonochromeActive = false;
+        lastAppliedThemeKey = '';
+        cancelWalkSlices();
+        if (safetyPassesRaf) {
+            try { cancelAnimationFrame(safetyPassesRaf); } catch (e) {}
+            safetyPassesRaf = 0;
+        }
+        const earlyShield = document.getElementById('aura-early-shield');
+        if (earlyShield) earlyShield.remove();
+        removeSplitLayer();
         const styleEl = document.getElementById('aura-core-engine');
         if (styleEl) styleEl.remove();
+        // Belt-and-suspenders: clear any orphan split node
+        const orphanSplit = document.getElementById(SPLIT_LAYER_ID);
+        if (orphanSplit) orphanSplit.remove();
         if (document.documentElement) {
             const de = document.documentElement.style;
             de.removeProperty('background-color');
@@ -725,28 +1315,54 @@
         stickyModified.clear();
         // Revert near-white surfaces we cleared
         brightModified.forEach(el => {
-            try { el.style.removeProperty('background-color'); } catch (e) {}
+            try {
+                el.style.removeProperty('background-color');
+                el.style.removeProperty('background-image');
+            } catch (e) {}
         });
         brightModified.clear();
         // Revert dialog overlays we painted
         overlayModified.forEach(el => {
-            try { el.style.removeProperty('background-color'); } catch (e) {}
+            try {
+                el.style.removeProperty('background-color');
+                el.style.removeProperty('background-image');
+                el.style.removeProperty('mix-blend-mode');
+            } catch (e) {}
         });
         overlayModified.clear();
+        revertGoogleImagesMosaic();
+        contrastModified.forEach(el => {
+            try { el.style.removeProperty('color'); } catch (e) {}
+        });
+        contrastModified.clear();
+        shellModified.forEach(el => {
+            try {
+                el.style.removeProperty('background-color');
+                el.style.removeProperty('background-image');
+            } catch (e) {}
+        });
+        shellModified.clear();
+        chromeModified.forEach(el => {
+            try {
+                el.style.removeProperty('background-color');
+                el.style.removeProperty('background-image');
+            } catch (e) {}
+        });
+        chromeModified.clear();
+        document.querySelectorAll('style[data-aura-shadow]').forEach(s => {
+            try { s.remove(); } catch (e) {}
+        });
     }
 
     // 5. SHADOW DOM HANDLER - Prevent duplicate style injections
     function handleShadowDOM(root) {
         if (!root) return;
         
-        if (root.shadowRoot && !processedShadowRoots.has(root.shadowRoot)) {
-            // Check if we already injected a style in this shadow root
+        if (root.shadowRoot) {
             const existingStyle = root.shadowRoot.querySelector('style[data-aura-shadow]');
             if (existingStyle) {
-                // Update existing style instead of adding new one
                 existingStyle.textContent = getFullStyleSheet(currentTheme);
             } else {
-                // Add new style only if it doesn't exist
                 const style = document.createElement('style');
                 style.setAttribute('data-aura-shadow', 'true');
                 style.textContent = getFullStyleSheet(currentTheme);
@@ -775,9 +1391,6 @@
                     console.log("Aura Content: Sending checkThemeUpdate to background script");
                     const response = await browser.runtime.sendMessage({ type: "checkThemeUpdate" });
                     console.log("Aura Content: Background script response:", response);
-                    
-                    // Wait for storage to update
-                    await new Promise(resolve => setTimeout(resolve, 500));
                     return true;
                 } catch (e) {
                     console.error("Aura Content: Error sending message to background:", e);
@@ -882,7 +1495,7 @@
                 }, 2000);
                 
                 browser.runtime.sendNativeMessage(
-                    "org.reactjs.native.example.TintApp.TintExtensionExtension.Extension",
+                    "com.alexmartens.aura.SafariExtension",
                     { type: "getTheme" },
                     (response) => {
                         if (!completed) {
@@ -931,23 +1544,40 @@
 
         // Set up mutation observer for Shadow DOM (only once)
         if (!mutationObserver) {
-            mutationObserver = new MutationObserver((mutations) => {
-                mutations.forEach(m => {
-                    m.addedNodes.forEach(node => {
-                        if (node.nodeType === 1) {
-                            handleShadowDOM(node);
-                            rethemeBrightSurfaces(node);
-                            reopaqueOverlays(node);
-                            reopaqueStickyFixed(node);
-                        }
-                    });
-                });
-                // Late layout growth can change scrollHeight; keep split stop in sync.
-                if (Split && currentTheme && Split.isSplitTheme(currentTheme)) {
-                    onSplitScrollOrResize();
-                }
+            mutationObserver = new MutationObserver(() => {
+                if (ignoreMutations) return;
+                if (mutationDebounceTimer) clearTimeout(mutationDebounceTimer);
+                mutationDebounceTimer = setTimeout(() => {
+                    mutationDebounceTimer = null;
+                    if (!currentTheme) return;
+                    runSafetyPasses(document.documentElement);
+                }, 150);
             });
-            mutationObserver.observe(document.documentElement, { childList: true, subtree: true });
+            mutationObserver.observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['style', 'class', 'hidden', 'open'],
+            });
+        }
+
+        // Shopping / SERP headers often become sticky only after scroll, or
+        // clone a second bar. Re-paint chrome without waiting for a mutation.
+        if (!scrollListenerAttached) {
+            scrollListenerAttached = true;
+            window.addEventListener('scroll', () => {
+                if (!currentTheme || ignoreMutations) return;
+                if (scrollPassTimer) return;
+                scrollPassTimer = setTimeout(() => {
+                    scrollPassTimer = null;
+                    if (!currentTheme) return;
+                    reopaqueTopChrome(document.documentElement);
+                    reopaqueStickyFixed(document.documentElement);
+                    if (isGoogleImagesPage()) {
+                        paintGoogleImagesViewer(document.documentElement);
+                    }
+                }, 200);
+            }, { passive: true });
         }
 
         // Re-evaluate time-based day/night every minute so themes flip at
@@ -972,7 +1602,6 @@
     // Safari tab focus detection - request theme update
     document.addEventListener("visibilitychange", () => {
         if (!document.hidden) {
-            console.log("Aura Content: Page visible, requesting theme update");
             requestThemeUpdate();
         }
     });

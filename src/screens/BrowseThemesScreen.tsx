@@ -14,120 +14,8 @@ import { saveThemes, getThemes } from '../storage';
 import { useAppTheme } from '../contexts/AppThemeContext';
 import Snackbar from '../components/Snackbar';
 import ThemePreview from '../components/ThemePreview';
+import { ThemeListRow } from '../components/ThemeSwatch';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-
-// Theme Button Component
-interface ThemeButtonProps {
-  theme: Theme;
-  isSelected: boolean;
-  appThemeColor: string;
-  sectionBgColor: string;
-  borderColor: string;
-  isFavorite?: boolean;
-  onPress: () => void;
-  onLongPress: (e: any) => void;
-  onPressOut: () => void;
-  onToggleFavorite?: () => void;
-}
-
-const ThemeButton: React.FC<ThemeButtonProps> = ({
-  theme,
-  isSelected,
-  appThemeColor,
-  sectionBgColor,
-  borderColor,
-  isFavorite = false,
-  onPress,
-  onLongPress,
-  onPressOut,
-  onToggleFavorite,
-}) => {
-
-  // Extract gradient colors from gradient string
-  const extractGradientColors = (gradient: string): { dark: string; light: string } | null => {
-    if (!gradient) return null;
-    // Parse linear-gradient(135deg, #001f3f 0%, #b3d9ff 100%)
-    const match = gradient.match(/#[0-9a-fA-F]{6}/g);
-    if (match && match.length >= 2) {
-      return { dark: match[0], light: match[1] };
-    }
-    return null;
-  };
-
-  const isDualTone =
-    (theme.backgroundType === 'gradient' || theme.backgroundType === 'split') &&
-    !!theme.backgroundGradient;
-  const gradientColors = isDualTone ? extractGradientColors(theme.backgroundGradient!) : null;
-
-  // Use theme background color, but ensure text is readable
-  const getButtonBackground = () => {
-    return theme.background;
-  };
-
-  return (
-    <TouchableOpacity
-      style={[
-        styles.themeButton,
-        { backgroundColor: getButtonBackground(), borderColor },
-        isSelected && { borderColor: appThemeColor, borderWidth: 2 },
-      ]}
-      onPress={onPress}
-      onLongPress={onLongPress}
-      onPressOut={onPressOut}
-    >
-      <View style={styles.themeButtonContent}>
-        <View style={styles.colorDotsContainer}>
-          {/* Background dot — hard diagonal for gradient/split */}
-          {isDualTone && gradientColors ? (
-            <View style={styles.gradientDotContainer}>
-              <View style={[styles.gradientDotHalf, { 
-                left: -3,
-                top: -3,
-                backgroundColor: theme.background,
-                transform: [{ rotate: '45deg' }],
-              }]} />
-              <View style={[styles.gradientDotHalf, { 
-                right: -3,
-                bottom: -3,
-                backgroundColor: gradientColors.light,
-                transform: [{ rotate: '45deg' }],
-              }]} />
-            </View>
-          ) : (
-            <View style={[styles.colorDot, { backgroundColor: theme.background }]} />
-          )}
-          {/* Text dot */}
-          {isDualTone && gradientColors ? (
-            <View style={styles.gradientDotContainer}>
-              <View style={[styles.gradientDotHalf, { 
-                left: -3,
-                top: -3,
-                backgroundColor: theme.text,
-                transform: [{ rotate: '45deg' }],
-              }]} />
-              <View style={[styles.gradientDotHalf, { 
-                right: -3,
-                bottom: -3,
-                backgroundColor: theme.text === '#ffffff' ? '#cccccc' : '#ffffff',
-                transform: [{ rotate: '45deg' }],
-              }]} />
-            </View>
-          ) : (
-            <View style={[styles.colorDot, { backgroundColor: theme.text }]} />
-          )}
-          {/* Link dot */}
-          <View style={[styles.colorDot, { backgroundColor: theme.link }]} />
-        </View>
-        <View style={styles.themeTextContent}>
-          <Text style={[styles.themeButtonText, { color: theme.text }]}>
-            {theme.name}
-          </Text>
-        </View>
-      </View>
-      {isSelected && <Text style={[styles.checkmark, { color: appThemeColor }]}>✓</Text>}
-    </TouchableOpacity>
-  );
-};
 
 interface BrowseThemesScreenProps {
   navigation: any;
@@ -147,151 +35,290 @@ interface Theme {
   preview: { background: string; text: string; link: string };
   backgroundType?: 'color' | 'gradient' | 'split';
   backgroundGradient?: string;
+  category: 'basics' | 'colors' | 'nature' | 'atmosphere';
 }
 
-// Preset Themes
+export const THEME_SECTIONS: { id: Theme['category']; title: string }[] = [
+  { id: 'basics', title: 'BASICS' },
+  { id: 'colors', title: 'COLORS' },
+  { id: 'nature', title: 'NATURE' },
+  { id: 'atmosphere', title: 'ATMOSPHERE' },
+];
+
+function preset(
+  partial: Omit<Theme, 'preview'> & { preview?: Theme['preview'] },
+): Theme {
+  return {
+    ...partial,
+    preview: partial.preview ?? {
+      background: partial.background,
+      text: partial.text,
+      link: partial.link,
+    },
+  };
+}
+
+// Preset Themes — categorized Theme Library
 export const PRESET_THEMES: Theme[] = [
-  {
-    id: 'dark',
-    name: 'Dark Mode',
-    background: '#000000',
-    text: '#ffffff',
-    link: '#1E90FF',
-    preview: { background: '#000000', text: '#ffffff', link: '#1E90FF' },
-  },
-  {
+  // —— Basics (system-like surfaces) ——
+  preset({
     id: 'light',
     name: 'Light Mode',
-    background: '#ffffff',
+    category: 'basics',
+    background: '#F2F2F7',
     text: '#000000',
-    link: '#0066cc',
-    preview: { background: '#ffffff', text: '#000000', link: '#0066cc' },
-  },
-  {
-    id: 'monochrome',
-    name: 'Monochrome',
+    link: '#007AFF',
+  }),
+  preset({
+    id: 'dark',
+    name: 'Dark Mode',
+    category: 'basics',
+    background: '#1C1C1E',
+    text: '#FFFFFF',
+    link: '#0A84FF',
+  }),
+
+  // —— Colors ——
+  preset({
+    id: 'black',
+    name: 'Black',
+    category: 'colors',
     background: '#000000',
-    text: '#ffffff',
-    link: '#0066cc',
-    preview: { background: '#000000', text: '#ffffff', link: '#0066cc' },
-    backgroundType: 'split',
-    backgroundGradient: 'linear-gradient(135deg, #000000 0%, #ffffff 100%)',
-  },
-  {
-    id: 'forest',
-    name: 'Forest',
-    background: '#1a3d1a',
-    text: '#c8e6c9',
-    link: '#81c784',
-    preview: { background: '#1a3d1a', text: '#c8e6c9', link: '#81c784' },
-  },
-  {
-    id: 'ocean',
-    name: 'Ocean',
-    background: '#001f3f',
-    text: '#b3d9ff',
-    link: '#4da6ff',
-    preview: { background: '#001f3f', text: '#b3d9ff', link: '#4da6ff' },
-  },
-  {
+    text: '#FFFFFF',
+    link: '#0A84FF',
+  }),
+  preset({
+    id: 'gray',
+    name: 'Gray',
+    category: 'colors',
+    background: '#3A3A3C',
+    text: '#F2F2F7',
+    link: '#64D2FF',
+  }),
+  preset({
     id: 'sepia',
     name: 'Sepia',
+    category: 'colors',
     background: '#F1EADF',
     text: '#4A3F35',
     link: '#006A71',
-    preview: { background: '#F1EADF', text: '#4A3F35', link: '#006A71' },
-  },
-  {
-    id: 'grayscale',
-    name: 'Grayscale',
-    background: '#1E1E1E',
-    text: '#E0E0E0',
-    link: '#BB86FC',
-    preview: { background: '#1E1E1E', text: '#E0E0E0', link: '#BB86FC' },
-  },
-  {
+  }),
+  preset({
+    id: 'green',
+    name: 'Green',
+    category: 'colors',
+    background: '#0B3D0B',
+    text: '#D4F5D4',
+    link: '#30D158',
+  }),
+  preset({
+    id: 'red',
+    name: 'Red',
+    category: 'colors',
+    background: '#3B0A0A',
+    text: '#FFE5E5',
+    link: '#FF453A',
+  }),
+  preset({
+    id: 'orange',
+    name: 'Orange',
+    category: 'colors',
+    background: '#3B1D05',
+    text: '#FFE8D1',
+    link: '#FF9F0A',
+  }),
+  preset({
+    id: 'yellow',
+    name: 'Yellow',
+    category: 'colors',
+    background: '#2C2500',
+    text: '#FFF6C2',
+    link: '#FFD60A',
+  }),
+  preset({
+    id: 'blue',
+    name: 'Blue',
+    category: 'colors',
+    background: '#001F3F',
+    text: '#D6EBFF',
+    link: '#64D2FF',
+  }),
+  preset({
+    id: 'purple',
+    name: 'Purple',
+    category: 'colors',
+    background: '#1C0A2E',
+    text: '#F0E6FF',
+    link: '#BF5AF2',
+  }),
+  preset({
+    id: 'pink',
+    name: 'Pink',
+    category: 'colors',
+    background: '#2E0A1C',
+    text: '#FFE5F0',
+    link: '#FF375F',
+  }),
+  preset({
+    id: 'teal',
+    name: 'Teal',
+    category: 'colors',
+    background: '#003333',
+    text: '#D4FFFA',
+    link: '#64D2FF',
+  }),
+  preset({
+    id: 'monochrome',
+    name: 'Monochrome',
+    category: 'colors',
+    background: '#000000',
+    text: '#FFFFFF',
+    link: '#007AFF',
+  }),
+
+  // —— Nature ——
+  preset({
+    id: 'forest',
+    name: 'Forest',
+    category: 'nature',
+    background: '#1A3D1A',
+    text: '#C8E6C9',
+    link: '#81C784',
+  }),
+  preset({
+    id: 'ocean',
+    name: 'Ocean',
+    category: 'nature',
+    background: '#001F3F',
+    text: '#B3D9FF',
+    link: '#4DA6FF',
+  }),
+  preset({
+    id: 'sunset',
+    name: 'Sunset',
+    category: 'nature',
+    background: '#2A1030',
+    text: '#FFE4C4',
+    link: '#FF8C42',
+  }),
+  preset({
+    id: 'meadow',
+    name: 'Meadow',
+    category: 'nature',
+    background: '#1E3A1E',
+    text: '#E8F5E9',
+    link: '#A5D6A7',
+  }),
+  preset({
+    id: 'desert',
+    name: 'Desert',
+    category: 'nature',
+    background: '#3E2A14',
+    text: '#F5E6D3',
+    link: '#E8A87C',
+  }),
+  preset({
+    id: 'aurora',
+    name: 'Aurora',
+    category: 'nature',
+    background: '#0B1A2A',
+    text: '#E0FFF8',
+    link: '#5EF0C0',
+  }),
+  preset({
+    id: 'coral',
+    name: 'Coral',
+    category: 'nature',
+    background: '#3A1520',
+    text: '#FFE8E0',
+    link: '#FF6F61',
+  }),
+  preset({
+    id: 'moss',
+    name: 'Moss',
+    category: 'nature',
+    background: '#1A2E1A',
+    text: '#DCE8C8',
+    link: '#9CCC65',
+  }),
+
+  // —— Atmosphere ——
+  preset({
     id: 'midnight',
     name: 'Midnight',
-    background: '#0a0e27',
-    text: '#6c5ce7',
-    link: '#6c5ce7',
-    preview: { background: '#0a0e27', text: '#6c5ce7', link: '#6c5ce7' },
-  },
-  {
+    category: 'atmosphere',
+    background: '#0A0E27',
+    text: '#E8E6FF',
+    link: '#6C5CE7',
+  }),
+  preset({
     id: 'chroma',
     name: 'Chroma',
-    background: '#1a1a2e',
-    text: '#f0f0f0',
-    link: '#ff6b6b',
-    preview: { background: '#1a1a2e', text: '#f0f0f0', link: '#ff6b6b' },
-  },
-  {
-    id: 'ocean-split',
-    name: 'Ocean Split',
-    background: '#001f3f',
-    text: '#ffffff',
-    link: '#4da6ff',
-    preview: { background: '#001f3f', text: '#b3d9ff', link: '#4da6ff' },
-    backgroundType: 'split',
-    backgroundGradient: 'linear-gradient(135deg, #001f3f 0%, #b3d9ff 100%)',
-  },
-  {
-    id: 'forest-split',
-    name: 'Forest Split',
-    background: '#0a2e0a',
-    text: '#ffffff',
-    link: '#81c784',
-    preview: { background: '#0a2e0a', text: '#c8e6c9', link: '#81c784' },
-    backgroundType: 'split',
-    backgroundGradient: 'linear-gradient(135deg, #0a2e0a 0%, #c8e6c9 100%)',
-  },
-  {
-    id: 'sunset-split',
-    name: 'Sunset Split',
-    background: '#1a0a2e',
-    text: '#ffffff',
-    link: '#ff6b6b',
-    preview: { background: '#1a0a2e', text: '#ffd4a0', link: '#ff6b6b' },
-    backgroundType: 'split',
-    backgroundGradient: 'linear-gradient(135deg, #1a0a2e 0%, #ff8c42 100%)',
-  },
-  // Battery-efficient themes (optimized for OLED displays)
-  {
-    id: 'amoled-black',
-    name: 'AMOLED Black',
-    background: '#000000',
-    text: '#ffffff',
-    link: '#1E90FF',
-    preview: { background: '#000000', text: '#ffffff', link: '#1E90FF' },
-  },
-  {
-    id: 'deep-black',
-    name: 'Deep Black',
-    background: '#0a0a0a',
-    text: '#e0e0e0',
-    link: '#4da6ff',
-    preview: { background: '#0a0a0a', text: '#e0e0e0', link: '#4da6ff' },
-  },
-  {
-    id: 'ultra-dark',
-    name: 'Ultra Dark',
-    background: '#1a1a1a',
-    text: '#d0d0d0',
-    link: '#5dade2',
-    preview: { background: '#1a1a1a', text: '#d0d0d0', link: '#5dade2' },
-  },
-  {
-    id: 'battery-saver',
-    name: 'Battery Saver',
-    background: '#000000',
-    text: '#b0b0b0',
-    link: '#6c757d',
-    preview: { background: '#000000', text: '#b0b0b0', link: '#6c757d' },
-  },
+    category: 'atmosphere',
+    background: '#1A1A2E',
+    text: '#F0F0F0',
+    link: '#FF6B6B',
+  }),
+  preset({
+    id: 'espresso',
+    name: 'Espresso',
+    category: 'atmosphere',
+    background: '#1A120C',
+    text: '#F0E6DA',
+    link: '#D4A574',
+  }),
+  preset({
+    id: 'lavender',
+    name: 'Lavender',
+    category: 'atmosphere',
+    background: '#1E1630',
+    text: '#F3EEFF',
+    link: '#C9B6FF',
+  }),
+  preset({
+    id: 'ice',
+    name: 'Ice',
+    category: 'atmosphere',
+    background: '#0E1A22',
+    text: '#E8F4FA',
+    link: '#7FDBFF',
+  }),
+  preset({
+    id: 'paper',
+    name: 'Paper',
+    category: 'atmosphere',
+    background: '#FAF7F2',
+    text: '#2C2C2C',
+    link: '#1A5F7A',
+  }),
+  preset({
+    id: 'nord',
+    name: 'Nord',
+    category: 'atmosphere',
+    background: '#2E3440',
+    text: '#ECEFF4',
+    link: '#88C0D0',
+  }),
+  preset({
+    id: 'dracula',
+    name: 'Dracula',
+    category: 'atmosphere',
+    background: '#282A36',
+    text: '#F8F8F2',
+    link: '#BD93F9',
+  }),
+  preset({
+    id: 'rose',
+    name: 'Rose',
+    category: 'atmosphere',
+    background: '#2A1218',
+    text: '#FFE8EE',
+    link: '#FF85A1',
+  }),
 ];
 
-// Battery-efficient theme IDs for easy filtering
-export const BATTERY_EFFICIENT_THEME_IDS = ['amoled-black', 'deep-black', 'ultra-dark', 'battery-saver', 'amoled', 'dark'];
+/** @deprecated Prefer pure-black / OLED themes under Colors */
+export const BATTERY_EFFICIENT_THEME_IDS = ['black', 'dark', 'gray'];
 
 const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, route }) => {
   const { appThemeColor, backgroundColor, textColor, sectionBgColor, borderColor } = useAppTheme();
@@ -302,7 +329,6 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
   const [lastAppliedTheme, setLastAppliedTheme] = useState<{ theme: Theme; data: any } | null>(null);
   const [longPressPreview, setLongPressPreview] = useState<Theme | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterType, setFilterType] = useState<'all' | 'dark' | 'light' | 'warm' | 'cool'>('all');
   const [favoriteThemes, setFavoriteThemes] = useState<string[]>([]);
   const [quickActionMenu, setQuickActionMenu] = useState<{ visible: boolean; theme: Theme | null; position: { x: number; y: number } }>({ visible: false, theme: null, position: { x: 0, y: 0 } });
   const forWebsite = route?.params?.forWebsite;
@@ -438,6 +464,8 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
       
       const completeTheme = {
         enabled: true,
+        id: theme.id,
+        name: theme.name,
         background: theme.background,
         text: theme.text,
         link: theme.link,
@@ -566,35 +594,44 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
     }
   };
 
-  const getThemeColorType = (theme: Theme): 'dark' | 'light' | 'warm' | 'cool' => {
-    const bg = theme.background.toLowerCase();
-    if (bg.includes('#000') || bg.includes('#1a') || bg.includes('#0a') || bg.includes('#0d')) {
-      return 'dark';
-    }
-    if (bg.includes('#fff') || bg.includes('#f5') || bg.includes('#f1')) {
-      return 'light';
-    }
-    if (bg.includes('#ff') || bg.includes('#f6') || bg.includes('#f1') || bg.includes('#3d') || bg.includes('#2d')) {
-      return 'warm';
-    }
-    return 'cool';
-  };
-
-  const getFilteredThemes = () => {
+  const getVisibleThemes = () => {
     let filtered = [...PRESET_THEMES];
-    
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(theme => 
-        theme.name.toLowerCase().includes(query)
-      );
+      filtered = filtered.filter(theme => theme.name.toLowerCase().includes(query));
     }
-    
-    if (filterType !== 'all') {
-      filtered = filtered.filter(theme => getThemeColorType(theme) === filterType);
-    }
-    
     return filtered;
+  };
+
+  const renderThemeRow = (theme: Theme) => {
+    const isSelected = selectedThemeId === theme.id;
+    return (
+      <ThemeListRow
+        key={theme.id}
+        theme={theme}
+        selected={isSelected}
+        accentColor={appThemeColor}
+        textColor={textColor}
+        surfaceColor={sectionBgColor}
+        favorite={favoriteThemes.includes(theme.id)}
+        onToggleFavorite={() => toggleFavorite(theme.id)}
+        onPress={() => {
+          handlePreviewTheme(theme);
+          handleSelectTheme(theme);
+        }}
+        onLongPress={(e) => {
+          handleQuickAction(theme, e);
+          setLongPressPreview(theme);
+          handlePreviewTheme(theme);
+        }}
+        onPressOut={() => {
+          if (longPressPreview?.id === theme.id) {
+            setLongPressPreview(null);
+            loadPreviewTheme();
+          }
+        }}
+      />
+    );
   };
 
   const handleQuickAction = (theme: Theme, event: any) => {
@@ -649,99 +686,31 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
           />
         </View>
 
-        {/* Filter Buttons */}
-        <View style={styles.filterContainer}>
-          {(['all', 'dark', 'light', 'warm', 'cool'] as const).map((type) => (
-            <TouchableOpacity
-              key={type}
-              style={[
-                styles.filterButton,
-                { backgroundColor: sectionBgColor, borderColor },
-                filterType === type && { backgroundColor: appThemeColor },
-              ]}
-              onPress={() => setFilterType(type)}
-            >
-              <Text
-                style={[
-                  styles.filterButtonText,
-                  { color: filterType === type ? '#FFFFFF' : textColor },
-                ]}
-              >
-                {type.charAt(0).toUpperCase() + type.slice(1)}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Favorites Section */}
+        {/* Favorites */}
         {favoriteThemes.length > 0 && (
           <>
-            <Text style={[styles.sectionTitle, { color: textColor }]}>Favorites</Text>
-            <View style={styles.themesList}>
-              {PRESET_THEMES.filter(theme => favoriteThemes.includes(theme.id)).map((theme) => {
-                const isSelected = selectedThemeId === theme.id;
-                return (
-                  <ThemeButton
-                    key={theme.id}
-                    theme={theme}
-                    isSelected={isSelected}
-                    appThemeColor={appThemeColor}
-                    sectionBgColor={sectionBgColor}
-                    borderColor={borderColor}
-                    isFavorite={favoriteThemes.includes(theme.id)}
-                    onPress={() => {
-                      handlePreviewTheme(theme);
-                      handleSelectTheme(theme);
-                    }}
-                    onLongPress={(e) => handleQuickAction(theme, e)}
-                    onPressOut={() => {
-                      if (longPressPreview?.id === theme.id) {
-                        setLongPressPreview(null);
-                        loadPreviewTheme();
-                      }
-                    }}
-                    onToggleFavorite={() => toggleFavorite(theme.id)}
-                  />
-                );
-              })}
+            <Text style={[styles.librarySectionHeader, { color: textColor }]}>FAVORITES</Text>
+            <View style={[styles.themesGroup, { backgroundColor: sectionBgColor }]}>
+              {PRESET_THEMES.filter(theme => favoriteThemes.includes(theme.id)).map(theme =>
+                renderThemeRow(theme),
+              )}
             </View>
           </>
         )}
 
-        {/* Theme List */}
-        <View style={styles.themesList}>
-          {getFilteredThemes().map((theme) => {
-            const isSelected = selectedThemeId === theme.id;
-            
-            return (
-              <ThemeButton
-                key={theme.id}
-                theme={theme}
-                isSelected={isSelected}
-                appThemeColor={appThemeColor}
-                sectionBgColor={sectionBgColor}
-                borderColor={borderColor}
-                isFavorite={favoriteThemes.includes(theme.id)}
-                onPress={() => {
-                  handlePreviewTheme(theme);
-                  handleSelectTheme(theme);
-                }}
-                onLongPress={(e) => {
-                  handleQuickAction(theme, e);
-                  setLongPressPreview(theme);
-                  handlePreviewTheme(theme);
-                }}
-                onPressOut={() => {
-                  if (longPressPreview?.id === theme.id) {
-                    setLongPressPreview(null);
-                    loadPreviewTheme();
-                  }
-                }}
-                onToggleFavorite={() => toggleFavorite(theme.id)}
-              />
-            );
-          })}
-        </View>
+        {/* Categorized themes */}
+        {THEME_SECTIONS.map(section => {
+          const themes = getVisibleThemes().filter(t => t.category === section.id);
+          if (themes.length === 0) return null;
+          return (
+            <React.Fragment key={section.id}>
+              <Text style={[styles.librarySectionHeader, { color: textColor }]}>{section.title}</Text>
+              <View style={[styles.themesGroup, { backgroundColor: sectionBgColor }]}>
+                {themes.map(theme => renderThemeRow(theme))}
+              </View>
+            </React.Fragment>
+          );
+        })}
       </ScrollView>
       
       <Snackbar
@@ -916,90 +885,33 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     marginTop: 8,
   },
-  themesList: {
-    marginBottom: 20,
-  },
-  themeButton: {
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-  },
-  themeButtonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    gap: 12,
-  },
-  themeTextContent: {
-    flex: 1,
-  },
-  checkmark: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  colorDotsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginRight: 12,
-  },
-  colorDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(128,128,128,0.3)',
-  },
-  gradientDotContainer: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(128,128,128,0.3)',
-    position: 'relative',
-  },
-  gradientDotHalf: {
-    position: 'absolute',
-    width: 18,
-    height: 18,
-  },
-  themeIcon: {
-    fontSize: 16,
-  },
-  themeButtonText: {
-    fontSize: 16,
+  librarySectionHeader: {
+    fontSize: 12,
     fontWeight: '600',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    opacity: 0.45,
+    marginTop: 20,
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  themesGroup: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 4,
+  },
+  themesList: {
+    marginBottom: 12,
   },
   searchContainer: {
-    marginBottom: 16,
+    marginBottom: 12,
   },
   searchInput: {
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    borderWidth: 1,
-  },
-  filterContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 16,
-    gap: 8,
-  },
-  filterButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  filterButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    fontSize: 15,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   favoriteButton: {
     padding: 4,
