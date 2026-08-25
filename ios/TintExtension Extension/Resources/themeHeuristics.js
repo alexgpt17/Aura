@@ -36,9 +36,14 @@
     var MODAL_MIN_HEIGHT = 80;
     var MODAL_MIN_TEXT = 8;
     var SEARCH_CHROME_MAX_HEIGHT = 180;
-    var TOP_CHROME_MAX_VH = 0.5;
+    var TOP_CHROME_MAX_VH = 0.32;
     var TOP_CHROME_MIN_HEIGHT = 40;
     var TOP_CHROME_MIN_WIDTH_FRAC = 0.7;
+    var COVERING_SHEET_MIN_VW = 0.75;
+    var COVERING_SHEET_MIN_VH = 0.45;
+    var STICKY_SKIP_TAGS = {
+        IFRAME: 1, VIDEO: 1, CANVAS: 1,
+    };
 
     function parseCssRgb(color) {
         if (!color || color === 'transparent') return null;
@@ -102,6 +107,27 @@
             rect.height >= vh * 0.85 &&
             rect.width >= vw * 0.85
         );
+    }
+
+    /**
+     * Visible intersection with the viewport is a wide, tall sheet — cookie
+     * CMP wrappers, click-catchers, `top: header; bottom: 0` locks, iOS
+     * 100dvh vs innerHeight mismatch. Not a chrome bar (typically < 180px).
+     * Raw layout height is ignored so a tall sticky hero still counts when
+     * it occupies the screen.
+     */
+    function isCoveringSheetRect(rect, vh, vw) {
+        if (!rect || vh <= 0 || vw <= 0) return false;
+        var width = rect.width || 0;
+        var height = rect.height || 0;
+        if (width < 1 || height < 1) return false;
+        var top = typeof rect.top === 'number' ? rect.top : 0;
+        var left = typeof rect.left === 'number' ? rect.left : 0;
+        var interW = Math.min(left + width, vw) - Math.max(left, 0);
+        var interH = Math.min(top + height, vh) - Math.max(top, 0);
+        if (interW <= 0 || interH <= 0) return false;
+        return interW >= vw * COVERING_SHEET_MIN_VW
+            && interH >= vh * COVERING_SHEET_MIN_VH;
     }
 
     function isDialogOrPopover(el) {
@@ -277,7 +303,16 @@
         var width = info.width || 0;
         var height = info.height || 0;
         if (width < MODAL_MIN_WIDTH || height < MODAL_MIN_HEIGHT) return false;
-        if (isFullViewportRect({ width: width, height: height }, info.vh || 0, info.vw || 0)) {
+        var sheetRect = {
+            width: width,
+            height: height,
+            top: typeof info.top === 'number' ? info.top : 0,
+            left: typeof info.left === 'number' ? info.left : 0,
+        };
+        if (isFullViewportRect(sheetRect, info.vh || 0, info.vw || 0)) {
+            return false;
+        }
+        if (isCoveringSheetRect(sheetRect, info.vh || 0, info.vw || 0)) {
             return false;
         }
         if ((info.textLength || 0) < MODAL_MIN_TEXT) return false;
@@ -328,6 +363,8 @@
             opacity: style.opacity,
             width: rect.width,
             height: rect.height,
+            top: rect.top,
+            left: rect.left,
             vh: vp.vh,
             vw: vp.vw,
             textLength: text.length,
@@ -486,23 +523,28 @@
     /**
      * @param {{ position?: string, mask?: string, visibility?: string,
      *   opacity?: string, overlayChrome?: boolean, width?: number, height?: number,
-     *   vh?: number, vw?: number }} info
+     *   top?: number, left?: number, vh?: number, vw?: number, tag?: string }} info
      */
     function shouldSkipStickyElement(info) {
         if (!info) return true;
         var pos = info.position;
         if (pos !== 'fixed' && pos !== 'sticky') return true;
+        var tag = (info.tag || '').toUpperCase();
+        if (STICKY_SKIP_TAGS[tag]) return true;
         if (info.mask && info.mask !== 'none') return true;
         if (info.visibility === 'hidden' || info.opacity === '0') return true;
         if (info.overlayChrome) return true;
         if ((info.width || 0) < 1 || (info.height || 0) < 1) return true;
-        if (
-            isFullViewportRect(
-                { width: info.width || 0, height: info.height || 0 },
-                info.vh || 0,
-                info.vw || 0
-            )
-        ) {
+        var sheetRect = {
+            width: info.width || 0,
+            height: info.height || 0,
+            top: typeof info.top === 'number' ? info.top : 0,
+            left: typeof info.left === 'number' ? info.left : 0,
+        };
+        if (isFullViewportRect(sheetRect, info.vh || 0, info.vw || 0)) {
+            return true;
+        }
+        if (isCoveringSheetRect(sheetRect, info.vh || 0, info.vw || 0)) {
             return true;
         }
         return false;
@@ -750,6 +792,7 @@
         isLightContentSurface: isLightContentSurface,
         isLowChroma: isLowChroma,
         isFullViewportRect: isFullViewportRect,
+        isCoveringSheetRect: isCoveringSheetRect,
         isOverlayRoot: isOverlayRoot,
         isOverlayChrome: isOverlayChrome,
         isFloatingBannerRoot: isFloatingBannerRoot,

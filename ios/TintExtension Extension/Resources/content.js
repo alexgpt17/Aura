@@ -19,6 +19,8 @@
     const shellModified = new Set();
     // Top app-bar / search chrome we painted or cleared.
     const chromeModified = new Set();
+    // Google Ask-anything pill ancestors / decorative siblings we cleared.
+    const askAnythingModified = new Set();
     let ignoreMutations = false;
     let ignoreMutationsTimer = null;
     let scrollListenerAttached = false;
@@ -58,6 +60,21 @@
         } catch (e) {
             return false;
         }
+    }
+
+    /** Prefer the visual viewport so iOS toolbar chrome cannot shrink a
+     *  `inset:0` layer below the covering-sheet / fullscreen thresholds. */
+    function passViewport() {
+        try {
+            const vv = window.visualViewport;
+            if (vv && vv.height > 0 && vv.width > 0) {
+                return { vh: vv.height, vw: vv.width };
+            }
+        } catch (e) {}
+        return {
+            vh: window.innerHeight || 0,
+            vw: window.innerWidth || 0,
+        };
     }
 
     /** Images tab: legacy tbm=isch or current udm=2 unified search. */
@@ -212,10 +229,8 @@
                     color: var(--aura-text) !important;
                 }
 
-                /* Expanded AI "Ask anything" composer: outer chip is often
-                   role=button with Google's dark fill. Clear background only
-                   (same as the main Search field) so the theme shows through.
-                   Do not paint --aura-bg; that was the inner highlight. */
+                /* Ask-anything field text only — outer chip cleared in JS
+                   (rethemeAskAnythingComposer). Do not paint --aura-bg. */
                 :is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
                     [placeholder*="Ask anything" i],
                     [aria-label*="Ask anything" i],
@@ -224,57 +239,6 @@
                 ):not(.gLFyf):not([aria-label*="Search" i]) {
                     background-image: none !important;
                     color: var(--aura-text) !important;
-                }
-                [role="button"]:has(:is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
-                    [placeholder*="Ask anything" i],
-                    [aria-label*="Ask anything" i],
-                    [placeholder*="Ask" i],
-                    [aria-label*="Ask" i]
-                ):not(.gLFyf):not([aria-label*="Search" i])),
-                div:has(> [role="button"]:has(:is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
-                    [placeholder*="Ask anything" i],
-                    [aria-label*="Ask anything" i],
-                    [placeholder*="Ask" i],
-                    [aria-label*="Ask" i]
-                ):not(.gLFyf):not([aria-label*="Search" i]))),
-                div:has(> :is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
-                    [placeholder*="Ask anything" i],
-                    [aria-label*="Ask anything" i],
-                    [placeholder*="Ask" i],
-                    [aria-label*="Ask" i]
-                ):not(.gLFyf):not([aria-label*="Search" i])),
-                div:has(> div > :is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
-                    [placeholder*="Ask anything" i],
-                    [aria-label*="Ask anything" i],
-                    [placeholder*="Ask" i],
-                    [aria-label*="Ask" i]
-                ):not(.gLFyf):not([aria-label*="Search" i])),
-                #m-x-content [role="button"]:has(:is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
-                    [placeholder*="Ask anything" i],
-                    [aria-label*="Ask anything" i],
-                    [placeholder*="Ask" i],
-                    [aria-label*="Ask" i]
-                ):not(.gLFyf):not([aria-label*="Search" i])),
-                #m-x-content div:has(> :is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
-                    [placeholder*="Ask anything" i],
-                    [aria-label*="Ask anything" i],
-                    [placeholder*="Ask" i],
-                    [aria-label*="Ask" i]
-                ):not(.gLFyf):not([aria-label*="Search" i])),
-                #rso [role="button"]:has(:is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
-                    [placeholder*="Ask anything" i],
-                    [aria-label*="Ask anything" i],
-                    [placeholder*="Ask" i],
-                    [aria-label*="Ask" i]
-                ):not(.gLFyf):not([aria-label*="Search" i])),
-                #rso div:has(> :is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
-                    [placeholder*="Ask anything" i],
-                    [aria-label*="Ask anything" i],
-                    [placeholder*="Ask" i],
-                    [aria-label*="Ask" i]
-                ):not(.gLFyf):not([aria-label*="Search" i])) {
-                    background-color: transparent !important;
-                    background-image: none !important;
                 }
             `
         },
@@ -856,8 +820,7 @@
 
     function rethemeBrightSurfaces(root) {
         if (!root || !currentTheme || !H) return;
-        const vh = window.innerHeight || 0;
-        const vw = window.innerWidth || 0;
+        const { vh, vw } = passViewport();
         const elements = collectElements(root);
         const limit = Math.min(elements.length, WALK_SLICE);
         for (let i = 0; i < limit; i++) {
@@ -868,19 +831,43 @@
     // 3c. OVERLAY / POPUP SAFETY NET
     // Sticky pass skips dialogs (hidden cookie sheets, etc.). Visible modals
     // still need an opaque sheet so theming cannot leave them glass-like.
-    // Full-viewport scrims are left transparent (Maps / cookie-curtain guard);
-    // their inner card is painted instead.
+    // Full-viewport and covering-sheet scrims are left transparent (Maps /
+    // cookie-curtain guard); their inner card is painted instead.
     function paintOverlaySheet(el) {
         el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
         el.style.setProperty('mix-blend-mode', 'normal', 'important');
         overlayModified.add(el);
     }
 
+    function isOverlayCoveringSheet(rect, vh, vw) {
+        if (!rect) return false;
+        if (H.isFullViewportRect(rect, vh, vw)) return true;
+        return !!(H.isCoveringSheetRect && H.isCoveringSheetRect(rect, vh, vw));
+    }
+
+    function paintOverlayScrimAsTransparent(el, vh, vw) {
+        // Google Images viewer is a full-screen second page, not a cookie
+        // scrim. Leave it opaque so the mosaic cannot show through. Inline
+        // !important is required: a stylesheet SITE_FIX loses to this pass's
+        // previous transparent write.
+        if (isGoogleImagesPage()) {
+            el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
+            el.style.setProperty('background-image', 'none', 'important');
+            overlayModified.add(el);
+            return;
+        }
+        el.style.setProperty('background-color', 'transparent', 'important');
+        overlayModified.add(el);
+        const inner = H.findInnerModalCard
+            ? H.findInnerModalCard(el, getComputedStyle, { vh, vw })
+            : null;
+        if (inner) paintOverlaySheet(inner);
+    }
+
     function reopaqueOverlays(root) {
         if (!root || !currentTheme || !H) return;
 
-        const vh = window.innerHeight || 0;
-        const vw = window.innerWidth || 0;
+        const { vh, vw } = passViewport();
         const seen = new Set();
         const scope = root.nodeType === 1 ? root : document.documentElement;
         const candidates = [];
@@ -912,23 +899,8 @@
             try { rect = el.getBoundingClientRect(); } catch (e) { return; }
             if (rect.width < 1 || rect.height < 1) return;
 
-            if (H.isFullViewportRect(rect, vh, vw)) {
-                // Google Images viewer is a full-screen second page, not a
-                // cookie scrim. Leave it opaque so the mosaic cannot show
-                // through. Inline !important is required: a stylesheet
-                // SITE_FIX loses to this pass's previous transparent write.
-                if (isGoogleImagesPage()) {
-                    el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
-                    el.style.setProperty('background-image', 'none', 'important');
-                    overlayModified.add(el);
-                    return;
-                }
-                el.style.setProperty('background-color', 'transparent', 'important');
-                overlayModified.add(el);
-                const inner = H.findInnerModalCard
-                    ? H.findInnerModalCard(el, getComputedStyle, { vh, vw })
-                    : null;
-                if (inner) paintOverlaySheet(inner);
+            if (isOverlayCoveringSheet(rect, vh, vw)) {
+                paintOverlayScrimAsTransparent(el, vh, vw);
                 return;
             }
 
@@ -950,19 +922,8 @@
             let rect;
             try { rect = el.getBoundingClientRect(); } catch (e) { return; }
             if (rect.width < 1 || rect.height < 1) return;
-            if (H.isFullViewportRect(rect, vh, vw)) {
-                if (isGoogleImagesPage()) {
-                    el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
-                    el.style.setProperty('background-image', 'none', 'important');
-                    overlayModified.add(el);
-                    return;
-                }
-                el.style.setProperty('background-color', 'transparent', 'important');
-                overlayModified.add(el);
-                const inner = H.findInnerModalCard
-                    ? H.findInnerModalCard(el, getComputedStyle, { vh, vw })
-                    : null;
-                if (inner) paintOverlaySheet(inner);
+            if (isOverlayCoveringSheet(rect, vh, vw)) {
+                paintOverlayScrimAsTransparent(el, vh, vw);
                 return;
             }
             paintOverlaySheet(el);
@@ -999,8 +960,7 @@
         revertGoogleImagesMosaic();
         if (!isGoogleImagesPage() || !H) return;
 
-        const vh = window.innerHeight || 0;
-        const vw = window.innerWidth || 0;
+        const { vh, vw } = passViewport();
         const scope = root && root.nodeType === 1 ? root : document.documentElement;
         const covers = new Set();
 
@@ -1079,9 +1039,10 @@
     // The universal transparency rule (getFullStyleSheet) strips backgrounds off
     // sticky/fixed headers and bars, so page content scrolls through them. CSS
     // can't select by computed position, so re-opaque ONLY chrome-like bars here.
-    // Full-viewport fixed overlays (HubSpot anchors, cookie modals, etc.) must
-    // NOT be painted — doing so creates a solid theme-colored curtain over the
-    // page (seen on usopen.com / wta.com) with content only peeking on overscroll.
+    // Full-viewport and covering-sheet fixed overlays (HubSpot anchors, cookie
+    // modals, fox5-class CMP wrappers, etc.) must NOT be painted — doing so
+    // creates a solid theme-colored curtain over the page (seen on usopen.com /
+    // wta.com / fox5sandiego.com) with content only peeking on overscroll.
     // Visible dialogs are handled by reopaqueOverlays instead.
     function visitStickyElement(el, vh, vw) {
         if (!el || el.nodeType !== 1 || !H) return;
@@ -1096,8 +1057,11 @@
             visibility: style.visibility,
             opacity: style.opacity,
             overlayChrome: H.isOverlayChrome(el),
+            tag: el.tagName,
             width: rect.width,
             height: rect.height,
+            top: rect.top,
+            left: rect.left,
             vh,
             vw,
         })) {
@@ -1109,13 +1073,101 @@
 
     function reopaqueStickyFixed(root) {
         if (!root || !currentTheme || !H) return;
-        const vh = window.innerHeight || 0;
-        const vw = window.innerWidth || 0;
+        const { vh, vw } = passViewport();
         const elements = collectElements(root);
         const limit = Math.min(elements.length, WALK_SLICE);
         for (let i = 0; i < limit; i++) {
             visitStickyElement(elements[i], vh, vw);
         }
+    }
+
+    // Google-only: clear dark Ask-anything pill shells that CSS :has misses.
+    // Walk ancestors of the Ask field and empty previous siblings with an
+    // opaque fill (decorative chip layers). Never paint --aura-bg / surface.
+    function clearAskAnythingFill(el) {
+        if (!el || el.nodeType !== 1) return;
+        el.style.setProperty('background-color', 'transparent', 'important');
+        el.style.setProperty('background-image', 'none', 'important');
+        askAnythingModified.add(el);
+    }
+
+    function isAskAnythingField(el) {
+        if (!el || el.nodeType !== 1) return false;
+        if (el.classList && el.classList.contains('gLFyf')) return false;
+        const aria = String(el.getAttribute('aria-label') || '');
+        if (/search/i.test(aria)) return false;
+        const ph = String(el.getAttribute('placeholder') || '');
+        if (/ask\s+anything/i.test(ph) || /ask\s+anything/i.test(aria)) return true;
+        if (/^ask$/i.test(ph.trim()) || /^ask$/i.test(aria.trim())) return true;
+        if (/\bask\b/i.test(ph) || /\bask\b/i.test(aria)) {
+            // Broad "Ask" match, but skip plain Search fields already gated.
+            return !/search/i.test(ph);
+        }
+        return false;
+    }
+
+    function clearAskAnythingDecorativeSibling(sib) {
+        if (!sib || sib.nodeType !== 1) return;
+        let text = '';
+        try { text = String(sib.textContent || '').replace(/\s+/g, ' ').trim(); } catch (e) {}
+        if (text.length > 0) return;
+        if (sib.children && sib.children.length > 0) return;
+        let style;
+        try { style = getComputedStyle(sib); } catch (e2) { return; }
+        if (!style || style.visibility === 'hidden' || style.opacity === '0') return;
+        const parsed = H && H.parseCssRgb ? H.parseCssRgb(style.backgroundColor) : null;
+        const hasOpaque = !!(parsed && parsed.a >= 0.5);
+        const hasGradient = !!(H && H.isGradientBackgroundImage
+            && H.isGradientBackgroundImage(style.backgroundImage));
+        if (!hasOpaque && !hasGradient) return;
+        clearAskAnythingFill(sib);
+    }
+
+    function rethemeAskAnythingComposer(root) {
+        if (!root || !currentTheme || !isGoogleHost()) return;
+        const scope = root.nodeType === 1 ? root : document.documentElement;
+        let fields;
+        try {
+            fields = scope.querySelectorAll(
+                'textarea, input, [contenteditable="true"], [role="textbox"]'
+            );
+        } catch (e) {
+            return;
+        }
+        fields.forEach(field => {
+            if (!isAskAnythingField(field)) return;
+            clearAskAnythingFill(field);
+            let node = field;
+            for (let depth = 0; depth < 8; depth++) {
+                const parent = node.parentElement;
+                if (!parent || parent === document.body || parent === document.documentElement) {
+                    break;
+                }
+                let rect;
+                try { rect = parent.getBoundingClientRect(); } catch (e2) { break; }
+                if (rect.height > 180) break;
+                if (rect.height >= 36 && rect.width >= 160) {
+                    clearAskAnythingFill(parent);
+                }
+                // Decorative empty previous siblings behind the field / pill.
+                let sib = node.previousElementSibling;
+                while (sib) {
+                    clearAskAnythingDecorativeSibling(sib);
+                    sib = sib.previousElementSibling;
+                }
+                node = parent;
+            }
+        });
+    }
+
+    function revertAskAnythingComposer() {
+        askAnythingModified.forEach(el => {
+            try {
+                el.style.removeProperty('background-color');
+                el.style.removeProperty('background-image');
+            } catch (e) {}
+        });
+        askAnythingModified.clear();
     }
 
     // 3d-bis. TOP CHROME — headers/search bars that are not sticky/fixed yet
@@ -1126,8 +1178,7 @@
     function reopaqueTopChrome(root) {
         if (!root || !currentTheme || !H || !H.isTopChromeBar) return;
 
-        const vh = window.innerHeight || 0;
-        const vw = window.innerWidth || 0;
+        const { vh, vw } = passViewport();
         const scope = root.nodeType === 1 ? root : document.documentElement;
         const painted = new Set();
 
@@ -1287,8 +1338,7 @@
 
     function rethemeKnownShells(root) {
         if (!root || !currentTheme || !H) return;
-        const vh = window.innerHeight || 0;
-        const vw = window.innerWidth || 0;
+        const { vh, vw } = passViewport();
         const scope = root.nodeType === 1 ? root : document.documentElement;
         try {
             const listed = scope.querySelectorAll('#app, #app-mount, #root, #__next, #__nuxt');
@@ -1298,8 +1348,7 @@
 
     function rethemeOpaqueShells(root) {
         if (!root || !currentTheme || !H || !H.shouldClearShellBackground) return;
-        const vh = window.innerHeight || 0;
-        const vw = window.innerWidth || 0;
+        const { vh, vw } = passViewport();
         rethemeKnownShells(root);
         const elements = collectElements(root);
         const limit = Math.min(elements.length, WALK_SLICE);
@@ -1323,12 +1372,12 @@
         promoteEngineStylesheet();
         handleShadowDOM(root);
 
-        const vh = window.innerHeight || 0;
-        const vw = window.innerWidth || 0;
+        const { vh, vw } = passViewport();
         rethemeKnownShells(root);
         reopaqueOverlays(root);
         paintGoogleImagesViewer(root);
         reopaqueTopChrome(root);
+        rethemeAskAnythingComposer(root);
 
         const overlaySeen = new Set();
         const skipContrast = isActiveSplitTheme(currentTheme);
@@ -1489,6 +1538,7 @@
             } catch (e) {}
         });
         chromeModified.clear();
+        revertAskAnythingComposer();
         document.querySelectorAll('style[data-aura-shadow]').forEach(s => {
             try { s.remove(); } catch (e) {}
         });

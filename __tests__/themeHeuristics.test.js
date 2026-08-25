@@ -166,6 +166,18 @@ describe('shouldSkipStickyElement', () => {
       vh: 800,
       vw: 400,
     })).toBe(false);
+    expect(H.shouldSkipStickyElement({
+      position: 'sticky',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 400,
+      height: 130,
+      top: 0,
+      left: 0,
+      vh: 800,
+      vw: 400,
+    })).toBe(false);
   });
 
   test('skips full-viewport curtains and overlay chrome', () => {
@@ -192,6 +204,60 @@ describe('shouldSkipStickyElement', () => {
     })).toBe(true);
   });
 
+  test('skips covering sheets below the 85% fullscreen gate', () => {
+    // 100% × 80% — fox5 / CMP wrapper class of curtain
+    expect(H.shouldSkipStickyElement({
+      position: 'fixed',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 400,
+      height: 640,
+      top: 0,
+      left: 0,
+      vh: 800,
+      vw: 400,
+    })).toBe(true);
+    // Visible intersection of a tall sticky hero still covering the fold
+    expect(H.shouldSkipStickyElement({
+      position: 'sticky',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 400,
+      height: 1600,
+      top: -200,
+      left: 0,
+      vh: 800,
+      vw: 400,
+    })).toBe(true);
+  });
+
+  test('skips fixed media shells', () => {
+    expect(H.shouldSkipStickyElement({
+      position: 'fixed',
+      tag: 'IFRAME',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 300,
+      height: 80,
+      vh: 800,
+      vw: 400,
+    })).toBe(true);
+    expect(H.shouldSkipStickyElement({
+      position: 'fixed',
+      tag: 'VIDEO',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 300,
+      height: 80,
+      vh: 800,
+      vw: 400,
+    })).toBe(true);
+  });
+
   test('skips invisible and non-fixed/sticky', () => {
     expect(H.shouldSkipStickyElement({
       position: 'relative', width: 100, height: 40, vh: 800, vw: 400,
@@ -205,6 +271,20 @@ describe('shouldSkipStickyElement', () => {
       vh: 800,
       vw: 400,
     })).toBe(true);
+  });
+});
+
+describe('isCoveringSheetRect', () => {
+  test('matches wide tall visible sheets', () => {
+    expect(H.isCoveringSheetRect(
+      { width: 400, height: 640, top: 0, left: 0 }, 800, 400
+    )).toBe(true);
+    expect(H.isCoveringSheetRect(
+      { width: 100, height: 640, top: 0, left: 0 }, 800, 400
+    )).toBe(false);
+    expect(H.isCoveringSheetRect(
+      { width: 400, height: 200, top: 0, left: 0 }, 800, 400
+    )).toBe(false);
   });
 });
 
@@ -241,6 +321,17 @@ describe('isTopChromeBarInfo', () => {
     expect(H.isTopChromeBarInfo({
       ...bar, tag: 'DIV', hasSearchField: false, role: null,
     })).toBe(false);
+  });
+
+  test('rejects tall headers beyond TOP_CHROME_MAX_VH (0.32)', () => {
+    // ~45% of 800px — too tall for app-bar chrome
+    expect(H.isTopChromeBarInfo({
+      ...bar, height: 360,
+    })).toBe(false);
+    // Still within 0.32 * 800 = 256
+    expect(H.isTopChromeBarInfo({
+      ...bar, height: 240,
+    })).toBe(true);
   });
 });
 
@@ -282,6 +373,21 @@ describe('isLikelyModalCardInfo', () => {
     expect(H.isLikelyModalCardInfo({
       ...base, width: 400, height: 800,
     })).toBe(false);
+  });
+
+  test('rejects a covering-sheet wrapper that is not quite fullscreen', () => {
+    expect(H.isLikelyModalCardInfo({
+      ...base, width: 400, height: 640, top: 0, left: 0,
+    })).toBe(false);
+    expect(H.isInnerModalCardInfo({
+      ...base, width: 400, height: 640, top: 0, left: 0,
+    })).toBe(false);
+  });
+
+  test('accepts a mid-size bottom sheet under a scrim', () => {
+    expect(H.isInnerModalCardInfo({
+      ...base, position: 'relative', width: 360, height: 320, top: 400, left: 20,
+    })).toBe(true);
   });
 
   test('rejects a short sticky header', () => {
