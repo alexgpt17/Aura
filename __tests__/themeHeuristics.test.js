@@ -109,6 +109,28 @@ describe('shouldSkipBrightElement', () => {
     })).toBe(false);
   });
 
+  test('still skips small role=button chips', () => {
+    expect(H.shouldSkipBrightElement({
+      tag: 'DIV', role: 'button', width: 100, height: 40,
+    })).toBe(true);
+    expect(H.shouldSkipBrightElement({
+      tag: 'DIV', role: 'button', width: 80, height: 36, hasSearchField: true,
+    })).toBe(true);
+  });
+
+  test('does not skip large role=button composer shells with a search field', () => {
+    expect(H.shouldSkipBrightElement({
+      tag: 'DIV',
+      role: 'button',
+      hasSearchField: true,
+      width: 320,
+      height: 52,
+      visibility: 'visible',
+      opacity: '1',
+      mask: 'none',
+    })).toBe(false);
+  });
+
   test('never clears html or body', () => {
     expect(H.shouldSkipBrightElement({
       tag: 'HTML', width: 400, height: 800,
@@ -362,6 +384,22 @@ describe('background-image classification', () => {
     expect(H.shouldClearShellBackground({ ...rootGrad, tag: 'HTML', opaqueFill: true })).toBe(false);
     expect(H.shouldClearShellBackground({ ...rootGrad, tag: 'BODY', opaqueFill: true })).toBe(false);
   });
+
+  test('does not clear AI Overview collapse-fade overlays', () => {
+    const fade = {
+      tag: 'DIV',
+      width: 358,
+      height: 120,
+      vh: 844,
+      vw: 390,
+      backgroundImage: 'linear-gradient(transparent, rgb(34, 36, 42))',
+      opaqueFill: false,
+    };
+    expect(H.shouldClearLayoutGradient(fade)).toBe(true);
+    expect(H.shouldClearLayoutGradient({ ...fade, collapseFade: true })).toBe(false);
+    expect(H.shouldClearShellBackground(fade)).toBe(true);
+    expect(H.shouldClearShellBackground({ ...fade, collapseFade: true })).toBe(false);
+  });
 });
 
 describe('SPA shell helpers', () => {
@@ -574,5 +612,85 @@ describe('light-theme / stacked-label helpers', () => {
     expect(H.isStackedDuplicateLabel(b)).toBe(true);
     expect(H.isStackedDuplicateLabel(other)).toBe(false);
     parent.remove();
+  });
+
+  test('painted aria-hidden host stats are not stacked duplicate labels', () => {
+    const card = document.createElement('div');
+    const srOnly = document.createElement('span');
+    srOnly.textContent = '466 reviews';
+    const visual = document.createElement('div');
+    visual.setAttribute('aria-hidden', 'true');
+    const num = document.createElement('span');
+    num.textContent = '466';
+    const label = document.createElement('span');
+    label.textContent = 'Reviews';
+    visual.appendChild(num);
+    visual.appendChild(label);
+    card.appendChild(srOnly);
+    card.appendChild(visual);
+    document.body.appendChild(card);
+    expect(H.isStackedDuplicateLabel(visual)).toBe(false);
+    expect(H.isStackedDuplicateLabel(num)).toBe(false);
+    expect(H.isStackedDuplicateLabel(label)).toBe(false);
+    card.remove();
+  });
+
+  test('painted aria-hidden icon wrappers are not stacked duplicate labels', () => {
+    const button = document.createElement('button');
+    button.setAttribute('aria-label', 'Share');
+    const wrap = document.createElement('span');
+    wrap.setAttribute('aria-hidden', 'true');
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    wrap.appendChild(svg);
+    button.appendChild(wrap);
+    document.body.appendChild(button);
+    expect(H.isStackedDuplicateLabel(wrap)).toBe(false);
+    button.remove();
+  });
+
+  test('isUnpaintedForContrast skips hidden and zero-size, not visible aria-hidden', () => {
+    expect(H.isUnpaintedForContrast({
+      visibility: 'visible',
+      opacity: '1',
+      display: 'block',
+      width: 46,
+      height: 16,
+    })).toBe(false);
+    expect(H.isUnpaintedForContrast({
+      visibility: 'hidden',
+      opacity: '1',
+      display: 'block',
+      width: 46,
+      height: 16,
+    })).toBe(true);
+    expect(H.isUnpaintedForContrast({
+      visibility: 'visible',
+      opacity: '0',
+      display: 'block',
+      width: 46,
+      height: 16,
+    })).toBe(true);
+    expect(H.isUnpaintedForContrast({
+      visibility: 'visible',
+      opacity: '1',
+      display: 'none',
+      width: 46,
+      height: 16,
+    })).toBe(true);
+    expect(H.isUnpaintedForContrast({
+      visibility: 'visible',
+      opacity: '1',
+      display: 'block',
+      width: 0,
+      height: 16,
+    })).toBe(true);
+  });
+
+  test('Airbnb-dark body gray on a dark theme background needs a readable rewrite', () => {
+    const bodyGray = H.parseCssRgb('rgb(34, 34, 34)');
+    const maroon = H.parseHexColor('#300005');
+    expect(H.hasPoorContrast(bodyGray, maroon, 3.0)).toBe(true);
+    expect(H.pickReadableAgainstSurface(maroon, '#F5D0D8', 3.0).toLowerCase())
+      .toBe('#f5d0d8');
   });
 });

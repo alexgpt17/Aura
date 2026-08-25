@@ -403,14 +403,22 @@
      * @param {{ tag?: string, role?: string|null, ariaModal?: string|null,
      *   className?: string, inSvg?: boolean, mask?: string, visibility?: string,
      *   opacity?: string, width?: number, height?: number, overlayRoot?: boolean,
-     *   insideFloatingBanner?: boolean, modalCard?: boolean }} info
+     *   insideFloatingBanner?: boolean, modalCard?: boolean,
+     *   hasSearchField?: boolean }} info
      */
     function shouldSkipBrightElement(info) {
         if (!info) return true;
         var tag = (info.tag || '').toUpperCase();
         if (tag === 'HTML' || tag === 'BODY') return true;
         if (BRIGHT_SKIP_TAGS[tag]) return true;
-        if (info.role === 'button') return true;
+        if (info.role === 'button') {
+            // Large Ask/search composer shells are role=button but must still
+            // have their white fill cleared. Small chips / Reserve stay skipped.
+            var composer = !!info.hasSearchField
+                && (info.width || 0) >= MODAL_MIN_WIDTH
+                && (info.height || 0) >= TOP_CHROME_MIN_HEIGHT;
+            if (!composer) return true;
+        }
         if (info.className && /icon/i.test(info.className)) return true;
         if (info.inSvg) return true;
         if (info.mask && info.mask !== 'none') return true;
@@ -629,6 +637,21 @@
         return false;
     }
 
+    /**
+     * True when contrast should not rewrite this node: it is not painted for
+     * sighted users. Visible aria-hidden presentational copies (Airbnb host
+     * stats, icon SVGs using currentColor) must NOT be skipped here.
+     */
+    function isUnpaintedForContrast(info) {
+        if (!info) return true;
+        if (info.visibility === 'hidden') return true;
+        if (info.display === 'none') return true;
+        var opacity = parseFloat(info.opacity);
+        if (!isNaN(opacity) && opacity === 0) return true;
+        if ((info.width || 0) < 1 || (info.height || 0) < 1) return true;
+        return false;
+    }
+
     function isThemeBackgroundLight(hex) {
         var c = parseHexColor(hex);
         if (!c) return false;
@@ -702,6 +725,9 @@
         if (tag === 'HTML' || tag === 'BODY') return false;
         if (info.overlayRoot || info.overlayChrome) return false;
         if (info.isControl) return false;
+        // Google AI Overview collapse-fade: a large absolute gradient over
+        // clipped text. Clearing it makes "Show more" glass.
+        if (info.collapseFade) return false;
         if (!isGradientBackgroundImage(info.backgroundImage)) return false;
         if (isPhotographicBackgroundImage(info.backgroundImage)) return false;
         return isLargeLayoutShell(info) || isLargeLayoutNode(info) || isCustomLayoutElement(info);
@@ -733,6 +759,7 @@
         isInnerModalCardInfo: isInnerModalCardInfo,
         isSearchChrome: isSearchChrome,
         isSearchChromeInfo: isSearchChromeInfo,
+        elementHasSearchField: elementHasSearchField,
         isTopChromeBar: isTopChromeBar,
         isTopChromeBarInfo: isTopChromeBarInfo,
         findInnerModalCard: findInnerModalCard,
@@ -744,6 +771,7 @@
         isLargeLayoutNode: isLargeLayoutNode,
         isCustomElementTag: isCustomElementTag,
         isStackedDuplicateLabel: isStackedDuplicateLabel,
+        isUnpaintedForContrast: isUnpaintedForContrast,
         isThemeBackgroundLight: isThemeBackgroundLight,
         isCustomLayoutElement: isCustomLayoutElement,
         isGradientBackgroundImage: isGradientBackgroundImage,

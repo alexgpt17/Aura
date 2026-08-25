@@ -180,6 +180,102 @@
                 body:has([aria-modal="true"]) #islmp {
                     visibility: hidden !important;
                 }
+
+                /* AI Overview collapse-fade: empty overlay whose following
+                   sibling (source chips may sit in between on mobile) contains
+                   the expander. Adjacent `+` misses that stack. SITE_FIX only
+                   — do not restore this gradient in the shared JS walk. */
+                div:has(~ div [aria-controls="m-x-content"]):empty,
+                div:has(~ div [aria-label*="Show more AI" i]):empty,
+                #rso div:has(~ div [aria-controls="m-x-content"]):empty,
+                #rso div:has(~ div [aria-label*="Show more AI" i]):empty {
+                    background-color: transparent !important;
+                    background-image: linear-gradient(transparent, var(--aura-bg)) !important;
+                }
+                div:has(> [aria-controls="m-x-content"]),
+                [aria-controls="m-x-content"],
+                [aria-label*="Show more AI" i],
+                #rso div:has(> [aria-controls="m-x-content"]),
+                #rso [aria-controls="m-x-content"],
+                #rso [aria-label*="Show more AI" i] {
+                    background-color: var(--aura-bg) !important;
+                    color: var(--aura-text) !important;
+                }
+
+                /* Expanded AI Overview query chip ("You said: …") is a chat
+                   bubble whose hashed fill loses to universal div-transparency. */
+                #m-x-content div:has(> span[role="heading"]) {
+                    background-color: var(--aura-surface) !important;
+                    color: var(--aura-text) !important;
+                }
+                #m-x-content div:has(> span[role="heading"]) span {
+                    color: var(--aura-text) !important;
+                }
+
+                /* Expanded AI "Ask anything" composer: outer chip is often
+                   role=button with Google's dark fill. Clear background only
+                   (same as the main Search field) so the theme shows through.
+                   Do not paint --aura-bg; that was the inner highlight. */
+                :is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
+                    [placeholder*="Ask anything" i],
+                    [aria-label*="Ask anything" i],
+                    [placeholder*="Ask" i],
+                    [aria-label*="Ask" i]
+                ):not(.gLFyf):not([aria-label*="Search" i]) {
+                    background-image: none !important;
+                    color: var(--aura-text) !important;
+                }
+                [role="button"]:has(:is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
+                    [placeholder*="Ask anything" i],
+                    [aria-label*="Ask anything" i],
+                    [placeholder*="Ask" i],
+                    [aria-label*="Ask" i]
+                ):not(.gLFyf):not([aria-label*="Search" i])),
+                div:has(> [role="button"]:has(:is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
+                    [placeholder*="Ask anything" i],
+                    [aria-label*="Ask anything" i],
+                    [placeholder*="Ask" i],
+                    [aria-label*="Ask" i]
+                ):not(.gLFyf):not([aria-label*="Search" i]))),
+                div:has(> :is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
+                    [placeholder*="Ask anything" i],
+                    [aria-label*="Ask anything" i],
+                    [placeholder*="Ask" i],
+                    [aria-label*="Ask" i]
+                ):not(.gLFyf):not([aria-label*="Search" i])),
+                div:has(> div > :is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
+                    [placeholder*="Ask anything" i],
+                    [aria-label*="Ask anything" i],
+                    [placeholder*="Ask" i],
+                    [aria-label*="Ask" i]
+                ):not(.gLFyf):not([aria-label*="Search" i])),
+                #m-x-content [role="button"]:has(:is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
+                    [placeholder*="Ask anything" i],
+                    [aria-label*="Ask anything" i],
+                    [placeholder*="Ask" i],
+                    [aria-label*="Ask" i]
+                ):not(.gLFyf):not([aria-label*="Search" i])),
+                #m-x-content div:has(> :is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
+                    [placeholder*="Ask anything" i],
+                    [aria-label*="Ask anything" i],
+                    [placeholder*="Ask" i],
+                    [aria-label*="Ask" i]
+                ):not(.gLFyf):not([aria-label*="Search" i])),
+                #rso [role="button"]:has(:is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
+                    [placeholder*="Ask anything" i],
+                    [aria-label*="Ask anything" i],
+                    [placeholder*="Ask" i],
+                    [aria-label*="Ask" i]
+                ):not(.gLFyf):not([aria-label*="Search" i])),
+                #rso div:has(> :is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
+                    [placeholder*="Ask anything" i],
+                    [aria-label*="Ask anything" i],
+                    [placeholder*="Ask" i],
+                    [aria-label*="Ask" i]
+                ):not(.gLFyf):not([aria-label*="Search" i])) {
+                    background-color: transparent !important;
+                    background-image: none !important;
+                }
             `
         },
         {
@@ -514,13 +610,6 @@
                 color: var(--aura-link) !important;
             }
 
-            /* Unused light/dark copies Google stacks in Images viewer, etc. */
-            [aria-hidden="true"],
-            [aria-hidden="true"] * {
-                color: transparent !important;
-                -webkit-text-fill-color: transparent !important;
-            }
-
             /* Color only — do NOT paint --aura-surface. A fill here shows up as a
                highlight inside Google's search / AI "Ask anything" fields (those
                were already seamless via inherited transparency). White leftover
@@ -576,6 +665,16 @@
                 [class*="bg-stone-50"]
             ):not(button):not([role="button"]):not(input):not(select):not(textarea):not(svg):not(img):not([class*="icon" i]):not([class*="Icon"]):not([role="dialog"]):not([role="alertdialog"]):not([role="menu"]):not([role="listbox"]):not([aria-modal="true"]):not(dialog):not([popover]) {
                 background-color: transparent !important;
+            }
+
+            /* Citation / selection highlights (Google AI Overview uses
+               background-IMAGE on <mark>, which the universal color-only
+               rule never clears). Theme the wash so light text stays readable. */
+            mark {
+                background-color: var(--aura-elevated) !important;
+                background-image: none !important;
+                color: var(--aura-text) !important;
+                -webkit-text-fill-color: var(--aura-text) !important;
             }
 
             h1, h2, h3, h4, h5, h6, p, li, td, th, label, figcaption, dt, dd,
@@ -668,6 +767,23 @@
     // CSS tag/class rules lose to high-specificity or CSS-variable whites on
     // random sites. Clear near-white and low-chroma light-gray leftovers;
     // never touch controls, icons, media, dialogs, modal cards, or tiny tiles.
+
+    // Google AI Overview collapse-fade: empty overlay in the same parent as
+    // the expander. Google-only — never run this detector on other hosts.
+    function isAiOverviewCollapseFade(el) {
+        if (!isGoogleHost() || !el || el.nodeType !== 1) return false;
+        if (el.childNodes && el.childNodes.length) return false;
+        const parent = el.parentElement;
+        if (!parent || typeof parent.querySelector !== 'function') return false;
+        try {
+            return !!parent.querySelector(
+                '[aria-controls="m-x-content"], [aria-label*="Show more AI" i]'
+            );
+        } catch (e) {
+            return false;
+        }
+    }
+
     function visitBrightElement(el, vh, vw) {
         if (!el || el.nodeType !== 1 || !H || overlayModified.has(el)) return;
         if (el === document.documentElement || el === document.body) return;
@@ -684,6 +800,9 @@
         const floatingBannerRoot = H.isFloatingBannerRoot(el, getComputedStyle, { vh, vw });
         const modalCard = !!(H.isLikelyModalCard && H.isLikelyModalCard(el, getComputedStyle, { vh, vw }));
         const isControl = !!(H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[el.tagName]);
+        const hasSearchField = !!(H.elementHasSearchField && H.elementHasSearchField(el));
+        const collapseFade = isAiOverviewCollapseFade(el);
+        if (collapseFade) return;
 
         if (H.shouldSkipBrightElement({
             tag: el.tagName,
@@ -698,6 +817,7 @@
             overlayRoot,
             floatingBannerRoot,
             modalCard,
+            hasSearchField,
         })) {
             return;
         }
@@ -713,6 +833,7 @@
             overlayChrome: H.isOverlayChrome(el),
             backgroundImage: style.backgroundImage,
             isControl,
+            collapseFade,
         })) {
             el.style.setProperty('background-image', 'none', 'important');
             brightModified.add(el);
@@ -1075,18 +1196,26 @@
 
     // 3d. TEXT CONTRAST SAFETY NET — pick black/white against the visible stack.
     // Skipped for split themes so invert (white + difference) is not flattened.
+    // Painted aria-hidden copies (Airbnb host stats, currentColor icons) are
+    // rewritten; unused stacked Google Images labels are still skipped.
     function visitContrastElement(el) {
         if (!el || el.nodeType !== 1 || !H || !H.hasPoorContrast || !currentTheme) return;
         if (isActiveSplitTheme(currentTheme)) return;
         const tag = el.tagName;
         if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[tag]) return;
         if (typeof el.className === 'string' && /icon/i.test(el.className)) return;
-        if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return;
-        if (el.closest && el.closest('[aria-hidden="true"]')) return;
         if (H.isStackedDuplicateLabel && H.isStackedDuplicateLabel(el)) return;
         let style;
         try { style = getComputedStyle(el); } catch (e) { return; }
-        if (style.visibility === 'hidden' || style.opacity === '0') return;
+        let rect;
+        try { rect = el.getBoundingClientRect(); } catch (e2) { return; }
+        if (H.isUnpaintedForContrast && H.isUnpaintedForContrast({
+            visibility: style.visibility,
+            opacity: style.opacity,
+            display: style.display,
+            width: rect.width,
+            height: rect.height,
+        })) return;
         const fg = H.parseCssRgb(style.color);
         const bgParsed = H.effectiveBackground
             ? H.effectiveBackground(el, getComputedStyle, currentTheme.background)
@@ -1133,6 +1262,8 @@
 
         const parsed = H.parseCssRgb(style.backgroundColor);
         const opaqueFill = !!(parsed && parsed.a >= 0.5);
+        const collapseFade = isAiOverviewCollapseFade(el);
+        if (collapseFade) return;
         const info = {
             id: el.id,
             tag: el.tagName,
@@ -1145,6 +1276,7 @@
             backgroundImage: style.backgroundImage,
             isControl: !!(H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[el.tagName]),
             opaqueFill,
+            collapseFade,
         };
         if (!H.shouldClearShellBackground(info)) return;
 
@@ -1212,14 +1344,22 @@
             }, 50);
         }
 
+        // Contrast must run after bright/shell clears so muted spans are
+        // judged against the theme background, not a still-white ancestor.
         ignoreMutations = true;
         forEachSliced(elements, function (el) {
             visitShellElement(el, vh, vw);
             visitOverlayModalWalk(el, vh, vw, overlaySeen);
             visitBrightElement(el, vh, vw);
-            if (!skipContrast) visitContrastElement(el);
             visitStickyElement(el, vh, vw);
-        }, finish);
+        }, function () {
+            if (gen !== walkGeneration) return;
+            if (skipContrast) {
+                finish();
+                return;
+            }
+            forEachSliced(elements, visitContrastElement, finish);
+        });
     }
 
     // 4. THEME APPLICATION
