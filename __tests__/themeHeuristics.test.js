@@ -233,6 +233,85 @@ describe('shouldSkipStickyElement', () => {
     })).toBe(true);
   });
 
+  test('skips taller-than-chrome fixed layers and overlay-tier z-index', () => {
+    // Video float / mid-size promo (~40% vh) — under covering-sheet gate but
+    // taller than top-chrome; must not be painted as --aura-bg.
+    expect(H.shouldSkipStickyElement({
+      position: 'fixed',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 390,
+      height: 344,
+      top: 64,
+      left: 0,
+      vh: 844,
+      vw: 390,
+      zIndex: '1000',
+    })).toBe(true);
+    // OneSignal / OneTrust tier
+    expect(H.shouldSkipStickyElement({
+      position: 'fixed',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 390,
+      height: 178,
+      top: 0,
+      left: 0,
+      vh: 844,
+      vw: 390,
+      zIndex: '2147483647',
+    })).toBe(true);
+    // Real chrome bar still paints
+    expect(H.shouldSkipStickyElement({
+      position: 'sticky',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 390,
+      height: 130,
+      top: 0,
+      left: 0,
+      vh: 844,
+      vw: 390,
+      zIndex: '7',
+    })).toBe(false);
+  });
+
+  test('skips AMP consent / sticky-ad / popupOverlay chrome', () => {
+    expect(H.shouldSkipStickyElement({
+      position: 'fixed',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      tag: 'AMP-STICKY-AD',
+      width: 390,
+      height: 54,
+      top: 790,
+      left: 0,
+      vh: 844,
+      vw: 390,
+      zIndex: '11',
+    })).toBe(true);
+    expect(H.shouldSkipStickyElement({
+      position: 'fixed',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      tag: 'DIV',
+      id: 'myConsentFlow',
+      className: 'popupOverlay',
+      width: 390,
+      height: 200,
+      top: 0,
+      left: 0,
+      vh: 844,
+      vw: 390,
+      zIndex: 'auto',
+    })).toBe(true);
+  });
+
   test('skips fixed media shells', () => {
     expect(H.shouldSkipStickyElement({
       position: 'fixed',
@@ -798,5 +877,233 @@ describe('light-theme / stacked-label helpers', () => {
     expect(H.hasPoorContrast(bodyGray, maroon, 3.0)).toBe(true);
     expect(H.pickReadableAgainstSurface(maroon, '#F5D0D8', 3.0).toLowerCase())
       .toBe('#f5d0d8');
+  });
+});
+
+describe('isAdNetworkHost', () => {
+  test('matches GPT / safeframe and common ad networks', () => {
+    expect(H.isAdNetworkHost(
+      'dd601337fa00fdfc2c2f9bc6fab8b286.safeframe.googlesyndication.com'
+    )).toBe(true);
+    expect(H.isAdNetworkHost('googlesyndication.com')).toBe(true);
+    expect(H.isAdNetworkHost('securepubads.g.doubleclick.net')).toBe(true);
+    expect(H.isAdNetworkHost('aax.amazon-adsystem.com')).toBe(true);
+    expect(H.isAdNetworkHost('ib.adnxs.com')).toBe(true);
+  });
+
+  test('leaves normal sites alone', () => {
+    expect(H.isAdNetworkHost('fox5sandiego.com')).toBe(false);
+    expect(H.isAdNetworkHost('www.google.com')).toBe(false);
+    expect(H.isAdNetworkHost('wikipedia.org')).toBe(false);
+    expect(H.isAdNetworkHost('')).toBe(false);
+  });
+
+  test('matches newly-added exchange / creative-CDN suffixes', () => {
+    expect(H.isAdNetworkHost('secure.indexexchange.com')).toBe(true);
+    expect(H.isAdNetworkHost('www8.smartadserver.com')).toBe(true);
+    expect(H.isAdNetworkHost('track.adform.net')).toBe(true);
+    expect(H.isAdNetworkHost('a.adroll.com')).toBe(true);
+    expect(H.isAdNetworkHost('sonobi.com')).toBe(true);
+    expect(H.isAdNetworkHost('gumgum.com')).toBe(true);
+  });
+});
+
+describe('isAmpPrivacyFrameHost', () => {
+  test('matches amp-privacy consent portals', () => {
+    expect(H.isAmpPrivacyFrameHost('amp-privacy.fox5sandiego.com')).toBe(true);
+    expect(H.isAmpPrivacyFrameHost('amp-privacy.example.com')).toBe(true);
+  });
+
+  test('leaves the AMP article host and normal sites alone', () => {
+    expect(H.isAmpPrivacyFrameHost('fox5sandiego.com')).toBe(false);
+    expect(H.isAmpPrivacyFrameHost('www.fox5sandiego.com')).toBe(false);
+    expect(H.isAmpPrivacyFrameHost('example.com')).toBe(false);
+  });
+});
+
+describe('isAmpOverlayChromeInfo', () => {
+  test('flags AMP runtime tags and consent overlay classes', () => {
+    expect(H.isAmpOverlayChromeInfo({ tag: 'AMP-CONSENT' })).toBe(true);
+    expect(H.isAmpOverlayChromeInfo({ tag: 'AMP-STICKY-AD' })).toBe(true);
+    expect(H.isAmpOverlayChromeInfo({ tag: 'DIV', className: 'popupOverlay' })).toBe(true);
+    expect(H.isAmpOverlayChromeInfo({ tag: 'HEADER', className: 'amp-wp-header' })).toBe(false);
+  });
+});
+
+describe('hasAdNetworkIframeAmong', () => {
+  test('true when any hostname in the list is a known ad network', () => {
+    expect(H.hasAdNetworkIframeAmong([
+      'example.com',
+      'securepubads.g.doubleclick.net',
+    ])).toBe(true);
+  });
+
+  test('false for an empty list or all-unrelated hostnames', () => {
+    expect(H.hasAdNetworkIframeAmong([])).toBe(false);
+    expect(H.hasAdNetworkIframeAmong(null)).toBe(false);
+    expect(H.hasAdNetworkIframeAmong(['example.com', 'fox5sandiego.com'])).toBe(false);
+  });
+});
+
+describe('isAdSafeFrameContext', () => {
+  test('true when the IAB SafeFrame API or GPT inDapIF flag is present', () => {
+    expect(H.isAdSafeFrameContext({ $sf: {} })).toBe(true);
+    expect(H.isAdSafeFrameContext({ inDapIF: true })).toBe(true);
+  });
+
+  test('false for a normal page window', () => {
+    expect(H.isAdSafeFrameContext({})).toBe(false);
+    expect(H.isAdSafeFrameContext({ inDapIF: false })).toBe(false);
+  });
+
+  test('falls back to the global window when no argument is passed', () => {
+    expect(H.isAdSafeFrameContext(null)).toBe(false);
+    expect(H.isAdSafeFrameContext()).toBe(false);
+  });
+});
+
+describe('isLikelyAdSurfaceInfo', () => {
+  test('matches GPT / ACM / AdSense / Advertisement wrappers', () => {
+    expect(H.isLikelyAdSurfaceInfo({
+      tag: 'ASIDE',
+      className: 'ad-unit ad-unit--leaderboard ad-unit--billboard',
+    })).toBe(true);
+    expect(H.isLikelyAdSurfaceInfo({
+      tag: 'ASIDE',
+      className: 'ad-unit ad-unit--adhesion',
+    })).toBe(true);
+    expect(H.isLikelyAdSurfaceInfo({
+      tag: 'DIV',
+      id: 'google_ads_iframe_/5678/nx.kswb/home_1__container__',
+    })).toBe(true);
+    expect(H.isLikelyAdSurfaceInfo({
+      tag: 'DIV',
+      id: 'acm-ad-tag-billboard1-billboard1',
+      className: 'htl-size-320x50',
+    })).toBe(true);
+    expect(H.isLikelyAdSurfaceInfo({
+      tag: 'IFRAME',
+      ariaLabel: 'Advertisement',
+    })).toBe(true);
+    expect(H.isLikelyAdSurfaceInfo({
+      tag: 'INS',
+      className: 'adsbygoogle',
+    })).toBe(true);
+  });
+
+  test('rejects site chrome and false-positive *ad* words', () => {
+    expect(H.isLikelyAdSurfaceInfo({
+      tag: 'HEADER',
+      id: 'masthead',
+      className: 'site-header',
+    })).toBe(false);
+    expect(H.isLikelyAdSurfaceInfo({
+      tag: 'SPAN',
+      className: 'live-card__badge',
+    })).toBe(false);
+    expect(H.isLikelyAdSurfaceInfo({
+      tag: 'DIV',
+      className: 'reading-progress',
+    })).toBe(false);
+    expect(H.isLikelyAdSurfaceInfo({
+      tag: 'BUTTON',
+      className: 'load-more',
+    })).toBe(false);
+  });
+});
+
+describe('buildAdSurfaceCssNotSelector', () => {
+  test('excludes CSS-safe ad tokens as class or id, and aria variants', () => {
+    document.body.innerHTML = `
+      <div id="root">
+        <div class="ad-unit"><span id="inner1">x</span></div>
+        <div id="google_ads_iframe_123"><span id="inner2">x</span></div>
+        <div class="acm-ad-tag-billboard"></div>
+        <ins class="adsbygoogle"></ins>
+        <div class="gpt-ad-slot"></div>
+        <div class="dfp-ad-box"></div>
+        <div class="ad-slot-leaderboard"></div>
+        <div class="adslot-bottom"></div>
+        <div class="ad-container"></div>
+        <div class="adhesion-unit"></div>
+        <div aria-label="Advertisement"></div>
+        <div aria-label="Sponsored content"></div>
+        <div aria-roledescription="advertisement"></div>
+        <p class="normal-copy">not an ad</p>
+      </div>`;
+
+    const sel = H.buildAdSurfaceCssNotSelector();
+    // Unwrap the ":not(:is(...))" to a positive ":is(...)" so .matches()
+    // can assert which elements the exclusion is built to catch.
+    const positiveSel = sel.replace(/^:not\((.*)\)$/, '$1');
+
+    // Only the CSS-safe subset (AD_SURFACE_CSS_SAFE_TOKENS) is excluded at
+    // the stylesheet level — ad-slot/adslot/ad-container/adhesion are
+    // deliberately NOT here (see next test).
+    const adEls = document.querySelectorAll(
+      '.ad-unit, [id^="google_ads_iframe_123"], .acm-ad-tag-billboard, ins.adsbygoogle,' +
+      ' .gpt-ad-slot, .dfp-ad-box, [aria-label="Advertisement"],' +
+      ' [aria-label="Sponsored content"], [aria-roledescription="advertisement"]'
+    );
+    expect(adEls.length).toBe(9);
+    adEls.forEach((el) => expect(el.matches(positiveSel)).toBe(true));
+
+    expect(document.querySelector('.normal-copy').matches(positiveSel)).toBe(false);
+
+    // Descendants of an ad wrapper are caught too (the "* " fragments).
+    expect(document.getElementById('inner1').matches(positiveSel)).toBe(true);
+    expect(document.getElementById('inner2').matches(positiveSel)).toBe(true);
+  });
+
+  test('collision-prone generic tokens are NOT excluded at the CSS level', () => {
+    document.body.innerHTML = `
+      <div class="ad-slot-leaderboard"></div>
+      <div class="adslot-bottom"></div>
+      <div class="ad-container"></div>
+      <div class="adhesion-unit"></div>
+    `;
+    const sel = H.buildAdSurfaceCssNotSelector();
+    const positiveSel = sel.replace(/^:not\((.*)\)$/, '$1');
+    ['.ad-slot-leaderboard', '.adslot-bottom', '.ad-container', '.adhesion-unit'].forEach((cssSel) => {
+      expect(document.querySelector(cssSel).matches(positiveSel)).toBe(false);
+    });
+  });
+
+  test('regression: a fox5sandiego.com-style covering-sheet curtain carrying a ' +
+    'collision-prone ad token is NOT exempted from the universal transparency pass', () => {
+    document.body.innerHTML = `
+      <div id="curtain" class="adhesion-cookie-consent"
+           style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:#fff;"></div>
+    `;
+    const sel = H.buildAdSurfaceCssNotSelector();
+    const positiveSel = sel.replace(/^:not\((.*)\)$/, '$1');
+    const curtain = document.getElementById('curtain');
+    // Must NOT match the positive ad-surface selector — i.e. must NOT be
+    // exempted from getFullStyleSheet's universal
+    // `background-color: transparent` rule — even though its class
+    // contains the collision-prone "adhesion" token.
+    expect(curtain.matches(positiveSel)).toBe(false);
+    // Sanity: the JS-only broad matcher still flags it as an ad surface
+    // for the additive corrective passes — safe to skip those, unrelated
+    // to the curtain bug.
+    expect(H.isLikelyAdSurfaceInfo({ tag: 'DIV', className: 'adhesion-cookie-consent' })).toBe(true);
+  });
+
+  test('AD_SURFACE_CSS_SAFE_TOKENS is a subset of AD_SURFACE_ID_CLASS_TOKENS', () => {
+    H.AD_SURFACE_CSS_SAFE_TOKENS.forEach((token) => {
+      expect(H.AD_SURFACE_ID_CLASS_TOKENS).toContain(token);
+    });
+  });
+
+  test('collision-prone generic tokens are excluded from the CSS-safe subset', () => {
+    ['ad-slot', 'adslot', 'ad-container', 'adhesion'].forEach((token) => {
+      expect(H.AD_SURFACE_CSS_SAFE_TOKENS).not.toContain(token);
+    });
+  });
+
+  test('AD_SURFACE_ID_CLASS_TOKENS stays in sync with isLikelyAdSurfaceInfo', () => {
+    H.AD_SURFACE_ID_CLASS_TOKENS.forEach((token) => {
+      expect(H.isLikelyAdSurfaceInfo({ tag: 'DIV', className: token })).toBe(true);
+    });
   });
 });

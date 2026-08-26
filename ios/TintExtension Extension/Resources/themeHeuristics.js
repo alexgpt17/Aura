@@ -45,6 +45,126 @@
         IFRAME: 1, VIDEO: 1, CANVAS: 1,
     };
 
+    /** Host suffixes for ad creatives (aligned with content-blocker ads list). */
+    var AD_NETWORK_HOST_SUFFIXES = [
+        'googlesyndication.com',
+        'doubleclick.net',
+        'googleadservices.com',
+        'googletagservices.com',
+        'amazon-adsystem.com',
+        'adnxs.com',
+        'criteo.com',
+        'criteo.net',
+        'taboola.com',
+        'outbrain.com',
+        'moatads.com',
+        'adsrvr.org',
+        '2mdn.net',
+        'advertising.com',
+        'pubmatic.com',
+        'rubiconproject.com',
+        'openx.net',
+        'casalemedia.com',
+        'media.net',
+        'lijit.com',
+        'sovrn.com',
+        'yieldmo.com',
+        'adsafeprotected.com',
+        'scorecardresearch.com',
+        'indexexchange.com',
+        'smartadserver.com',
+        'adform.net',
+        'adroll.com',
+        'freewheel.tv',
+        'sonobi.com',
+        'gumgum.com',
+        '33across.com',
+        'triplelift.com',
+        'spotxchange.com',
+        'sharethrough.com',
+        'undertone.com',
+        'contextweb.com',
+        'bidswitch.net',
+        'loopme.com',
+    ];
+
+    /**
+     * Known ad-slot id/class tokens, used by JS-only matching
+     * (AD_SURFACE_ID_CLASS_RE / isLikelyAdSurfaceInfo / isInsideAdSurface,
+     * which feed the 6 JS safety-net passes' isAdThemingSkipped guard in
+     * content.js). Avoid bare "ad" (false positives: header, badge, load,
+     * reading).
+     *
+     * Over-matching here is SAFE: isAdThemingSkipped only ever causes a
+     * pass to skip an ADDITIVE corrective touch (it can only cause more
+     * skipping, never repaint an element that was otherwise protected).
+     * This is NOT the list the CSS `:not()` ad-exclusion is built from —
+     * see AD_SURFACE_CSS_SAFE_TOKENS below for why that must stay far more
+     * conservative.
+     */
+    var AD_SURFACE_ID_CLASS_TOKENS = [
+        'ad-unit', 'ad-unit__', 'adsbygoogle', 'google_ads_iframe',
+        'acm-ad-tag', 'gpt-ad', 'dfp-ad', 'ad-slot', 'adslot',
+        'ad-container', 'adhesion',
+    ];
+    var AD_SURFACE_ID_CLASS_RE = new RegExp(
+        '(?:^|[\\s_-])(?:' + AD_SURFACE_ID_CLASS_TOKENS.join('|') + ')(?:$|[\\s_-])',
+        'i'
+    );
+    var AD_SURFACE_ARIA_TOKENS = ['advertisement', 'sponsored'];
+    var AD_SURFACE_ARIA_ATTRS = ['aria-label', 'aria-roledescription'];
+    var AD_SURFACE_ARIA_RE = new RegExp(AD_SURFACE_ARIA_TOKENS.join('|'), 'i');
+
+    /**
+     * Strict subset of AD_SURFACE_ID_CLASS_TOKENS safe to feed the CSS
+     * `:not()` ad-exclusion selector (buildAdSurfaceCssNotSelector).
+     *
+     * CSS-level exclusion is categorically more dangerous than JS-level:
+     * it opts an element OUT of getFullStyleSheet's universal
+     * `background-color: transparent !important` rule — the ONE rule that
+     * guarantees a CMP/cookie-consent/curtain wrapper can never show a
+     * solid background. `ad-slot` / `adslot` / `ad-container` / `adhesion`
+     * are deliberately excluded here: generic, English-word-adjacent
+     * tokens that collide with unrelated wrapper class names ("adhesion"
+     * is a standard ad-industry term for sticky/full-width units, and
+     * shares naming conventions with news-CMS cookie-consent curtains —
+     * confirmed root cause of a fox5sandiego.com full-page curtain
+     * regression when these were briefly included here). `gpt-ad` /
+     * `dfp-ad` / `acm-ad-tag` are kept: vendor- or CMS-specific compound
+     * tokens with no known collision risk.
+     */
+    var AD_SURFACE_CSS_SAFE_TOKENS = [
+        'ad-unit', 'ad-unit__', 'adsbygoogle', 'google_ads_iframe',
+        'acm-ad-tag', 'gpt-ad', 'dfp-ad',
+    ];
+
+    /**
+     * Builds the CSS `:not(:is(...))` fragment content.js appends to every
+     * ad-exclusion rule in the generated stylesheet. Derived from
+     * AD_SURFACE_CSS_SAFE_TOKENS (NOT the broader AD_SURFACE_ID_CLASS_TOKENS
+     * JS-matching list above) plus the aria advertisement/sponsored checks
+     * (attribute-value matches, not generic substrings — no collision risk).
+     */
+    function buildAdSurfaceCssNotSelector() {
+        var fragments = [];
+        for (var i = 0; i < AD_SURFACE_CSS_SAFE_TOKENS.length; i++) {
+            var token = AD_SURFACE_CSS_SAFE_TOKENS[i];
+            fragments.push('[class*="' + token + '" i]');
+            fragments.push('[class*="' + token + '" i] *');
+            fragments.push('[id*="' + token + '" i]');
+            fragments.push('[id*="' + token + '" i] *');
+        }
+        for (var a = 0; a < AD_SURFACE_ARIA_ATTRS.length; a++) {
+            var attr = AD_SURFACE_ARIA_ATTRS[a];
+            for (var w = 0; w < AD_SURFACE_ARIA_TOKENS.length; w++) {
+                var word = AD_SURFACE_ARIA_TOKENS[w];
+                fragments.push('[' + attr + '*="' + word + '" i]');
+                fragments.push('[' + attr + '*="' + word + '" i] *');
+            }
+        }
+        return ':not(:is(' + fragments.join(', ') + '))';
+    }
+
     function parseCssRgb(color) {
         if (!color || color === 'transparent') return null;
         var m = String(color).match(
@@ -169,6 +289,195 @@
             vw = window.innerWidth || 0;
         }
         return { vh: vh, vw: vw };
+    }
+
+    /** True when hostname is an ad-network creative frame (safeframe, GPT, etc.). */
+    function isAdNetworkHost(hostname) {
+        if (!hostname) return false;
+        var host = String(hostname).toLowerCase();
+        if (host.indexOf(':') >= 0) {
+            host = host.split(':')[0];
+        }
+        for (var i = 0; i < AD_NETWORK_HOST_SUFFIXES.length; i++) {
+            var suffix = AD_NETWORK_HOST_SUFFIXES[i];
+            if (host === suffix || host.slice(-(suffix.length + 1)) === '.' + suffix) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * AMP consent UIs load a full-viewport iframe from an amp-privacy.* host
+     * (e.g. amp-privacy.fox5sandiego.com). With all_frames:true, Aura would
+     * paint that iframe's html/body as an opaque theme curtain over the
+     * article — the fox5 /amp/ failure mode. Never theme those frames.
+     */
+    function isAmpPrivacyFrameHost(hostname) {
+        if (!hostname) return false;
+        var host = String(hostname).toLowerCase();
+        if (host.indexOf(':') >= 0) {
+            host = host.split(':')[0];
+        }
+        return host === 'amp-privacy' || host.indexOf('amp-privacy.') === 0;
+    }
+
+    /** True when this document is an AMP page (html[amp] / html[⚡]). */
+    function isAmpDocument(doc) {
+        var d = doc || (typeof document !== 'undefined' ? document : null);
+        if (!d || !d.documentElement) return false;
+        try {
+            var el = d.documentElement;
+            return el.hasAttribute('amp') || el.hasAttribute('\u26A1') || el.hasAttribute('⚡');
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * AMP runtime / consent / sticky-ad chrome must never receive sticky
+     * re-opaque (--aura-bg). Custom elements aren't covered by the universal
+     * div transparency rule, so painting them is especially dangerous.
+     */
+    function isAmpOverlayChromeInfo(info) {
+        if (!info) return false;
+        var tag = (info.tag || '').toUpperCase();
+        if (tag.indexOf('AMP-') === 0 || tag.indexOf('I-AMPHTML-') === 0) {
+            return true;
+        }
+        var id = String(info.id || '');
+        var cls = String(info.className || '');
+        if (/popupOverlay|consentPopup|amp-sticky-ad|amp-consent|i-amphtml-consent/i.test(id + ' ' + cls)) {
+            return true;
+        }
+        return false;
+    }
+
+    function isAmpOverlayChrome(el) {
+        if (!el || el.nodeType !== 1) return false;
+        return isAmpOverlayChromeInfo({
+            tag: el.tagName,
+            id: el.id,
+            className: typeof el.className === 'string' ? el.className : '',
+        });
+    }
+
+    /**
+     * True when the current frame identifies itself as an ad creative via
+     * an industry-standard runtime signal, regardless of what domain it's
+     * hosted on. `$sf` is the IAB SafeFrames API object (a cross-vendor
+     * spec many exchanges implement, not just Google); `inDapIF` is
+     * Google Publisher Tag's own SafeFrame flag, kept as a redundant,
+     * cheap-to-check fallback. This generalizes far better than
+     * AD_NETWORK_HOST_SUFFIXES, which can only ever cover domains someone
+     * happened to add — an ad served from any unlisted exchange/creative
+     * CDN still identifies itself this way if it uses a SafeFrame.
+     *
+     * Caveat: these globals are set by the ad network's OWN bootstrap
+     * script, which runs after document_start — so this is only useful in
+     * an async recheck (after the frame has had a moment to load its own
+     * script), never in the synchronous document_start bail-out.
+     */
+    function isAdSafeFrameContext(win) {
+        var w = win || (typeof window !== 'undefined' ? window : null);
+        if (!w) return false;
+        try {
+            return !!(w.$sf || w.inDapIF === true);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * Parent-page ad slot / wrapper (not a bare "*ad*" class match).
+     * @param {{ tag?: string, id?: string|null, className?: string,
+     *   ariaLabel?: string|null, ariaRoledescription?: string|null }} info
+     */
+    function isLikelyAdSurfaceInfo(info) {
+        if (!info) return false;
+        var tag = (info.tag || '').toUpperCase();
+        var id = String(info.id || '');
+        var className = String(info.className || '');
+        var aria = String(info.ariaLabel || '');
+        var roleDesc = String(info.ariaRoledescription || '');
+        if (AD_SURFACE_ARIA_RE.test(aria) || AD_SURFACE_ARIA_RE.test(roleDesc)) {
+            return true;
+        }
+        if (id && (/^google_ads_iframe/i.test(id) || /acm-ad-tag/i.test(id)
+            || AD_SURFACE_ID_CLASS_RE.test(id))) {
+            return true;
+        }
+        if (className && AD_SURFACE_ID_CLASS_RE.test(className)) {
+            return true;
+        }
+        // ClassList-style tokens without relying on word boundaries alone
+        if (/\bad-unit\b/i.test(className) || /\badsbygoogle\b/i.test(className)
+            || /\badhesion\b/i.test(className) || /\bgpt-ad\b/i.test(className)
+            || /\bdfp-ad\b/i.test(className) || /\bad-slot\b/i.test(className)
+            || /\badslot\b/i.test(className) || /\bad-container\b/i.test(className)) {
+            return true;
+        }
+        if (tag === 'INS' && /\badsbygoogle\b/i.test(className)) return true;
+        return false;
+    }
+
+    function adSurfaceInfoFromElement(el) {
+        if (!el || el.nodeType !== 1) return null;
+        var className = '';
+        try {
+            className = typeof el.className === 'string'
+                ? el.className
+                : (el.getAttribute && el.getAttribute('class')) || '';
+        } catch (e) {
+            className = '';
+        }
+        return {
+            tag: el.tagName,
+            id: el.id || null,
+            className: className,
+            ariaLabel: el.getAttribute ? el.getAttribute('aria-label') : null,
+            ariaRoledescription: el.getAttribute
+                ? el.getAttribute('aria-roledescription')
+                : null,
+        };
+    }
+
+    /** True when el is an ad slot or sits under one (ancestor walk capped). */
+    function isInsideAdSurface(el) {
+        if (!el || el.nodeType !== 1) return false;
+        var node = el;
+        var depth = 0;
+        var root = (typeof document !== 'undefined') ? document.documentElement : null;
+        while (
+            node &&
+            node.nodeType === 1 &&
+            node !== root &&
+            depth < 8
+        ) {
+            if (isLikelyAdSurfaceInfo(adSurfaceInfoFromElement(node))) {
+                return true;
+            }
+            node = node.parentElement;
+            depth += 1;
+        }
+        return false;
+    }
+
+    /**
+     * True when any hostname in the given list is a known ad-network host.
+     * Pure predicate over an already-resolved list of <iframe src>
+     * hostnames — content.js owns the live DOM walk (resolving relative
+     * URLs, data-src lazy-load attrs) and passes the resolved strings in
+     * here. Used to mark a page's own ad-wrapper divs as ad surfaces
+     * structurally (by what they contain) rather than only by their own
+     * id/class naming convention.
+     */
+    function hasAdNetworkIframeAmong(hostnames) {
+        if (!hostnames || !hostnames.length) return false;
+        for (var i = 0; i < hostnames.length; i++) {
+            if (isAdNetworkHost(hostnames[i])) return true;
+        }
+        return false;
     }
 
     function resolveStyleFn(getStyle) {
@@ -521,9 +830,14 @@
     }
 
     /**
+     * Sticky/fixed re-opaque is ONLY for chrome-like bars (headers, thin
+     * toolbars). Overlay-tier z-index, drawers, video floats, CMP shells, and
+     * anything taller than top-chrome height must be skipped — painting those
+     * is the fox5sandiego / usopen "solid curtain over content" failure mode.
      * @param {{ position?: string, mask?: string, visibility?: string,
      *   opacity?: string, overlayChrome?: boolean, width?: number, height?: number,
-     *   top?: number, left?: number, vh?: number, vw?: number, tag?: string }} info
+     *   top?: number, left?: number, vh?: number, vw?: number, tag?: string,
+     *   zIndex?: number|string, id?: string, className?: string }} info
      */
     function shouldSkipStickyElement(info) {
         if (!info) return true;
@@ -534,6 +848,7 @@
         if (info.mask && info.mask !== 'none') return true;
         if (info.visibility === 'hidden' || info.opacity === '0') return true;
         if (info.overlayChrome) return true;
+        if (isAmpOverlayChromeInfo(info)) return true;
         if ((info.width || 0) < 1 || (info.height || 0) < 1) return true;
         var sheetRect = {
             width: info.width || 0,
@@ -545,6 +860,17 @@
             return true;
         }
         if (isCoveringSheetRect(sheetRect, info.vh || 0, info.vw || 0)) {
+            return true;
+        }
+        // Chrome bars are short. Taller fixed layers are drawers / players /
+        // promo shells — never re-opaque them as --aura-bg.
+        var vh = info.vh || 0;
+        if (vh > 0 && (info.height || 0) > vh * TOP_CHROME_MAX_VH) {
+            return true;
+        }
+        // Overlay / CMP / notification tiers (OneSignal, OneTrust, video float).
+        var z = parseInt(info.zIndex, 10);
+        if (!isNaN(z) && z >= 1000) {
             return true;
         }
         return false;
@@ -793,6 +1119,19 @@
         isLowChroma: isLowChroma,
         isFullViewportRect: isFullViewportRect,
         isCoveringSheetRect: isCoveringSheetRect,
+        isAdNetworkHost: isAdNetworkHost,
+        isAmpPrivacyFrameHost: isAmpPrivacyFrameHost,
+        isAmpDocument: isAmpDocument,
+        isAmpOverlayChrome: isAmpOverlayChrome,
+        isAmpOverlayChromeInfo: isAmpOverlayChromeInfo,
+        hasAdNetworkIframeAmong: hasAdNetworkIframeAmong,
+        isAdSafeFrameContext: isAdSafeFrameContext,
+        isLikelyAdSurfaceInfo: isLikelyAdSurfaceInfo,
+        isInsideAdSurface: isInsideAdSurface,
+        buildAdSurfaceCssNotSelector: buildAdSurfaceCssNotSelector,
+        AD_NETWORK_HOST_SUFFIXES: AD_NETWORK_HOST_SUFFIXES,
+        AD_SURFACE_ID_CLASS_TOKENS: AD_SURFACE_ID_CLASS_TOKENS,
+        AD_SURFACE_CSS_SAFE_TOKENS: AD_SURFACE_CSS_SAFE_TOKENS,
         isOverlayRoot: isOverlayRoot,
         isOverlayChrome: isOverlayChrome,
         isFloatingBannerRoot: isFloatingBannerRoot,

@@ -2,9 +2,13 @@
 // iOS Safari: Must use sendNativeMessage (not sendMessage) to reach native handler
 // This runs when Safari loads the extension
 
-console.log("Tint background script: LOADING - This should appear in Safari console");
-console.log("Tint background: browser.runtime.sendNativeMessage exists?", typeof browser.runtime.sendNativeMessage);
-console.log("Tint background: browser.runtime exists?", typeof browser.runtime);
+// Verbose tracing only — flip to true when diagnosing a sync issue.
+// Genuine console.error calls on unexpected-failure paths stay on regardless.
+var AURA_DEBUG_LOGGING = false;
+
+if (AURA_DEBUG_LOGGING) console.log("Tint background script: LOADING - This should appear in Safari console");
+if (AURA_DEBUG_LOGGING) console.log("Tint background: browser.runtime.sendNativeMessage exists?", typeof browser.runtime.sendNativeMessage);
+if (AURA_DEBUG_LOGGING) console.log("Tint background: browser.runtime exists?", typeof browser.runtime);
 
 // Keep track of last sync time to prevent excessive syncing
 let lastSyncTime = 0;
@@ -20,7 +24,7 @@ let pendingWrite = null;
  */
 async function syncThemeFromAppGroup() {
     try {
-        console.log("Tint background: Requesting theme sync from native handler via sendNativeMessage");
+        if (AURA_DEBUG_LOGGING) console.log("Tint background: Requesting theme sync from native handler via sendNativeMessage");
         
         if (!browser.runtime.sendNativeMessage) {
             const error = new Error("sendNativeMessage is not available");
@@ -52,7 +56,7 @@ async function syncThemeFromAppGroup() {
                             console.error("Tint background: sendNativeMessage ERROR:", browser.runtime.lastError.message);
                             reject(new Error(browser.runtime.lastError.message));
                         } else {
-                            console.log("Tint background: sendNativeMessage SUCCESS");
+                            if (AURA_DEBUG_LOGGING) console.log("Tint background: sendNativeMessage SUCCESS");
                             resolve(response);
                         }
                     }
@@ -102,8 +106,8 @@ async function syncThemeFromAppGroup() {
             }
             
             if (themeChanged) {
-                console.log("Change detected! Will update storage (debounced).");
-                console.log("Tint background: New theme - background:", newData.globalTheme?.background,
+                if (AURA_DEBUG_LOGGING) console.log("Change detected! Will update storage (debounced).");
+                if (AURA_DEBUG_LOGGING) console.log("Tint background: New theme - background:", newData.globalTheme?.background,
                            "text:", newData.globalTheme?.text);
                 
                 lastKnownTheme = newData.globalTheme;
@@ -120,7 +124,7 @@ async function syncThemeFromAppGroup() {
                         clearTimeout(pendingWrite);
                     }
                     const delay = MIN_STORAGE_WRITE_INTERVAL - (now - lastStorageWriteTime);
-                    console.log("Tint background: Debouncing storage write (" + delay + "ms delay)");
+                    if (AURA_DEBUG_LOGGING) console.log("Tint background: Debouncing storage write (" + delay + "ms delay)");
                     const dataToWrite = newData;
                     pendingWrite = setTimeout(() => {
                         writeToStorage(dataToWrite);
@@ -129,12 +133,12 @@ async function syncThemeFromAppGroup() {
                     }, delay);
                 }
             } else {
-                console.log("Tint background: Theme unchanged, skipping storage write");
+                if (AURA_DEBUG_LOGGING) console.log("Tint background: Theme unchanged, skipping storage write");
             }
             
             return true;
         } else {
-            console.log("Tint background: No themeData in response from native handler");
+            if (AURA_DEBUG_LOGGING) console.log("Tint background: No themeData in response from native handler");
             return false;
         }
     } catch (error) {
@@ -171,7 +175,7 @@ async function writeToStorage(newData) {
         await browser.storage.local.set({
             tintThemeData: dataToStore
         });
-        console.log("Tint background: Theme data synced to storage successfully");
+        if (AURA_DEBUG_LOGGING) console.log("Tint background: Theme data synced to storage successfully");
         
         // Broadcast to tabs
         if (browser.tabs && browser.tabs.query) {
@@ -221,7 +225,7 @@ async function writeToStorage(newData) {
                         } catch (e) {}
                     }
                 });
-                console.log("Tint background: Sent UPDATE_THEME messages to", messagesSent, "tabs");
+                if (AURA_DEBUG_LOGGING) console.log("Tint background: Sent UPDATE_THEME messages to", messagesSent, "tabs");
             } catch (error) {
                 console.error("Tint background: Error sending messages:", error);
             }
@@ -237,7 +241,7 @@ syncThemeFromAppGroup();
 // Listen for messages from content scripts requesting theme updates
 browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type === "checkThemeUpdate") {
-        console.log("Tint background: Received checkThemeUpdate request from content script");
+        if (AURA_DEBUG_LOGGING) console.log("Tint background: Received checkThemeUpdate request from content script");
         
         let responseSent = false;
         
@@ -253,7 +257,7 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
             clearTimeout(timeout);
             if (!responseSent) {
                 responseSent = true;
-                console.log("Tint background: Sync complete, sending response");
+                if (AURA_DEBUG_LOGGING) console.log("Tint background: Sync complete, sending response");
                 sendResponse({ success: success === true });
             }
         }).catch((error) => {
@@ -275,12 +279,12 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
 setInterval(() => {
     const now = Date.now();
     if (now - lastSyncTime < MIN_SYNC_INTERVAL) {
-        console.log("Tint background: Skipping sync (only " + (now - lastSyncTime) + "ms since last)");
+        if (AURA_DEBUG_LOGGING) console.log("Tint background: Skipping sync (only " + (now - lastSyncTime) + "ms since last)");
         return;
     }
     
     lastSyncTime = now;
-    console.log("Tint background: Running periodic sync");
+    if (AURA_DEBUG_LOGGING) console.log("Tint background: Running periodic sync");
     
     syncThemeFromAppGroup().catch(error => {
         console.error("Tint background: Error in periodic sync:", error);

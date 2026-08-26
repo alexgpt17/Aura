@@ -176,7 +176,7 @@ const FocusModeScreen: React.FC<FocusModeScreenProps> = ({ navigation }) => {
   }, [navigation]);
 
   const handleMappingPress = (focusModeKey: string) => {
-    navigation.navigate('FocusModePresetSelection', { focusMode: focusModeKey });
+    navigation.navigate('FocusModeThemeSelection', { focusMode: focusModeKey });
   };
 
   const getThemeName = (themeId: string | null): string => {
@@ -254,7 +254,7 @@ const FocusModeScreen: React.FC<FocusModeScreenProps> = ({ navigation }) => {
   const handleTimeBasedThemePress = async (type: 'day' | 'night') => {
     // Store the type we're editing so we can save it when returning
     const currentTheme = type === 'day' ? timeBasedDayTheme : timeBasedNightTheme;
-    navigation.navigate('FocusModePresetSelection', { 
+    navigation.navigate('FocusModeThemeSelection', {
       focusMode: `timeBased_${type}`,
       currentTheme: currentTheme,
     });

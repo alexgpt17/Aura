@@ -19,6 +19,14 @@
     const shellModified = new Set();
     // Top app-bar / search chrome we painted or cleared.
     const chromeModified = new Set();
+    // Outermost top-chrome bars we painted opaque (--aura-bg). Tracked
+    // separately from cleared inners so we can undo if the bar later grows
+    // into a covering sheet (fox5-class curtain).
+    const chromeOuterModified = new Set();
+    // Non-ARIA modal cards painted opaque by visitOverlayModalWalk. Unlike
+    // ARIA reopaqueOverlays (re-evaluated every pass), these only get touched
+    // while isLikelyModalCard is true — so we must revert when they grow.
+    const modalCardOpaqueModified = new Set();
     // Google Ask-anything pill ancestors / decorative siblings we cleared.
     const askAnythingModified = new Set();
     let ignoreMutations = false;
@@ -35,6 +43,20 @@
     const Resolve = (typeof AuraThemeResolve !== 'undefined' && AuraThemeResolve)
         ? AuraThemeResolve
         : null;
+
+    // AMP gets a dedicated, isolated theming path instead of running through
+    // the general reactive engine (mutation-driven sticky/overlay/shell walks
+    // tuned for arbitrary SPA markup). AMP's DOM vocabulary is small and
+    // well-known — a static stylesheet handles it more reliably than layering
+    // more special cases onto heuristics built for a different problem.
+    // See applyTheme()'s IS_AMP_DOCUMENT / IS_AMP_CONSENT_FRAME branches.
+    const IS_AMP_DOCUMENT = !!(H && H.isAmpDocument && H.isAmpDocument(document));
+    // The AMP consent widget (e.g. OneTrust's amp-privacy.<site> iframe) is a
+    // layout="fill" overlay meant to stay pass-through except where it
+    // actually draws a dialog — it is never a real page, so it never gets an
+    // opaque root paint at all (see getAmpConsentFrameStyleSheet).
+    const IS_AMP_CONSENT_FRAME = !!(H && H.isAmpPrivacyFrameHost
+        && H.isAmpPrivacyFrameHost(window.location.hostname));
 
     let lastAppliedThemeKey = '';
     let mutationDebounceTimer = null;
@@ -364,6 +386,34 @@
                     color: var(--aura-text) !important;
                 }
             `
+        },
+        {
+            // Nexstar local-news (fox5sandiego): sticky pass historically
+            // re-opaqued OneSignal / OneTrust / video-float / adhesion shells
+            // into a theme-colored curtain. Heuristics now skip those; this
+            // CSS is a host-scoped belt-and-suspenders so stylesheet-level
+            // dialog paints cannot leave an opaque sheet either.
+            match: ['fox5sandiego.com'],
+            css: `
+                #onesignal-slidedown-container,
+                .onesignal-slidedown-container,
+                .onetrust-pc-dark-filter,
+                #onetrust-banner-sdk,
+                #onetrust-pc-sdk,
+                .login-registration-modal,
+                .nexstar-video.video-float,
+                .site-header__navigation__content,
+                aside.ad-unit--adhesion,
+                /* AMP article (/amp/) consent + sticky ad shells */
+                amp-consent,
+                amp-sticky-ad,
+                .popupOverlay,
+                .consentPopup,
+                #myConsentFlow {
+                    background-color: transparent !important;
+                    background-image: none !important;
+                }
+            `
         }
         // youtube.com, reddit.com and x.com/twitter.com were verified to need no
         // override: the universal transparency + sticky/fixed pass themes them
@@ -662,6 +712,76 @@
         `;
     }
 
+    // 2b. AMP — DEDICATED, ISOLATED PATH
+    // AMP's DOM is a small, well-known vocabulary (hyphenated custom
+    // elements + a handful of consent/notification widget patterns), unlike
+    // the arbitrary SPA markup the general engine's JS safety-net passes
+    // (sticky/overlay/shell walks) are tuned for. Rather than keep teaching
+    // those generic, mutation-reactive heuristics about AMP one regression at
+    // a time, AMP documents and the AMP consent iframe get their own static
+    // stylesheet and skip the JS engine entirely (see applyTheme()).
+    const AMP_GENERIC_CONTENT_TAGS = [
+        'amp-img', 'amp-anim', 'amp-video', 'amp-video-iframe', 'amp-iframe',
+        'amp-layout', 'amp-fit-text', 'amp-fx-flying-carpet',
+        'amp-carousel', 'amp-base-carousel', 'amp-accordion', 'amp-sidebar',
+        'amp-list', 'amp-social-share', 'amp-analytics', 'amp-pixel',
+        'amp-embed', 'amp-ad', 'amp-geo', 'amp-selector',
+    ];
+    // Consent / notification chrome AMP (or a widget it embeds) renders as a
+    // layout="fill" overlay. These must stay pass-through — forcing any
+    // opaque fill on them curtains the whole viewport over the article.
+    const AMP_OVERLAY_CHROME_SELECTORS = [
+        'amp-consent', 'amp-sticky-ad', 'amp-lightbox', 'amp-user-notification',
+        '.popupOverlay', '.consentPopup', '#myConsentFlow',
+        '.onetrust-pc-dark-filter', '#onetrust-banner-sdk', '#onetrust-pc-sdk',
+        '#onesignal-slidedown-container', '.onesignal-slidedown-container',
+    ];
+
+    /** Appended after getFullStyleSheet() for a top-level AMP document. */
+    function getAmpDocumentOverrideCss() {
+        return `
+            :is(${AMP_GENERIC_CONTENT_TAGS.join(', ')}) {
+                background-color: transparent !important;
+                background-image: none !important;
+            }
+            :is(${AMP_OVERLAY_CHROME_SELECTORS.join(', ')}) {
+                background-color: transparent !important;
+                background-image: none !important;
+            }
+        `;
+    }
+
+    /**
+     * Full replacement stylesheet for the AMP consent iframe (never combined
+     * with getFullStyleSheet). No root paint at all: this frame is a
+     * layout="fill" overlay, not a real page, and is invisible whenever it
+     * has nothing to show — forcing html/body opaque would curtain the
+     * article underneath even when no dialog is active.
+     */
+    function getAmpConsentFrameStyleSheet(theme) {
+        if (!theme) return '';
+        const textColor = theme.text || '#e0e0e0';
+        const linkColor = theme.link || '#8ab4f8';
+        const colorScheme = (H && H.isThemeBackgroundLight && H.isThemeBackgroundLight(theme.background || '#121212'))
+            ? 'light'
+            : 'dark';
+        return `
+            html {
+                color-scheme: ${colorScheme} !important;
+            }
+            body {
+                color: ${textColor} !important;
+            }
+            a {
+                color: ${linkColor} !important;
+            }
+            :is(${AMP_OVERLAY_CHROME_SELECTORS.join(', ')}) {
+                background-color: transparent !important;
+                background-image: none !important;
+            }
+        `;
+    }
+
     // 3. APPLY BACKGROUND DIRECTLY TO HTML/BODY
     function applyBackgroundColors(theme) {
         const bgColor = theme.background || '#121212';
@@ -839,6 +959,11 @@
         overlayModified.add(el);
     }
 
+    function paintModalCardSheet(el) {
+        paintOverlaySheet(el);
+        modalCardOpaqueModified.add(el);
+    }
+
     function isOverlayCoveringSheet(rect, vh, vw) {
         if (!rect) return false;
         if (H.isFullViewportRect(rect, vh, vw)) return true;
@@ -850,6 +975,7 @@
         // scrim. Leave it opaque so the mosaic cannot show through. Inline
         // !important is required: a stylesheet SITE_FIX loses to this pass's
         // previous transparent write.
+        modalCardOpaqueModified.delete(el);
         if (isGoogleImagesPage()) {
             el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
             el.style.setProperty('background-image', 'none', 'important');
@@ -862,6 +988,43 @@
             ? H.findInnerModalCard(el, getComputedStyle, { vh, vw })
             : null;
         if (inner) paintOverlaySheet(inner);
+    }
+
+    /**
+     * CMP wrappers often start card-sized (opaque paint), then expand to a
+     * covering sheet. isLikelyModalCard then becomes false, so the walk stops
+     * touching them — without this pass the earlier --aura-overlay fill stays
+     * forever (fox5sandiego.com curtain).
+     */
+    function revertGrownModalCards(vh, vw) {
+        if (!H) return;
+        Array.from(modalCardOpaqueModified).forEach(el => {
+            if (!el || !el.isConnected) {
+                modalCardOpaqueModified.delete(el);
+                return;
+            }
+            let rect;
+            try { rect = el.getBoundingClientRect(); } catch (e) {
+                modalCardOpaqueModified.delete(el);
+                return;
+            }
+            const covering = isOverlayCoveringSheet(rect, vh, vw);
+            let stillCard = false;
+            try {
+                stillCard = !!(H.isLikelyModalCard
+                    && H.isLikelyModalCard(el, getComputedStyle, { vh, vw }));
+            } catch (e2) {
+                stillCard = false;
+            }
+            let highZ = false;
+            try {
+                const z = parseInt(getComputedStyle(el).zIndex, 10);
+                highZ = !isNaN(z) && z >= 1000;
+            } catch (e3) {}
+            if (!stillCard || covering || highZ) {
+                paintOverlayScrimAsTransparent(el, vh, vw);
+            }
+        });
     }
 
     function reopaqueOverlays(root) {
@@ -912,6 +1075,13 @@
 
     function visitOverlayModalWalk(el, vh, vw, seen) {
         if (!el || el.nodeType !== 1 || !H || seen.has(el)) return;
+        if (isAdThemingSkipped(el)) return;
+        if (H.isAmpOverlayChrome && H.isAmpOverlayChrome(el)) {
+            if (modalCardOpaqueModified.has(el)) {
+                paintOverlayScrimAsTransparent(el, vh, vw);
+            }
+            return;
+        }
         if (H.isLikelyModalCard && H.isLikelyModalCard(el, getComputedStyle, { vh, vw })) {
             seen.add(el);
             if (H.isSearchChrome && H.isSearchChrome(el)) return;
@@ -919,6 +1089,16 @@
             try { style = getComputedStyle(el); } catch (e) { return; }
             if (style.visibility === 'hidden' || style.opacity === '0') return;
             if (style.display === 'none') return;
+            // Overlay-tier shells (OneSignal / OneTrust / video float) must stay
+            // transparent — painting them --aura-overlay is the same curtain
+            // class as sticky re-opaque on these sites.
+            const z = parseInt(style.zIndex, 10);
+            if (!isNaN(z) && z >= 1000) {
+                if (modalCardOpaqueModified.has(el)) {
+                    paintOverlayScrimAsTransparent(el, vh, vw);
+                }
+                return;
+            }
             let rect;
             try { rect = el.getBoundingClientRect(); } catch (e) { return; }
             if (rect.width < 1 || rect.height < 1) return;
@@ -926,7 +1106,7 @@
                 paintOverlayScrimAsTransparent(el, vh, vw);
                 return;
             }
-            paintOverlaySheet(el);
+            paintModalCardSheet(el);
         }
     }
 
@@ -1044,8 +1224,38 @@
     // creates a solid theme-colored curtain over the page (seen on usopen.com /
     // wta.com / fox5sandiego.com) with content only peeking on overscroll.
     // Visible dialogs are handled by reopaqueOverlays instead.
+    // Skip alone is not enough: an element painted while small must have its
+    // inline fill cleared once a later pass decides it should be skipped
+    // (covering-sheet growth while scrolling).
+    function revertStickyPaint(el) {
+        try { el.style.removeProperty('background-color'); } catch (e) {}
+        stickyModified.delete(el);
+    }
+
+    function isAdThemingSkipped(el) {
+        if (!el || !H) return false;
+        try {
+            if (H.isInsideAdSurface && H.isInsideAdSurface(el)) return true;
+        } catch (e) {}
+        return false;
+    }
+
     function visitStickyElement(el, vh, vw) {
         if (!el || el.nodeType !== 1 || !H) return;
+        if (isAdThemingSkipped(el)) {
+            if (stickyModified.has(el)) revertStickyPaint(el);
+            return;
+        }
+        if (H.isAmpOverlayChrome && H.isAmpOverlayChrome(el)) {
+            if (stickyModified.has(el)) revertStickyPaint(el);
+            return;
+        }
+        // Modal cards / promos are the overlay pass's job — never paint them
+        // as chrome with --aura-bg (OneSignal, cookie cards, etc.).
+        if (H.isLikelyModalCard && H.isLikelyModalCard(el, getComputedStyle, { vh, vw })) {
+            if (stickyModified.has(el)) revertStickyPaint(el);
+            return;
+        }
         let style;
         try { style = getComputedStyle(el); } catch (e) { return; }
         let rect;
@@ -1058,13 +1268,17 @@
             opacity: style.opacity,
             overlayChrome: H.isOverlayChrome(el),
             tag: el.tagName,
+            id: el.id,
+            className: typeof el.className === 'string' ? el.className : '',
             width: rect.width,
             height: rect.height,
             top: rect.top,
             left: rect.left,
+            zIndex: style.zIndex,
             vh,
             vw,
         })) {
+            if (stickyModified.has(el)) revertStickyPaint(el);
             return;
         }
         el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
@@ -1074,6 +1288,15 @@
     function reopaqueStickyFixed(root) {
         if (!root || !currentTheme || !H) return;
         const { vh, vw } = passViewport();
+        // Re-check prior paints first — they may have grown into covering sheets
+        // without being re-visited by the sliced walk this frame.
+        Array.from(stickyModified).forEach(el => {
+            if (!el || !el.isConnected) {
+                stickyModified.delete(el);
+                return;
+            }
+            visitStickyElement(el, vh, vw);
+        });
         const elements = collectElements(root);
         const limit = Math.min(elements.length, WALK_SLICE);
         for (let i = 0; i < limit; i++) {
@@ -1175,12 +1398,39 @@
     // fills beat the universal `header { transparent }` rule. Paint the
     // outermost bar and clear inner layout fills so scroll doesn't leave a
     // gray slab stacked on a themed one.
+    function revertChromeOuterPaint(el) {
+        try {
+            el.style.removeProperty('background-color');
+            el.style.removeProperty('background-image');
+        } catch (e) {}
+        chromeOuterModified.delete(el);
+        chromeModified.delete(el);
+    }
+
     function reopaqueTopChrome(root) {
         if (!root || !currentTheme || !H || !H.isTopChromeBar) return;
 
         const { vh, vw } = passViewport();
         const scope = root.nodeType === 1 ? root : document.documentElement;
         const painted = new Set();
+
+        // Undo outer bars that are no longer safe top chrome (grew into a
+        // covering sheet, scrolled away from the top band, etc.).
+        Array.from(chromeOuterModified).forEach(el => {
+            if (!el || !el.isConnected) {
+                chromeOuterModified.delete(el);
+                return;
+            }
+            let rect;
+            try { rect = el.getBoundingClientRect(); } catch (e) {
+                revertChromeOuterPaint(el);
+                return;
+            }
+            if (isOverlayCoveringSheet(rect, vh, vw)
+                || !H.isTopChromeBar(el, getComputedStyle, { vh, vw })) {
+                revertChromeOuterPaint(el);
+            }
+        });
 
         function outermost(el) {
             let best = null;
@@ -1201,10 +1451,16 @@
 
         function paintChrome(el) {
             if (!el || painted.has(el)) return;
+            if (isAdThemingSkipped(el)) return;
+            let rect;
+            try { rect = el.getBoundingClientRect(); } catch (e) { return; }
+            // Never paint a covering sheet as top chrome — same curtain class.
+            if (isOverlayCoveringSheet(rect, vh, vw)) return;
             painted.add(el);
             el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
             el.style.setProperty('background-image', 'none', 'important');
             chromeModified.add(el);
+            chromeOuterModified.add(el);
 
             let inners;
             try {
@@ -1373,8 +1629,19 @@
         handleShadowDOM(root);
 
         const { vh, vw } = passViewport();
-        rethemeKnownShells(root);
+        // AMP (and other custom-element-heavy) pages route real content
+        // through hyphenated tags like <amp-layout>/<i-amphtml-wrapper> that
+        // the universal `div, section, ... { transparent }` stylesheet rule
+        // (getFullStyleSheet's layoutTags list) can never match by name.
+        // rethemeOpaqueShells extends the same "clear large opaque shells"
+        // treatment to any large custom element via shouldClearShellBackground
+        // / isCustomLayoutElement, not just the #app/#root SPA-shell ids that
+        // rethemeKnownShells alone covers — without it, a site's own opaque
+        // (often white) fill on one of these wrappers sits on top of the
+        // correctly-themed html/body and reads as "the whole page is white".
+        rethemeOpaqueShells(root);
         reopaqueOverlays(root);
+        revertGrownModalCards(vh, vw);
         paintGoogleImagesViewer(root);
         reopaqueTopChrome(root);
         rethemeAskAnythingComposer(root);
@@ -1413,6 +1680,10 @@
 
     // 4. THEME APPLICATION
     function applyTheme(theme) {
+        try {
+            const host = String(window.location.hostname || '');
+            if (H && H.isAdNetworkHost && H.isAdNetworkHost(host)) return;
+        } catch (eHost) {}
         if (!theme || theme.enabled === false) {
             lastAppliedThemeKey = '';
             return removeTheme();
@@ -1434,12 +1705,31 @@
 
         const styleEl = document.createElement('style');
         styleEl.id = 'aura-core-engine';
-        styleEl.textContent = getFullStyleSheet(theme);
+
+        if (IS_AMP_CONSENT_FRAME) {
+            // Dedicated path: no root paint, no applyBackgroundColors (which
+            // forces html/body opaque unconditionally), no JS safety-net
+            // engine. See getAmpConsentFrameStyleSheet.
+            styleEl.textContent = getAmpConsentFrameStyleSheet(theme);
+            (document.head || document.documentElement).appendChild(styleEl);
+            const earlyShield = document.getElementById('aura-early-shield');
+            if (earlyShield) earlyShield.remove();
+            return;
+        }
+
+        styleEl.textContent = getFullStyleSheet(theme)
+            + (IS_AMP_DOCUMENT ? getAmpDocumentOverrideCss() : '');
         (document.head || document.documentElement).appendChild(styleEl);
 
         applyBackgroundColors(theme);
         const earlyShield = document.getElementById('aura-early-shield');
         if (earlyShield) earlyShield.remove();
+
+        if (IS_AMP_DOCUMENT) {
+            // Dedicated path: static CSS only — skip the general JS
+            // safety-net engine entirely for AMP documents.
+            return;
+        }
         scheduleSafetyPasses();
     }
 
@@ -1519,6 +1809,7 @@
             } catch (e) {}
         });
         overlayModified.clear();
+        modalCardOpaqueModified.clear();
         revertGoogleImagesMosaic();
         contrastModified.forEach(el => {
             try { el.style.removeProperty('color'); } catch (e) {}
@@ -1538,6 +1829,7 @@
             } catch (e) {}
         });
         chromeModified.clear();
+        chromeOuterModified.clear();
         revertAskAnythingComposer();
         document.querySelectorAll('style[data-aura-shadow]').forEach(s => {
             try { s.remove(); } catch (e) {}
@@ -1717,6 +2009,12 @@
 
     // 9. INITIALIZATION
     async function init() {
+        // Nested ad creative frames: never theme.
+        try {
+            const host = String(window.location.hostname || '');
+            if (H && H.isAdNetworkHost && H.isAdNetworkHost(host)) return;
+        } catch (eHost) {}
+
         const data = await browser.storage.local.get('tintThemeData');
         const td = data?.tintThemeData;
         if (td) {
@@ -1732,42 +2030,49 @@
         // Attach custom event listener (only once)
         attachCustomEventListener();
 
-        // Set up mutation observer for Shadow DOM (only once)
-        if (!mutationObserver) {
-            mutationObserver = new MutationObserver(() => {
-                if (ignoreMutations) return;
-                if (mutationDebounceTimer) clearTimeout(mutationDebounceTimer);
-                mutationDebounceTimer = setTimeout(() => {
-                    mutationDebounceTimer = null;
-                    if (!currentTheme) return;
-                    runSafetyPasses(document.documentElement);
-                }, 150);
-            });
-            mutationObserver.observe(document.documentElement, {
-                childList: true,
-                subtree: true,
-                attributes: true,
-                attributeFilter: ['style', 'class', 'hidden', 'open'],
-            });
-        }
+        // AMP documents and the AMP consent iframe use their own static-CSS
+        // path (see applyTheme()) and never call into the JS engine below —
+        // don't even wire up its triggers for them.
+        if (!IS_AMP_DOCUMENT && !IS_AMP_CONSENT_FRAME) {
+            // Set up mutation observer for Shadow DOM (only once)
+            if (!mutationObserver) {
+                mutationObserver = new MutationObserver(() => {
+                    if (ignoreMutations) return;
+                    if (mutationDebounceTimer) clearTimeout(mutationDebounceTimer);
+                    mutationDebounceTimer = setTimeout(() => {
+                        mutationDebounceTimer = null;
+                        if (!currentTheme) return;
+                        runSafetyPasses(document.documentElement);
+                    }, 150);
+                });
+                mutationObserver.observe(document.documentElement, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    attributeFilter: ['style', 'class', 'hidden', 'open'],
+                });
+            }
 
-        // Shopping / SERP headers often become sticky only after scroll, or
-        // clone a second bar. Re-paint chrome without waiting for a mutation.
-        if (!scrollListenerAttached) {
-            scrollListenerAttached = true;
-            window.addEventListener('scroll', () => {
-                if (!currentTheme || ignoreMutations) return;
-                if (scrollPassTimer) return;
-                scrollPassTimer = setTimeout(() => {
-                    scrollPassTimer = null;
-                    if (!currentTheme) return;
-                    reopaqueTopChrome(document.documentElement);
-                    reopaqueStickyFixed(document.documentElement);
-                    if (isGoogleImagesPage()) {
-                        paintGoogleImagesViewer(document.documentElement);
-                    }
-                }, 200);
-            }, { passive: true });
+            // Shopping / SERP headers often become sticky only after scroll, or
+            // clone a second bar. Re-paint chrome without waiting for a mutation.
+            if (!scrollListenerAttached) {
+                scrollListenerAttached = true;
+                window.addEventListener('scroll', () => {
+                    if (!currentTheme || ignoreMutations) return;
+                    if (scrollPassTimer) return;
+                    scrollPassTimer = setTimeout(() => {
+                        scrollPassTimer = null;
+                        if (!currentTheme) return;
+                        const { vh, vw } = passViewport();
+                        revertGrownModalCards(vh, vw);
+                        reopaqueTopChrome(document.documentElement);
+                        reopaqueStickyFixed(document.documentElement);
+                        if (isGoogleImagesPage()) {
+                            paintGoogleImagesViewer(document.documentElement);
+                        }
+                    }, 200);
+                }, { passive: true });
+            }
         }
 
         // Re-evaluate time-based day/night every minute so themes flip at

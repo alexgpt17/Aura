@@ -6,6 +6,23 @@
 (function() {
     'use strict';
 
+    var H = typeof AuraThemeHeuristics !== 'undefined' ? AuraThemeHeuristics : null;
+    try {
+        var host = typeof location !== 'undefined' ? location.hostname : '';
+        if (H && H.isAdNetworkHost && H.isAdNetworkHost(host)) {
+            return;
+        }
+        // AMP consent widget iframes (e.g. OneTrust's amp-privacy.<site>) are
+        // layout="fill" overlays meant to stay invisible except where they
+        // actually draw a dialog. The early shield below only ever forces an
+        // opaque html/body fill, which would curtain the whole 100vw x 100vh
+        // frame over the host article before content.js's more careful,
+        // element-scoped theming (see IS_TRANSPARENT_OVERLAY_FRAME) even runs.
+        if (H && H.isAmpPrivacyFrameHost && H.isAmpPrivacyFrameHost(host)) {
+            return;
+        }
+    } catch (eBail) {}
+
     var SHIELD_ID = 'aura-early-shield';
 
     window.__TINT_THEME_DATA__ = {
@@ -116,6 +133,17 @@
     function loadFromStorage() {
         if (typeof browser !== 'undefined' && browser.storage) {
             browser.storage.local.get('tintThemeData').then(function (result) {
+                // Ad networks' own SafeFrame bootstrap scripts run after
+                // document_start (when the isAdNetworkHost bail-out above
+                // already ran), so this is the earliest point we can
+                // reliably see the flag — by now the ad iframe's own
+                // script has usually executed.
+                if (H && H.isAdSafeFrameContext && H.isAdSafeFrameContext()) {
+                    var earlyShield = document.getElementById(SHIELD_ID);
+                    if (earlyShield) earlyShield.remove();
+                    window.__TINT_THEME_DATA__._ready = true;
+                    return;
+                }
                 if (result.tintThemeData) {
                     window.__TINT_THEME_DATA__ = result.tintThemeData;
                     window.__TINT_THEME_DATA__._ready = true;
