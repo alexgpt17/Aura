@@ -32,15 +32,44 @@
     var LIGHT_SURFACE_LUM = 0.55;
     var LIGHT_SURFACE_CHROMA = 40;
     var LIGHT_SURFACE_ALPHA = 0.4;
+    // An <svg> root can carry its own opaque CSS background-color (a graphic
+    // canvas / badge), distinct from the fill/stroke on its internal shapes.
+    // Blanket-skipping every svg tag (BRIGHT_SKIP_TAGS) protects icon glyph
+    // colors, but also leaves that class of surface permanently un-themed.
+    // Only exempt icon-sized svgs from the bright-surface pass; a large one
+    // still only has its own background-color cleared, never its internal
+    // fill/stroke, so glyph artwork is untouched either way.
+    var SVG_BACKGROUND_MIN_SIZE = 48;
     var MODAL_MIN_WIDTH = 160;
     var MODAL_MIN_HEIGHT = 80;
     var MODAL_MIN_TEXT = 8;
     var SEARCH_CHROME_MAX_HEIGHT = 180;
     var TOP_CHROME_MAX_VH = 0.32;
+    // A literal <header>/<nav> tag (or role="banner") is a reliable "this is
+    // real site chrome, not a curtain" signal — curtain-class artifacts
+    // (consent walls, ad wrappers, notification banners) essentially never
+    // use these semantics. Multi-row headers (branding bar + section bar,
+    // common on university/publisher sites) can comfortably exceed the
+    // generic 32vh cap without being a curtain risk, so give them more room.
+    var TOP_CHROME_MAX_VH_SEMANTIC = 0.55;
     var TOP_CHROME_MIN_HEIGHT = 40;
     var TOP_CHROME_MIN_WIDTH_FRAC = 0.7;
     var COVERING_SHEET_MIN_VW = 0.75;
     var COVERING_SHEET_MIN_VH = 0.45;
+    // A slide-in / full-screen nav drawer (hamburger menu) is real,
+    // deliberately-opened UI, unlike the covering-sheet curtains the
+    // isModalCardShape exclusion protects against. Absent a <nav> tag or
+    // role="navigation", a real list of nav links is the signal that
+    // distinguishes it from a CMP/notification surface with 2-4 buttons.
+    var NAV_DRAWER_MIN_LINKS = 5;
+    var NAV_DRAWER_MIN_VH_FRAC = 0.3;
+    var NAV_DRAWER_MIN_VW_FRAC = 0.3;
+    // Confidently-collapsed size ceiling for classifyNavDrawerStateInfo,
+    // deliberately far below NAV_DRAWER_MIN_VH_FRAC/VW_FRAC (0.3) so there is
+    // a real dead zone between "collapsed" and "expanded" — a size that's
+    // merely mid-transition (or just under the expanded floor) must read as
+    // ambiguous, not collapsed, or it could flap a stale history entry.
+    var NAV_DRAWER_COLLAPSE_MAX_FRAC = 0.05;
     var STICKY_SKIP_TAGS = {
         IFRAME: 1, VIDEO: 1, CANVAS: 1,
     };
@@ -696,6 +725,350 @@
     }
 
     /**
+     * Full-screen / near-full-screen slide-in nav drawer (hamburger menu).
+     * isModalCardShape deliberately excludes covering-sheet sizes to protect
+     * against curtain artifacts (consent walls, ad wrappers) — but a real,
+     * deliberately-opened nav drawer is legitimately that size and still
+     * needs an opaque background, or its menu text becomes unreadable
+     * against the page content bleeding through. A semantic nav signal
+     * (tag/role, or a real list of links) is what distinguishes it from a
+     * curtain, which essentially never carries nav semantics.
+     * @param {{ position?: string, visibility?: string, opacity?: string,
+     *   width?: number, height?: number, vh?: number, vw?: number,
+     *   isNavTagOrRole?: boolean, hasNavDescendant?: boolean,
+     *   linkCount?: number }} info
+     */
+    function isLikelyNavDrawerInfo(info) {
+        if (!info) return false;
+        if (info.visibility === 'hidden' || info.opacity === '0') return false;
+        if (info.position !== 'fixed' && info.position !== 'sticky') return false;
+        var width = info.width || 0;
+        var height = info.height || 0;
+        if (width < 1 || height < 1) return false;
+        var vh = info.vh || 0;
+        var vw = info.vw || 0;
+        if (vh > 0 && vw > 0
+            && height < vh * NAV_DRAWER_MIN_VH_FRAC
+            && width < vw * NAV_DRAWER_MIN_VW_FRAC) {
+            return false;
+        }
+        return !!info.isNavTagOrRole || !!info.hasNavDescendant
+            || (info.linkCount || 0) >= NAV_DRAWER_MIN_LINKS;
+    }
+
+    /** Shared nav-signal gathering for isLikelyNavDrawer / isLikelyNavMenu. */
+    function navSignalsFromElement(el) {
+        var tag = (el.tagName || '').toUpperCase();
+        var role = el.getAttribute ? el.getAttribute('role') : null;
+        var isNavTagOrRole = tag === 'NAV' || role === 'navigation';
+        var hasNavDescendant = false;
+        var linkCount = 0;
+        try {
+            hasNavDescendant = !isNavTagOrRole
+                && !!el.querySelector('nav, [role="navigation"]');
+        } catch (e3) {}
+        try { linkCount = el.querySelectorAll('a[href]').length; } catch (e4) {}
+        return {
+            isNavTagOrRole: isNavTagOrRole,
+            hasNavDescendant: hasNavDescendant,
+            linkCount: linkCount,
+        };
+    }
+
+    function isLikelyNavDrawer(el, getStyle, viewport) {
+        if (!el || el.nodeType !== 1) return false;
+        // Never override genuine ARIA dialog/alertdialog/aria-modal
+        // semantics — reopaqueOverlays already handles those correctly
+        // (transparent when covering-sheet sized), and a CMP's preference
+        // center (OneTrust et al.) commonly contains enough links/nav-like
+        // structure to otherwise satisfy this check, which would repaint a
+        // legitimately-transparent full-screen consent dialog into a
+        // curtain — the exact bug isLikelyModalCard's covering-sheet
+        // exclusion exists to prevent, just reached from this side instead.
+        if (isOverlayChrome(el)) return false;
+        var styleFn = resolveStyleFn(getStyle);
+        if (!styleFn) return false;
+        var style;
+        try { style = styleFn(el); } catch (e) { return false; }
+        var rect;
+        try { rect = el.getBoundingClientRect(); } catch (e2) { return false; }
+        var vp = resolveViewport(viewport);
+        var nav = navSignalsFromElement(el);
+        return isLikelyNavDrawerInfo({
+            position: style.position,
+            visibility: style.visibility,
+            opacity: style.opacity,
+            width: rect.width,
+            height: rect.height,
+            vh: vp.vh,
+            vw: vp.vw,
+            isNavTagOrRole: nav.isNavTagOrRole,
+            hasNavDescendant: nav.hasNavDescendant,
+            linkCount: nav.linkCount,
+        });
+    }
+
+    /**
+     * True when info describes an element that is confidently NOT visible/
+     * expanded — hidden outright, fully off-screen, or tiny relative to the
+     * viewport. Deliberately stricter than "!isLikelyNavDrawerInfo(info)":
+     * a size mid-transition (or just under the expanded floor) must be
+     * neither collapsed nor expanded (see classifyNavDrawerStateInfo) so a
+     * single ambiguous sample can't be mistaken for a fresh collapsed
+     * baseline.
+     * @param {{ visibility?: string, opacity?: string, display?: string,
+     *   hiddenAttr?: boolean, ariaHidden?: boolean, offscreen?: boolean,
+     *   width?: number, height?: number, vh?: number, vw?: number }} info
+     */
+    function isNavDrawerCollapsedInfo(info) {
+        if (!info) return false;
+        if (info.hiddenAttr || info.ariaHidden) return true;
+        if (info.display === 'none') return true;
+        if (info.visibility === 'hidden') return true;
+        var opacity = parseFloat(info.opacity);
+        if (!isNaN(opacity) && opacity <= 0.05) return true;
+        if (info.offscreen) return true;
+        var width = info.width || 0;
+        var height = info.height || 0;
+        if (width < 2 || height < 2) return true;
+        var vh = info.vh || 0;
+        var vw = info.vw || 0;
+        if (vh > 0 && vw > 0
+            && height < vh * NAV_DRAWER_COLLAPSE_MAX_FRAC
+            && width < vw * NAV_DRAWER_COLLAPSE_MAX_FRAC) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Tri-state classification used to gate the nav-drawer opaque paint on a
+     * genuine collapsed -> expanded TRANSITION rather than "currently looks
+     * like a drawer" alone (see isNavDrawerOpenTransition). 'expanded' reuses
+     * isLikelyNavDrawerInfo verbatim; 'collapsed' is the separate, stricter
+     * isNavDrawerCollapsedInfo; anything in between (or an element with no
+     * nav signal at all) is 'ambiguous' and must never be treated as either.
+     * @returns {'expanded'|'collapsed'|'ambiguous'}
+     */
+    function classifyNavDrawerStateInfo(info) {
+        if (isLikelyNavDrawerInfo(info)) return 'expanded';
+        if (isNavDrawerCollapsedInfo(info)) return 'collapsed';
+        return 'ambiguous';
+    }
+
+    /**
+     * DOM-facing wrapper for classifyNavDrawerStateInfo. Mirrors
+     * isLikelyNavDrawer's isOverlayChrome exclusion (never touch CMP
+     * dialogs) and short-circuits to null when there is no nav signal at
+     * all, since such an element can never classify as 'expanded' regardless
+     * of size — matching isLikelyNavDrawerInfo's own final check, just
+     * evaluated first to skip the style/rect work entirely.
+     * @returns {'expanded'|'collapsed'|'ambiguous'|null}
+     */
+    function classifyNavDrawerState(el, getStyle, viewport) {
+        if (!el || el.nodeType !== 1) return null;
+        if (isOverlayChrome(el)) return null;
+        var nav = navSignalsFromElement(el);
+        var hasNavSignal = !!nav.isNavTagOrRole || !!nav.hasNavDescendant
+            || (nav.linkCount || 0) >= NAV_DRAWER_MIN_LINKS;
+        if (!hasNavSignal) return null;
+        var styleFn = resolveStyleFn(getStyle);
+        if (!styleFn) return null;
+        var style;
+        try { style = styleFn(el); } catch (e) { return null; }
+        var rect;
+        try { rect = el.getBoundingClientRect(); } catch (e2) { return null; }
+        var vp = resolveViewport(viewport);
+        var offscreen = rect.right <= 0 || rect.bottom <= 0
+            || rect.left >= vp.vw || rect.top >= vp.vh;
+        var hiddenAttr = !!(el.hidden || (el.hasAttribute && el.hasAttribute('hidden')));
+        var ariaHidden = !!(el.getAttribute && el.getAttribute('aria-hidden') === 'true');
+        return classifyNavDrawerStateInfo({
+            position: style.position,
+            visibility: style.visibility,
+            opacity: style.opacity,
+            display: style.display,
+            width: rect.width,
+            height: rect.height,
+            vh: vp.vh,
+            vw: vp.vw,
+            offscreen: offscreen,
+            hiddenAttr: hiddenAttr,
+            ariaHidden: ariaHidden,
+            isNavTagOrRole: nav.isNavTagOrRole,
+            hasNavDescendant: nav.hasNavDescendant,
+            linkCount: nav.linkCount,
+        });
+    }
+
+    /**
+     * The one gate that decides whether to paint: true only for a confirmed
+     * collapsed -> expanded transition. Deliberately trivial — all the real
+     * semantics live in classifyNavDrawerStateInfo above. An 'ambiguous' (or
+     * missing) prevState can never stand in for a confirmed collapsed
+     * baseline, which is what stops an ambient sticky bar (never
+     * confidently collapsed to begin with) from ever being treated as
+     * "just opened."
+     */
+    function isNavDrawerOpenTransition(prevState, currState) {
+        return prevState === 'collapsed' && currState === 'expanded';
+    }
+
+    /**
+     * Relaxed nav/menu classifier with NO position requirement — unlike
+     * isLikelyNavDrawer (which exists to safely override the covering-sheet
+     * curtain guard for position:fixed drawers), this is meant to pair with
+     * "does the site's own authored CSS give this an !important opaque
+     * background we just defeated" (see content.js's
+     * restoreAuthoredChromeOpacity). Many real menus — WordPress/Divi-style
+     * dropdowns included — are position:static/relative/absolute, expanding
+     * in place rather than floating as a fixed overlay, so the fixed-only
+     * gate would miss them entirely.
+     */
+    function isLikelyNavMenuInfo(info) {
+        if (!info) return false;
+        if (info.visibility === 'hidden' || info.opacity === '0') return false;
+        var width = info.width || 0;
+        var height = info.height || 0;
+        if (width < 40 || height < 20) return false;
+        return !!info.isNavTagOrRole || !!info.hasNavDescendant
+            || (info.linkCount || 0) >= 3;
+    }
+
+    function isLikelyNavMenu(el, getStyle, viewport) {
+        if (!el || el.nodeType !== 1) return false;
+        // Same reasoning as isLikelyNavDrawer above — a CMP dialog must stay
+        // governed by reopaqueOverlays, not get repainted here.
+        if (isOverlayChrome(el)) return false;
+        var styleFn = resolveStyleFn(getStyle);
+        if (!styleFn) return false;
+        var style;
+        try { style = styleFn(el); } catch (e) { return false; }
+        var rect;
+        try { rect = el.getBoundingClientRect(); } catch (e2) { return false; }
+        var nav = navSignalsFromElement(el);
+        return isLikelyNavMenuInfo({
+            visibility: style.visibility,
+            opacity: style.opacity,
+            width: rect.width,
+            height: rect.height,
+            isNavTagOrRole: nav.isNavTagOrRole,
+            hasNavDescendant: nav.hasNavDescendant,
+            linkCount: nav.linkCount,
+        });
+    }
+
+    // Position-agnostic counterpart to classifyNavDrawerState/Info above, for
+    // menus that expand IN PLACE (display:none -> block, height:0 -> auto)
+    // rather than as a position:fixed/sticky overlay — e.g. a Bootstrap-style
+    // ".navbar-collapse" mobile menu, which is exactly the shape reported on
+    // UC Davis OASIS: the menu is never fixed/sticky, so isLikelyNavDrawer /
+    // classifyNavDrawerState can never apply to it no matter how the
+    // transition gating is tuned — there is nothing to gate, because the
+    // "expanded" side of that classifier requires a position it never has.
+    //
+    // isLikelyNavMenu (above) already exists as a position-agnostic
+    // classifier, but it's paired with restoreAuthoredChromeOpacity, which
+    // ALSO requires the site to have marked the background !important in its
+    // own CSS — plenty of sites (plausibly OASIS) never do that, so nothing
+    // today forces this shape of menu opaque at all. This is a second,
+    // independent transition-gated path that doesn't depend on authored
+    // !important intent.
+    //
+    // Deliberately stricter than isLikelyNavMenuInfo in one way, since
+    // dropping the position requirement removes a whole axis of protection
+    // against false positives (an ordinary always-present nav bar/sidebar
+    // could otherwise qualify): it requires a genuine panel size (both width
+    // AND height past a real floor, not either/or) to distinguish a
+    // multi-item dropdown from an ordinary single-row nav bar — a thin,
+    // full-width sticky bar (the wtatennis.com shape that caused the
+    // original curtain bug) fails the height floor and stays 'ambiguous'
+    // regardless of any position it takes on. The nav-signal check itself
+    // (tag/role/descendant/link-count) is kept the same as isLikelyNavMenuInfo
+    // — a common real-world shape here (Bootstrap's ".navbar-collapse", a
+    // plain <ul>/<div> of <li><a> items with no <nav> wrapper or descendant
+    // of its own) only ever satisfies the link-count fallback, so dropping
+    // it would silently exclude exactly the pattern this exists to catch.
+    var NAV_MENU_PANEL_MIN_WIDTH = 120;
+    var NAV_MENU_PANEL_MIN_HEIGHT = 80;
+    var NAV_MENU_PANEL_COLLAPSE_MAX_WIDTH = 20;
+    var NAV_MENU_PANEL_COLLAPSE_MAX_HEIGHT = 10;
+    var NAV_MENU_PANEL_MIN_LINKS = 5;
+
+    /**
+     * @param {{ visibility?: string, opacity?: string, display?: string,
+     *   hiddenAttr?: boolean, ariaHidden?: boolean, offscreen?: boolean,
+     *   width?: number, height?: number, isNavTagOrRole?: boolean,
+     *   hasNavDescendant?: boolean, linkCount?: number }} info
+     */
+    function isLikelyNavMenuPanelInfo(info) {
+        if (!info) return false;
+        if (info.visibility === 'hidden' || info.opacity === '0') return false;
+        if (info.display === 'none') return false;
+        var width = info.width || 0;
+        var height = info.height || 0;
+        if (width < NAV_MENU_PANEL_MIN_WIDTH || height < NAV_MENU_PANEL_MIN_HEIGHT) return false;
+        return !!info.isNavTagOrRole || !!info.hasNavDescendant
+            || (info.linkCount || 0) >= NAV_MENU_PANEL_MIN_LINKS;
+    }
+
+    function isNavMenuPanelCollapsedInfo(info) {
+        if (!info) return false;
+        if (info.hiddenAttr || info.ariaHidden) return true;
+        if (info.display === 'none') return true;
+        if (info.visibility === 'hidden') return true;
+        var opacity = parseFloat(info.opacity);
+        if (!isNaN(opacity) && opacity <= 0.05) return true;
+        if (info.offscreen) return true;
+        var width = info.width || 0;
+        var height = info.height || 0;
+        if (width < 2 || height < 2) return true;
+        return width < NAV_MENU_PANEL_COLLAPSE_MAX_WIDTH
+            && height < NAV_MENU_PANEL_COLLAPSE_MAX_HEIGHT;
+    }
+
+    /** @returns {'expanded'|'collapsed'|'ambiguous'} */
+    function classifyNavMenuPanelStateInfo(info) {
+        if (isLikelyNavMenuPanelInfo(info)) return 'expanded';
+        if (isNavMenuPanelCollapsedInfo(info)) return 'collapsed';
+        return 'ambiguous';
+    }
+
+    /** @returns {'expanded'|'collapsed'|'ambiguous'|null} */
+    function classifyNavMenuPanelState(el, getStyle, viewport) {
+        if (!el || el.nodeType !== 1) return null;
+        if (isOverlayChrome(el)) return null;
+        var nav = navSignalsFromElement(el);
+        var hasNavSignal = !!nav.isNavTagOrRole || !!nav.hasNavDescendant
+            || (nav.linkCount || 0) >= NAV_MENU_PANEL_MIN_LINKS;
+        if (!hasNavSignal) return null;
+        var styleFn = resolveStyleFn(getStyle);
+        if (!styleFn) return null;
+        var style;
+        try { style = styleFn(el); } catch (e) { return null; }
+        var rect;
+        try { rect = el.getBoundingClientRect(); } catch (e2) { return null; }
+        var vp = resolveViewport(viewport);
+        var offscreen = rect.right <= 0 || rect.bottom <= 0
+            || rect.left >= vp.vw || rect.top >= vp.vh;
+        var hiddenAttr = !!(el.hidden || (el.hasAttribute && el.hasAttribute('hidden')));
+        var ariaHidden = !!(el.getAttribute && el.getAttribute('aria-hidden') === 'true');
+        return classifyNavMenuPanelStateInfo({
+            visibility: style.visibility,
+            opacity: style.opacity,
+            display: style.display,
+            width: rect.width,
+            height: rect.height,
+            offscreen: offscreen,
+            hiddenAttr: hiddenAttr,
+            ariaHidden: ariaHidden,
+            isNavTagOrRole: nav.isNavTagOrRole,
+            hasNavDescendant: nav.hasNavDescendant,
+            linkCount: nav.linkCount,
+        });
+    }
+
+    /**
      * Largest non-fullscreen card-like child under a full-viewport scrim.
      * Walks a few levels so portals that wrap the card in extra divs still hit.
      */
@@ -756,7 +1129,13 @@
         if (!info) return true;
         var tag = (info.tag || '').toUpperCase();
         if (tag === 'HTML' || tag === 'BODY') return true;
-        if (BRIGHT_SKIP_TAGS[tag]) return true;
+        if (tag === 'SVG') {
+            if ((info.width || 0) < SVG_BACKGROUND_MIN_SIZE || (info.height || 0) < SVG_BACKGROUND_MIN_SIZE) {
+                return true;
+            }
+        } else if (BRIGHT_SKIP_TAGS[tag]) {
+            return true;
+        }
         if (info.role === 'button') {
             // Large Ask/search composer shells are role=button but must still
             // have their white fill cleared. Small chips / Reserve stay skipped.
@@ -795,11 +1174,13 @@
         if (vh < 1 || vw < 1) return false;
         if ((info.width || 0) < vw * TOP_CHROME_MIN_WIDTH_FRAC) return false;
         var height = info.height || 0;
-        if (height < TOP_CHROME_MIN_HEIGHT || height > vh * TOP_CHROME_MAX_VH) return false;
+        var tag = (info.tag || '').toUpperCase();
+        var isSemanticHeaderTag = tag === 'HEADER' || tag === 'NAV';
+        var maxVh = isSemanticHeaderTag ? TOP_CHROME_MAX_VH_SEMANTIC : TOP_CHROME_MAX_VH;
+        if (height < TOP_CHROME_MIN_HEIGHT || height > vh * maxVh) return false;
         var top = info.top;
         if (typeof top !== 'number' || top < -20 || top > 80) return false;
-        var tag = (info.tag || '').toUpperCase();
-        if (tag === 'HEADER' || tag === 'NAV') return true;
+        if (isSemanticHeaderTag) return true;
         if (info.role === 'banner' || info.role === 'search') return true;
         return !!info.hasSearchField;
     }
@@ -863,9 +1244,13 @@
             return true;
         }
         // Chrome bars are short. Taller fixed layers are drawers / players /
-        // promo shells — never re-opaque them as --aura-bg.
+        // promo shells — never re-opaque them as --aura-bg. A literal
+        // header/nav tag is a strong enough "real chrome" signal to earn a
+        // taller allowance (multi-row headers), same as isTopChromeBarInfo.
         var vh = info.vh || 0;
-        if (vh > 0 && (info.height || 0) > vh * TOP_CHROME_MAX_VH) {
+        var isSemanticHeaderTag = tag === 'HEADER' || tag === 'NAV';
+        var maxVh = isSemanticHeaderTag ? TOP_CHROME_MAX_VH_SEMANTIC : TOP_CHROME_MAX_VH;
+        if (vh > 0 && (info.height || 0) > vh * maxVh) {
             return true;
         }
         // Overlay / CMP / notification tiers (OneSignal, OneTrust, video float).
@@ -1107,6 +1492,7 @@
         SPA_SHELL_IDS: SPA_SHELL_IDS,
         LIGHT_SURFACE_LUM: LIGHT_SURFACE_LUM,
         LIGHT_SURFACE_ALPHA: LIGHT_SURFACE_ALPHA,
+        SVG_BACKGROUND_MIN_SIZE: SVG_BACKGROUND_MIN_SIZE,
         parseCssRgb: parseCssRgb,
         relativeLuminance: relativeLuminance,
         contrastRatio: contrastRatio,
@@ -1139,6 +1525,18 @@
         isLikelyModalCard: isLikelyModalCard,
         isLikelyModalCardInfo: isLikelyModalCardInfo,
         isInnerModalCardInfo: isInnerModalCardInfo,
+        isLikelyNavDrawer: isLikelyNavDrawer,
+        isLikelyNavDrawerInfo: isLikelyNavDrawerInfo,
+        isNavDrawerCollapsedInfo: isNavDrawerCollapsedInfo,
+        classifyNavDrawerStateInfo: classifyNavDrawerStateInfo,
+        classifyNavDrawerState: classifyNavDrawerState,
+        isNavDrawerOpenTransition: isNavDrawerOpenTransition,
+        isLikelyNavMenu: isLikelyNavMenu,
+        isLikelyNavMenuPanelInfo: isLikelyNavMenuPanelInfo,
+        isNavMenuPanelCollapsedInfo: isNavMenuPanelCollapsedInfo,
+        classifyNavMenuPanelStateInfo: classifyNavMenuPanelStateInfo,
+        classifyNavMenuPanelState: classifyNavMenuPanelState,
+        isLikelyNavMenuInfo: isLikelyNavMenuInfo,
         isSearchChrome: isSearchChrome,
         isSearchChromeInfo: isSearchChromeInfo,
         elementHasSearchField: elementHasSearchField,

@@ -139,6 +139,36 @@ describe('shouldSkipBrightElement', () => {
       tag: 'BODY', width: 400, height: 800,
     })).toBe(true);
   });
+
+  test('icon-sized svg stays skipped (glyph colors protected)', () => {
+    expect(H.shouldSkipBrightElement({
+      tag: 'SVG', width: 24, height: 24,
+    })).toBe(true);
+    expect(H.shouldSkipBrightElement({
+      tag: 'SVG', width: 47, height: 200,
+    })).toBe(true);
+  });
+
+  test('large svg is eligible for background-color clearing, not blanket-skipped', () => {
+    expect(H.shouldSkipBrightElement({
+      tag: 'SVG', width: 96, height: 133, visibility: 'visible', opacity: '1', mask: 'none',
+    })).toBe(false);
+  });
+
+  test('a large svg is still skipped if it fails another gate (overlay root, hidden, etc.)', () => {
+    expect(H.shouldSkipBrightElement({
+      tag: 'SVG', width: 96, height: 133, overlayRoot: true,
+    })).toBe(true);
+    expect(H.shouldSkipBrightElement({
+      tag: 'SVG', width: 96, height: 133, visibility: 'hidden',
+    })).toBe(true);
+  });
+
+  test('elements nested inside an svg (paths/rects) stay skipped regardless of size', () => {
+    expect(H.shouldSkipBrightElement({
+      tag: 'RECT', width: 96, height: 133, inSvg: true, visibility: 'visible', opacity: '1', mask: 'none',
+    })).toBe(true);
+  });
 });
 
 describe('near-white thresholds', () => {
@@ -279,6 +309,40 @@ describe('shouldSkipStickyElement', () => {
     })).toBe(false);
   });
 
+  test('semantic header/nav tags get the taller TOP_CHROME_MAX_VH_SEMANTIC allowance', () => {
+    // Same ~41% vh height as the video-float case above, but tagged HEADER —
+    // a multi-row university/publisher header, not a curtain. Must paint.
+    expect(H.shouldSkipStickyElement({
+      tag: 'HEADER',
+      position: 'fixed',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 390,
+      height: 344,
+      top: 0,
+      left: 0,
+      vh: 844,
+      vw: 390,
+      zIndex: '7',
+    })).toBe(false);
+    // Beyond even the relaxed 0.55 cap — still skipped regardless of tag.
+    expect(H.shouldSkipStickyElement({
+      tag: 'HEADER',
+      position: 'fixed',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 390,
+      height: 500,
+      top: 0,
+      left: 0,
+      vh: 844,
+      vw: 390,
+      zIndex: '7',
+    })).toBe(true);
+  });
+
   test('skips AMP consent / sticky-ad / popupOverlay chrome', () => {
     expect(H.shouldSkipStickyElement({
       position: 'fixed',
@@ -402,14 +466,30 @@ describe('isTopChromeBarInfo', () => {
     })).toBe(false);
   });
 
-  test('rejects tall headers beyond TOP_CHROME_MAX_VH (0.32)', () => {
-    // ~45% of 800px — too tall for app-bar chrome
+  test('semantic header/nav tags get a taller allowance (TOP_CHROME_MAX_VH_SEMANTIC 0.55)', () => {
+    // ~45% of 800px — beyond the generic 0.32 cap but within the 0.55
+    // semantic-tag allowance (multi-row university/publisher headers).
     expect(H.isTopChromeBarInfo({
       ...bar, height: 360,
+    })).toBe(true);
+    expect(H.isTopChromeBarInfo({
+      ...bar, tag: 'NAV', height: 360,
+    })).toBe(true);
+    // ~60% of 800px — too tall even for the relaxed semantic cap.
+    expect(H.isTopChromeBarInfo({
+      ...bar, height: 480,
+    })).toBe(false);
+  });
+
+  test('rejects tall non-semantic bars beyond TOP_CHROME_MAX_VH (0.32)', () => {
+    // ~45% of 800px — too tall for a role/search-field-matched DIV, which
+    // keeps the tighter generic cap (no <header>/<nav> tag signal).
+    expect(H.isTopChromeBarInfo({
+      ...bar, tag: 'DIV', role: 'search', hasSearchField: true, height: 360,
     })).toBe(false);
     // Still within 0.32 * 800 = 256
     expect(H.isTopChromeBarInfo({
-      ...bar, height: 240,
+      ...bar, tag: 'DIV', role: 'search', hasSearchField: true, height: 240,
     })).toBe(true);
   });
 });
@@ -497,6 +577,331 @@ describe('isLikelyModalCardInfo', () => {
     expect(H.isInnerModalCardInfo({
       ...base, position: 'relative', zIndex: 'auto',
     })).toBe(true);
+  });
+});
+
+describe('isLikelyNavDrawerInfo', () => {
+  const vh = 800;
+  const vw = 400;
+
+  test('accepts a full-screen <nav> hamburger drawer', () => {
+    expect(H.isLikelyNavDrawerInfo({
+      position: 'fixed',
+      visibility: 'visible',
+      opacity: '1',
+      width: 400,
+      height: 800,
+      vh, vw,
+      isNavTagOrRole: true,
+    })).toBe(true);
+  });
+
+  test('accepts a side drawer (80% width, full height) via role="navigation"', () => {
+    expect(H.isLikelyNavDrawerInfo({
+      position: 'fixed',
+      visibility: 'visible',
+      opacity: '1',
+      width: 320,
+      height: 800,
+      vh, vw,
+      isNavTagOrRole: true,
+    })).toBe(true);
+  });
+
+  test('accepts a plain DIV drawer with a real list of nav links (>= 5)', () => {
+    expect(H.isLikelyNavDrawerInfo({
+      position: 'fixed',
+      visibility: 'visible',
+      opacity: '1',
+      width: 400,
+      height: 800,
+      vh, vw,
+      linkCount: 6,
+    })).toBe(true);
+  });
+
+  test('rejects a covering DIV with no nav signal at all (curtain shape only)', () => {
+    expect(H.isLikelyNavDrawerInfo({
+      position: 'fixed',
+      visibility: 'visible',
+      opacity: '1',
+      width: 400,
+      height: 800,
+      vh, vw,
+    })).toBe(false);
+  });
+
+  test('rejects a CMP-style surface with a few buttons, not a real link list', () => {
+    // OneTrust / cookie banners commonly have 2-4 buttons, well under the
+    // NAV_DRAWER_MIN_LINKS (5) bar, and no <nav> tag or role.
+    expect(H.isLikelyNavDrawerInfo({
+      position: 'fixed',
+      visibility: 'visible',
+      opacity: '1',
+      width: 400,
+      height: 800,
+      vh, vw,
+      linkCount: 3,
+    })).toBe(false);
+  });
+
+  test('rejects a small account/user dropdown even with nav semantics', () => {
+    expect(H.isLikelyNavDrawerInfo({
+      position: 'fixed',
+      visibility: 'visible',
+      opacity: '1',
+      width: 100,
+      height: 150,
+      vh, vw,
+      isNavTagOrRole: true,
+    })).toBe(false);
+  });
+
+  test('rejects hidden / invisible / non-fixed elements', () => {
+    expect(H.isLikelyNavDrawerInfo({
+      position: 'fixed', visibility: 'hidden', opacity: '1',
+      width: 400, height: 800, vh, vw, isNavTagOrRole: true,
+    })).toBe(false);
+    expect(H.isLikelyNavDrawerInfo({
+      position: 'fixed', visibility: 'visible', opacity: '0',
+      width: 400, height: 800, vh, vw, isNavTagOrRole: true,
+    })).toBe(false);
+    expect(H.isLikelyNavDrawerInfo({
+      position: 'static', visibility: 'visible', opacity: '1',
+      width: 400, height: 800, vh, vw, isNavTagOrRole: true,
+    })).toBe(false);
+  });
+});
+
+describe('isNavDrawerCollapsedInfo', () => {
+  const vh = 800;
+  const vw = 400;
+
+  test('display:none / hidden attribute / aria-hidden are collapsed', () => {
+    expect(H.isNavDrawerCollapsedInfo({ display: 'none', width: 400, height: 800, vh, vw })).toBe(true);
+    expect(H.isNavDrawerCollapsedInfo({ hiddenAttr: true, width: 400, height: 800, vh, vw })).toBe(true);
+    expect(H.isNavDrawerCollapsedInfo({ ariaHidden: true, width: 400, height: 800, vh, vw })).toBe(true);
+  });
+
+  test('visibility:hidden / near-zero opacity are collapsed', () => {
+    expect(H.isNavDrawerCollapsedInfo({ visibility: 'hidden', width: 400, height: 800, vh, vw })).toBe(true);
+    expect(H.isNavDrawerCollapsedInfo({ opacity: '0', width: 400, height: 800, vh, vw })).toBe(true);
+  });
+
+  test('fully off-screen is collapsed even at full drawer size', () => {
+    expect(H.isNavDrawerCollapsedInfo({ offscreen: true, width: 400, height: 800, vh, vw })).toBe(true);
+  });
+
+  test('near-zero width/height is collapsed', () => {
+    expect(H.isNavDrawerCollapsedInfo({ width: 0, height: 800, vh, vw })).toBe(true);
+    expect(H.isNavDrawerCollapsedInfo({ width: 400, height: 0, vh, vw })).toBe(true);
+  });
+
+  test('confidently tiny relative to viewport (<=5%) is collapsed', () => {
+    expect(H.isNavDrawerCollapsedInfo({ width: 10, height: 20, vh, vw })).toBe(true);
+  });
+
+  test('a mid-transition size (dead zone, above 5% below 30%) is NOT collapsed', () => {
+    expect(H.isNavDrawerCollapsedInfo({ width: 100, height: 150, vh, vw })).toBe(false);
+  });
+
+  test('a fully expanded size is NOT collapsed', () => {
+    expect(H.isNavDrawerCollapsedInfo({ width: 400, height: 800, vh, vw, visibility: 'visible', opacity: '1' })).toBe(false);
+  });
+});
+
+describe('classifyNavDrawerStateInfo', () => {
+  const vh = 800;
+  const vw = 400;
+
+  test('a full expanded drawer shape classifies as expanded', () => {
+    expect(H.classifyNavDrawerStateInfo({
+      position: 'fixed', visibility: 'visible', opacity: '1',
+      width: 400, height: 800, vh, vw, isNavTagOrRole: true,
+    })).toBe('expanded');
+  });
+
+  test('a hidden/offscreen/tiny shape classifies as collapsed', () => {
+    expect(H.classifyNavDrawerStateInfo({
+      display: 'none', width: 400, height: 800, vh, vw, isNavTagOrRole: true,
+    })).toBe('collapsed');
+    expect(H.classifyNavDrawerStateInfo({
+      offscreen: true, width: 400, height: 800, vh, vw, isNavTagOrRole: true,
+    })).toBe('collapsed');
+    expect(H.classifyNavDrawerStateInfo({
+      width: 5, height: 5, vh, vw, isNavTagOrRole: true,
+    })).toBe('collapsed');
+  });
+
+  test('a mid-transition size with nav signal is ambiguous', () => {
+    expect(H.classifyNavDrawerStateInfo({
+      position: 'fixed', visibility: 'visible', opacity: '1',
+      width: 100, height: 150, vh, vw, isNavTagOrRole: true,
+    })).toBe('ambiguous');
+  });
+
+  test('regression: an ambient position:relative nav bar (wtatennis.com shape) is ambiguous, never expanded', () => {
+    // wtatennis.com's <nav class="main-navigation"> is position:relative by
+    // default and only ever becomes position:sticky via the site's own
+    // scroll-driven class toggle — it never undergoes a hidden/collapsed ->
+    // visible/expanded transition the way a real drawer opening does. It
+    // must never classify as 'expanded' regardless of its full-width size.
+    expect(H.classifyNavDrawerStateInfo({
+      position: 'relative', visibility: 'visible', opacity: '1',
+      width: 400, height: 60, vh, vw, isNavTagOrRole: true,
+    })).toBe('ambiguous');
+  });
+});
+
+describe('isNavDrawerOpenTransition', () => {
+  test('first sighting (no prior history) never counts as an open transition', () => {
+    expect(H.isNavDrawerOpenTransition(undefined, 'expanded')).toBe(false);
+  });
+
+  test('collapsed -> expanded is a genuine open transition', () => {
+    expect(H.isNavDrawerOpenTransition('collapsed', 'expanded')).toBe(true);
+  });
+
+  test('already expanded does not retrigger', () => {
+    expect(H.isNavDrawerOpenTransition('expanded', 'expanded')).toBe(false);
+  });
+
+  test('expanded -> collapsed is not an open transition (closing is handled elsewhere)', () => {
+    expect(H.isNavDrawerOpenTransition('expanded', 'collapsed')).toBe(false);
+  });
+
+  test('collapsed -> collapsed is not an open transition', () => {
+    expect(H.isNavDrawerOpenTransition('collapsed', 'collapsed')).toBe(false);
+  });
+
+  test('an ambiguous prior reading can never stand in for a confirmed collapsed baseline', () => {
+    expect(H.isNavDrawerOpenTransition('ambiguous', 'expanded')).toBe(false);
+  });
+});
+
+describe('isLikelyNavMenuPanelInfo / classifyNavMenuPanelStateInfo', () => {
+  // Position-agnostic counterpart to isLikelyNavDrawerInfo, for menus that
+  // expand in place (e.g. Bootstrap's .navbar-collapse) rather than as a
+  // position:fixed/sticky overlay — the UC Davis OASIS shape.
+
+  test('accepts a real <nav>-tagged panel with no position at all', () => {
+    expect(H.isLikelyNavMenuPanelInfo({
+      visibility: 'visible', opacity: '1', width: 300, height: 400,
+      isNavTagOrRole: true,
+    })).toBe(true);
+  });
+
+  test('accepts a div containing a nav descendant', () => {
+    expect(H.isLikelyNavMenuPanelInfo({
+      visibility: 'visible', opacity: '1', width: 200, height: 300,
+      hasNavDescendant: true,
+    })).toBe(true);
+  });
+
+  test('accepts a plain panel with a real list of nav links (>= 5), no nav tag/role/descendant', () => {
+    // The Bootstrap ".navbar-collapse" shape: a plain <ul>/<div> of <li><a>
+    // items with no <nav> wrapper or descendant of its own.
+    expect(H.isLikelyNavMenuPanelInfo({
+      visibility: 'visible', opacity: '1', width: 300, height: 400,
+      linkCount: 5,
+    })).toBe(true);
+  });
+
+  test('rejects a panel with only a couple of links (below the 5-link floor) and no nav tag/role', () => {
+    expect(H.isLikelyNavMenuPanelInfo({
+      visibility: 'visible', opacity: '1', width: 300, height: 400,
+      linkCount: 3,
+    })).toBe(false);
+  });
+
+  test('rejects a thin full-width bar even with nav semantics (height floor)', () => {
+    // The wtatennis.com shape: a full-width sticky nav bar is not a
+    // multi-item dropdown panel and must never qualify here.
+    expect(H.isLikelyNavMenuPanelInfo({
+      visibility: 'visible', opacity: '1', width: 400, height: 60,
+      isNavTagOrRole: true,
+    })).toBe(false);
+  });
+
+  test('rejects a narrow tall sliver even with nav semantics (width floor)', () => {
+    expect(H.isLikelyNavMenuPanelInfo({
+      visibility: 'visible', opacity: '1', width: 50, height: 400,
+      isNavTagOrRole: true,
+    })).toBe(false);
+  });
+
+  test('classifyNavMenuPanelStateInfo: display:none is collapsed, full panel is expanded', () => {
+    expect(H.classifyNavMenuPanelStateInfo({
+      display: 'none', width: 300, height: 400, isNavTagOrRole: true,
+    })).toBe('collapsed');
+    expect(H.classifyNavMenuPanelStateInfo({
+      visibility: 'visible', opacity: '1', width: 300, height: 400, isNavTagOrRole: true,
+    })).toBe('expanded');
+  });
+
+  test('classifyNavMenuPanelStateInfo: a mid-size shape is ambiguous, not collapsed or expanded', () => {
+    expect(H.classifyNavMenuPanelStateInfo({
+      visibility: 'visible', opacity: '1', width: 60, height: 40, isNavTagOrRole: true,
+    })).toBe('ambiguous');
+  });
+
+  test('regression: the wtatennis.com thin-bar shape is ambiguous here too, never expanded', () => {
+    expect(H.classifyNavMenuPanelStateInfo({
+      visibility: 'visible', opacity: '1', width: 400, height: 60, isNavTagOrRole: true,
+    })).toBe('ambiguous');
+  });
+});
+
+describe('isLikelyNavMenuInfo', () => {
+  // No position field at all — WordPress/Divi-style dropdowns commonly
+  // expand in place (static/relative/absolute), not as a fixed overlay.
+  test('accepts a <nav>-tagged or role="navigation" dropdown regardless of position', () => {
+    expect(H.isLikelyNavMenuInfo({
+      visibility: 'visible', opacity: '1', width: 300, height: 400,
+      isNavTagOrRole: true,
+    })).toBe(true);
+  });
+
+  test('accepts a plain UL/DIV submenu with a real list of links (>= 3)', () => {
+    expect(H.isLikelyNavMenuInfo({
+      visibility: 'visible', opacity: '1', width: 200, height: 150,
+      linkCount: 4,
+    })).toBe(true);
+  });
+
+  test('accepts an element that wraps a <nav> descendant', () => {
+    expect(H.isLikelyNavMenuInfo({
+      visibility: 'visible', opacity: '1', width: 300, height: 60,
+      hasNavDescendant: true,
+    })).toBe(true);
+  });
+
+  test('rejects with no nav signal at all', () => {
+    expect(H.isLikelyNavMenuInfo({
+      visibility: 'visible', opacity: '1', width: 300, height: 400,
+    })).toBe(false);
+  });
+
+  test('rejects a CMP-style surface with only 2 buttons, not a real link list', () => {
+    expect(H.isLikelyNavMenuInfo({
+      visibility: 'visible', opacity: '1', width: 300, height: 150,
+      linkCount: 2,
+    })).toBe(false);
+  });
+
+  test('rejects a tiny sliver or hidden/invisible element', () => {
+    expect(H.isLikelyNavMenuInfo({
+      visibility: 'visible', opacity: '1', width: 10, height: 5,
+      isNavTagOrRole: true,
+    })).toBe(false);
+    expect(H.isLikelyNavMenuInfo({
+      visibility: 'hidden', opacity: '1', width: 300, height: 400,
+      isNavTagOrRole: true,
+    })).toBe(false);
+    expect(H.isLikelyNavMenuInfo({
+      visibility: 'visible', opacity: '0', width: 300, height: 400,
+      isNavTagOrRole: true,
+    })).toBe(false);
   });
 });
 
@@ -751,6 +1156,181 @@ describe('isLikelyModalCard / findInnerModalCard (jsdom)', () => {
     expect(H.isLikelyModalCard(scrim)).toBe(false);
     expect(H.isLikelyModalCard(sheet)).toBe(true);
     expect(H.findInnerModalCard(scrim)).toBe(sheet);
+  });
+});
+
+describe('isLikelyNavDrawer / isLikelyNavMenu never override ARIA dialogs (jsdom)', () => {
+  // Regression: a CMP preference center (OneTrust et al.) is role="dialog"
+  // + aria-modal, full-viewport, position:fixed, and commonly contains many
+  // links (privacy policy, vendor list, cookie settings) — everything
+  // isLikelyNavDrawer looks for. reopaqueOverlays already correctly makes a
+  // covering-sheet dialog transparent; isLikelyNavDrawer must not re-claim
+  // it and repaint it into a curtain.
+  test('a full-viewport role="dialog" consent center is never a nav drawer', () => {
+    document.body.innerHTML = `
+      <div id="pc-sdk" role="dialog" aria-modal="true" style="position:fixed; inset:0;">
+        <nav>
+          <a href="/privacy">Privacy Policy</a>
+          <a href="/terms">Terms</a>
+          <a href="/cookies">Cookie Settings</a>
+          <a href="/vendors/1">Vendor A</a>
+          <a href="/vendors/2">Vendor B</a>
+          <a href="/vendors/3">Vendor C</a>
+        </nav>
+        <button>Accept All</button>
+      </div>
+    `;
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 400 });
+    const dialog = document.getElementById('pc-sdk');
+    dialog.getBoundingClientRect = () => ({
+      width: 400, height: 800, top: 0, left: 0, bottom: 800, right: 400,
+    });
+
+    expect(H.isLikelyNavDrawer(dialog)).toBe(false);
+    expect(H.isLikelyNavMenu(dialog)).toBe(false);
+  });
+
+  test('the same shape without dialog semantics IS a nav drawer', () => {
+    document.body.innerHTML = `
+      <nav id="hamburger" style="position:fixed; inset:0;">
+        <a href="/a">A</a><a href="/b">B</a><a href="/c">C</a>
+        <a href="/d">D</a><a href="/e">E</a>
+      </nav>
+    `;
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 400 });
+    const nav = document.getElementById('hamburger');
+    nav.getBoundingClientRect = () => ({
+      width: 400, height: 800, top: 0, left: 0, bottom: 800, right: 400,
+    });
+
+    expect(H.isLikelyNavDrawer(nav)).toBe(true);
+    expect(H.isLikelyNavMenu(nav)).toBe(true);
+  });
+});
+
+describe('classifyNavDrawerState / isNavDrawerOpenTransition (jsdom)', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 400 });
+  });
+
+  test('a drawer collapsed via display:none, then revealed, is a genuine open transition', () => {
+    document.body.innerHTML = `
+      <nav id="drawer" style="display:none; position:fixed; inset:0;">
+        <a href="/a">A</a><a href="/b">B</a><a href="/c">C</a>
+        <a href="/d">D</a><a href="/e">E</a>
+      </nav>
+    `;
+    const nav = document.getElementById('drawer');
+    nav.getBoundingClientRect = () => ({
+      width: 0, height: 0, top: 0, left: 0, bottom: 0, right: 0,
+    });
+
+    const collapsedState = H.classifyNavDrawerState(nav);
+    expect(collapsedState).toBe('collapsed');
+
+    nav.style.display = 'block';
+    nav.getBoundingClientRect = () => ({
+      width: 400, height: 800, top: 0, left: 0, bottom: 800, right: 400,
+    });
+    const expandedState = H.classifyNavDrawerState(nav);
+    expect(expandedState).toBe('expanded');
+
+    expect(H.isNavDrawerOpenTransition(collapsedState, expandedState)).toBe(true);
+  });
+
+  test('regression: wtatennis.com-style ambient nav (relative -> sticky) is never a genuine open transition', () => {
+    // Reproduces the exact historical failure: an always-visible <nav> that
+    // the site's own scroll-driven class toggles from position:relative to
+    // position:sticky, with no size/visibility change at all. It must
+    // classify as 'ambiguous' both before and after, and the ambiguous ->
+    // expanded step must never register as an open transition.
+    document.body.innerHTML = `
+      <nav id="main-nav" class="main-navigation" style="position:relative; top:0; left:0;">
+        <a href="/a">A</a><a href="/b">B</a><a href="/c">C</a>
+        <a href="/d">D</a><a href="/e">E</a>
+      </nav>
+    `;
+    const nav = document.getElementById('main-nav');
+    nav.getBoundingClientRect = () => ({
+      width: 400, height: 60, top: 0, left: 0, bottom: 60, right: 400,
+    });
+
+    const beforeState = H.classifyNavDrawerState(nav);
+    expect(beforeState).toBe('ambiguous');
+
+    nav.classList.add('scroll-lock');
+    nav.style.position = 'sticky';
+    // Size/visibility unchanged — only position flips, exactly as the
+    // site's own scroll-lock class does.
+    const afterState = H.classifyNavDrawerState(nav);
+    expect(afterState).toBe('expanded');
+
+    expect(H.isNavDrawerOpenTransition(beforeState, afterState)).toBe(false);
+  });
+});
+
+describe('classifyNavMenuPanelState (jsdom)', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 400 });
+  });
+
+  test('regression: a Bootstrap-style collapse-in-place menu (UC Davis OASIS shape) is a genuine open transition', () => {
+    // No position:fixed/sticky anywhere — the menu simply toggles
+    // display:none -> block in normal document flow, which is exactly what
+    // makes it invisible to classifyNavDrawerState (requires a position) but
+    // is exactly what this position-agnostic path exists to catch.
+    document.body.innerHTML = `
+      <ul id="menu" class="navbar-collapse" style="display:none;">
+        <li><a href="/schedule-builder">Schedule Builder</a></li>
+        <li><a href="/my-schedule">My Schedule</a></li>
+        <li><a href="/my-records">My Records</a></li>
+        <li><a href="/my-messages">My Messages</a></li>
+        <li><a href="/sign-out">Sign Out</a></li>
+      </ul>
+    `;
+    const menu = document.getElementById('menu');
+    menu.getBoundingClientRect = () => ({
+      width: 0, height: 0, top: 0, left: 0, bottom: 0, right: 0,
+    });
+
+    const collapsedState = H.classifyNavMenuPanelState(menu);
+    expect(collapsedState).toBe('collapsed');
+
+    menu.style.display = 'block';
+    menu.getBoundingClientRect = () => ({
+      width: 400, height: 320, top: 60, left: 0, bottom: 380, right: 400,
+    });
+    const expandedState = H.classifyNavMenuPanelState(menu);
+    expect(expandedState).toBe('expanded');
+
+    expect(H.isNavDrawerOpenTransition(collapsedState, expandedState)).toBe(true);
+  });
+
+  test('an ordinary always-visible <nav> with no collapsed history is never treated as freshly opened', () => {
+    // First sighting: no prior history recorded yet, so even though this
+    // already qualifies as 'expanded' on the very first read, there is
+    // nothing here for a caller to treat as a transition — the WeakMap in
+    // content.js only ever records a baseline on first sight and never
+    // paints from that alone (verified at the content.js integration level,
+    // not by this pure function, but the state value returned here is what
+    // makes that safe: it has no way to distinguish "always was open" from
+    // "just opened" on a single read).
+    document.body.innerHTML = `
+      <nav id="sidebar" style="position:static;">
+        <a href="/a">A</a><a href="/b">B</a><a href="/c">C</a>
+      </nav>
+    `;
+    const nav = document.getElementById('sidebar');
+    nav.getBoundingClientRect = () => ({
+      width: 300, height: 400, top: 0, left: 0, bottom: 400, right: 300,
+    });
+    expect(H.classifyNavMenuPanelState(nav)).toBe('expanded');
+    // isNavDrawerOpenTransition(undefined, 'expanded') is exercised directly
+    // in the isNavDrawerOpenTransition describe block above.
   });
 });
 

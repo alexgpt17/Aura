@@ -7,8 +7,18 @@
     'use strict';
 
     var H = typeof AuraThemeHeuristics !== 'undefined' ? AuraThemeHeuristics : null;
+    var SHIELD_ID = 'aura-early-shield';
     try {
         var host = typeof location !== 'undefined' ? location.hostname : '';
+        // Ad creative frames (GPT/SafeFrame, exchange iframes, ...): never
+        // touch these at all, not even cosmetically. SafeFrame / "friendly
+        // iframe" rendering pipelines commonly assume the frame's document
+        // is untouched by any other script before their own bootstrap code
+        // runs (some ad-fraud heuristics treat early third-party DOM
+        // mutation inside the frame as a signal to abort rendering). A
+        // previous attempt injected a transparent-canvas <style> tag here to
+        // fix empty slots showing white — confirmed (extension off vs. on)
+        // to break the ad loading entirely, not just its color. Do nothing.
         if (H && H.isAdNetworkHost && H.isAdNetworkHost(host)) {
             return;
         }
@@ -17,13 +27,11 @@
         // actually draw a dialog. The early shield below only ever forces an
         // opaque html/body fill, which would curtain the whole 100vw x 100vh
         // frame over the host article before content.js's more careful,
-        // element-scoped theming (see IS_TRANSPARENT_OVERLAY_FRAME) even runs.
+        // element-scoped theming (see IS_AMP_CONSENT_FRAME) even runs.
         if (H && H.isAmpPrivacyFrameHost && H.isAmpPrivacyFrameHost(host)) {
             return;
         }
     } catch (eBail) {}
-
-    var SHIELD_ID = 'aura-early-shield';
 
     window.__TINT_THEME_DATA__ = {
         globalTheme: null,
