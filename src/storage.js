@@ -14,6 +14,11 @@ export const getDefaultThemeData = () => {
   return {
     globalTheme: null, // No theme selected by default
     siteThemes: {},
+    // Mode switch, independent of whichever theme is selected: when true, the
+    // extension prefers a website's own native dark mode (if it has one) over
+    // forcing Aura's theme colors, falling back to Aura's palette only on
+    // sites with no native dark mode of their own.
+    nativeDarkModeEnabled: false,
     customThemes: [], // Array of custom themes (max 5)
     focusModeSettings: {
       enabled: false,
@@ -354,7 +359,12 @@ export const getThemes = async () => {
     if (themeData.hasCompletedOnboarding === undefined) {
       themeData.hasCompletedOnboarding = false;
     }
-    
+
+    // Ensure nativeDarkModeEnabled exists (for backward compatibility with old data)
+    if (themeData.nativeDarkModeEnabled === undefined) {
+      themeData.nativeDarkModeEnabled = false;
+    }
+
     return themeData;
   } catch (e) {
     console.error('Error reading theme data:', e);

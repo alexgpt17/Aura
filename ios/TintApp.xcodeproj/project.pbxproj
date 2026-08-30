@@ -14,7 +14,6 @@
 		0BAA30062F5F000100DDDDDD /* FocusModeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BAA30052F5F000100DDDDDD /* FocusModeManager.swift */; };
 		0BAA30082F5F000100DDDDDD /* FocusModeManagerBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = 0BAA30072F5F000100DDDDDD /* FocusModeManagerBridge.m */; };
 		0BAA300A2F5F000100DDDDDD /* AuraPresetDefinitions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BAA30092F5F000100DDDDDD /* AuraPresetDefinitions.swift */; };
-		0BAA40022F5F000100EEEEEE /* FocusFilterExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 0BAA40012F5F000100EEEEEE /* FocusFilterExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		0BEB58902E7DFC6600B7D7B2 /* TintExtension Extension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 0BEB588E2E7DFC6600B7D7B1 /* TintExtension Extension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
@@ -31,13 +30,6 @@
 			proxyType = 1;
 			remoteGlobalIDString = 0BAA10132F5F000100BBBBBB;
 			remoteInfo = ContentBlockerExtension;
-		};
-		0BAA40042F5F000100EEEEEE /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 0BAA40032F5F000100EEEEEE;
-			remoteInfo = FocusFilterExtension;
 		};
 		0BEB58792E7DFC6600B7D7B1 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -743,11 +735,6 @@
 			isa = PBXTargetDependency;
 			target = 0BAA10132F5F000100BBBBBB /* ContentBlockerExtension */;
 			targetProxy = 0BAA10122F5F000100BBBBBB /* PBXContainerItemProxy */;
-		};
-		0BAA40052F5F000100EEEEEE /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 0BAA40032F5F000100EEEEEE /* FocusFilterExtension */;
-			targetProxy = 0BAA40042F5F000100EEEEEE /* PBXContainerItemProxy */;
 		};
 		0BEB587A2E7DFC6600B7D7B1 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;

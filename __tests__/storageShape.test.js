@@ -28,6 +28,7 @@ describe('validateThemeData / defaults', () => {
     expect(Array.isArray(d.favoriteThemes)).toBe(true);
     expect(d.favoriteThemes).toEqual([]);
     expect(d.hasCompletedOnboarding).toBe(false);
+    expect(d.nativeDarkModeEnabled).toBe(false);
   });
 
   test('accepts valid shape', () => {

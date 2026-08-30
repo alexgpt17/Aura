@@ -415,6 +415,55 @@ describe('shouldSkipStickyElement', () => {
       vw: 400,
     })).toBe(true);
   });
+
+  test('a wide/short sticky wrapper whose children barely cover it (github.com .BackToTop shape) is skipped', () => {
+    // position:sticky, display:flex, justify-content:flex-end hosting one
+    // small 36px button in a 390px-wide box with no background of its own.
+    expect(H.shouldSkipStickyElement({
+      position: 'sticky',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 390,
+      height: 36,
+      top: 612,
+      left: 0,
+      vh: 844,
+      vw: 390,
+      zIndex: '98',
+      childCoverageFrac: 36 / 390,
+    })).toBe(true);
+  });
+
+  test('a genuine wide chrome bar whose content spans most of its width still paints', () => {
+    expect(H.shouldSkipStickyElement({
+      position: 'sticky',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 390,
+      height: 64,
+      top: 0,
+      left: 0,
+      vh: 844,
+      vw: 390,
+      zIndex: '7',
+      childCoverageFrac: 0.85,
+    })).toBe(false);
+  });
+
+  test('childCoverageFrac is ignored (gate never applies) when null, or the element is narrow', () => {
+    expect(H.shouldSkipStickyElement({
+      position: 'sticky', width: 390, height: 64, vh: 844, vw: 390, zIndex: '7',
+      childCoverageFrac: null,
+    })).toBe(false);
+    // Under the 150px width floor — a small badge, already handled by
+    // other gates; this new one must not additionally affect it.
+    expect(H.shouldSkipStickyElement({
+      position: 'fixed', width: 60, height: 24, vh: 844, vw: 390, zIndex: '7',
+      childCoverageFrac: 0.1,
+    })).toBe(false);
+  });
 });
 
 describe('isCoveringSheetRect', () => {
@@ -927,6 +976,28 @@ describe('background-image classification', () => {
     expect(H.isPhotographicBackgroundImage('url("https://cdn.example/hero.jpg")')).toBe(true);
     expect(H.isPhotographicBackgroundImage('linear-gradient(#111, #333)')).toBe(false);
     expect(H.isGradientBackgroundImage('none')).toBe(false);
+  });
+
+  test('isLoaderBackgroundImageUrl flags loader/spinner assets, not unrelated images', () => {
+    // UC Davis OASIS shape: a static loading-spinner GIF set as an
+    // element's background-image, normally hidden behind an opaque
+    // covering background-color our own transparency rule strips.
+    expect(H.isLoaderBackgroundImageUrl(
+      'url(/resources-core/ls/images/loader.circle.meduim.gif)'
+    )).toBe(true);
+    expect(H.isLoaderBackgroundImageUrl('url("https://cdn.example/spinner.svg")')).toBe(true);
+    expect(H.isLoaderBackgroundImageUrl("url('/assets/throbber.png')")).toBe(true);
+    // Case-insensitive, and matches regardless of quoting style.
+    expect(H.isLoaderBackgroundImageUrl('url(/img/LOADER-dark.png)')).toBe(true);
+    // Unrelated photos/hero images must not be swept up.
+    expect(H.isLoaderBackgroundImageUrl('url("https://cdn.example/hero.jpg")')).toBe(false);
+    // Deliberately narrow: bare "spin"/"load" substrings inside unrelated
+    // words must not false-positive (e.g. a "download" or "spindle" asset).
+    expect(H.isLoaderBackgroundImageUrl('url(/img/download-icon.png)')).toBe(false);
+    expect(H.isLoaderBackgroundImageUrl('url(/img/spindle.png)')).toBe(false);
+    expect(H.isLoaderBackgroundImageUrl('none')).toBe(false);
+    expect(H.isLoaderBackgroundImageUrl('linear-gradient(#111, #333)')).toBe(false);
+    expect(H.isLoaderBackgroundImageUrl('')).toBe(false);
   });
 
   test('shouldClearLayoutGradient on large layout nodes, never url()', () => {
@@ -1685,5 +1756,93 @@ describe('buildAdSurfaceCssNotSelector', () => {
     H.AD_SURFACE_ID_CLASS_TOKENS.forEach((token) => {
       expect(H.isLikelyAdSurfaceInfo({ tag: 'DIV', className: token })).toBe(true);
     });
+  });
+});
+
+describe('isChatWidgetHost', () => {
+  test('matches known chat/support-widget vendors', () => {
+    expect(H.isChatWidgetHost('widget.intercom.io')).toBe(true);
+    expect(H.isChatWidgetHost('js.intercomcdn.com')).toBe(true);
+    expect(H.isChatWidgetHost('static.zdassets.com')).toBe(true);
+    expect(H.isChatWidgetHost('js.driftt.com')).toBe(true);
+    expect(H.isChatWidgetHost('client.crisp.chat')).toBe(true);
+    expect(H.isChatWidgetHost('embed.tawk.to')).toBe(true);
+    expect(H.isChatWidgetHost('js-na1.hs-scripts.com')).toBe(true);
+  });
+
+  test('leaves normal sites alone', () => {
+    expect(H.isChatWidgetHost('fox5sandiego.com')).toBe(false);
+    expect(H.isChatWidgetHost('wikipedia.org')).toBe(false);
+    expect(H.isChatWidgetHost('')).toBe(false);
+  });
+});
+
+describe('classifyNativeDarkModeInfo', () => {
+  test('GitHub Primer: data-color-mode with dark-theme companion, not yet dark', () => {
+    expect(H.classifyNativeDarkModeInfo({
+      hasDataColorMode: true, dataColorMode: 'light', hasDarkThemeCompanion: true,
+    })).toEqual({ attr: 'data-color-mode', value: 'dark' });
+  });
+
+  test('data-color-mode without the dark-theme companion is not trusted (avoid a false match)', () => {
+    expect(H.classifyNativeDarkModeInfo({
+      hasDataColorMode: true, dataColorMode: 'light', hasDarkThemeCompanion: false,
+    })).toBeNull();
+  });
+
+  test('already dark returns null — nothing to flip', () => {
+    expect(H.classifyNativeDarkModeInfo({
+      hasDataColorMode: true, dataColorMode: 'dark', hasDarkThemeCompanion: true,
+    })).toBeNull();
+  });
+
+  test('Bootstrap 5.3+ data-bs-theme', () => {
+    expect(H.classifyNativeDarkModeInfo({ hasDataBsTheme: true, dataBsTheme: 'light' }))
+      .toEqual({ attr: 'data-bs-theme', value: 'dark' });
+  });
+
+  test('generic data-theme convention (Docusaurus/VitePress/Daisy UI)', () => {
+    expect(H.classifyNativeDarkModeInfo({ hasDataTheme: true, dataTheme: 'light' }))
+      .toEqual({ attr: 'data-theme', value: 'dark' });
+  });
+
+  test('Tailwind class="dark" only with corroborating evidence, and not if already applied', () => {
+    expect(H.classifyNativeDarkModeInfo({ hasDarkClassEvidence: true, hasDarkClassAlready: false }))
+      .toEqual({ attr: 'class', value: 'dark' });
+    expect(H.classifyNativeDarkModeInfo({ hasDarkClassEvidence: true, hasDarkClassAlready: true }))
+      .toBeNull();
+  });
+
+  test('no known convention, or no info at all, returns null (fail safe)', () => {
+    expect(H.classifyNativeDarkModeInfo({})).toBeNull();
+    expect(H.classifyNativeDarkModeInfo(null)).toBeNull();
+  });
+});
+
+describe('logo-contrast candidate gating', () => {
+  test('isLikelyLogoCandidateInfo: small header/nav image qualifies', () => {
+    expect(H.isLikelyLogoCandidateInfo({ width: 100, height: 32, inHeaderOrNav: true })).toBe(true);
+    expect(H.isLikelyLogoCandidateInfo({ width: 40, height: 40, hasLogoClassHint: true })).toBe(true);
+    expect(H.isLikelyLogoCandidateInfo({ width: 60, height: 24, isHomeLinkImage: true })).toBe(true);
+  });
+
+  test('isLikelyLogoCandidateInfo: rejects large images (likely a photo/hero) regardless of position', () => {
+    expect(H.isLikelyLogoCandidateInfo({ width: 900, height: 600, inHeaderOrNav: true })).toBe(false);
+  });
+
+  test('isLikelyLogoCandidateInfo: rejects small images with no logo/position signal', () => {
+    expect(H.isLikelyLogoCandidateInfo({ width: 100, height: 32 })).toBe(false);
+  });
+
+  test('isLikelyLogoCandidateInfo: rejects tiny (icon-sized) images and missing info', () => {
+    expect(H.isLikelyLogoCandidateInfo({ width: 8, height: 8, inHeaderOrNav: true })).toBe(false);
+    expect(H.isLikelyLogoCandidateInfo(null)).toBe(false);
+  });
+
+  test('isNearMonochromeColorStats: flat-fill logo qualifies, photo-like spread does not', () => {
+    expect(H.isNearMonochromeColorStats({ rSpread: 5, gSpread: 3, bSpread: 2 })).toBe(true);
+    expect(H.isNearMonochromeColorStats({ rSpread: 200, gSpread: 180, bSpread: 220 })).toBe(false);
+    // A single channel with wide spread is enough to reject — no partial credit.
+    expect(H.isNearMonochromeColorStats({ rSpread: 5, gSpread: 5, bSpread: 150 })).toBe(false);
   });
 });

@@ -68,7 +68,11 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         if let timeBasedRule = allThemes["timeBasedRule"] as? [String: Any] {
             filteredData["timeBasedRule"] = timeBasedRule
         }
-        
+
+        if let nativeDarkModeEnabled = allThemes["nativeDarkModeEnabled"] as? Bool {
+            filteredData["nativeDarkModeEnabled"] = nativeDarkModeEnabled
+        }
+
         let responseItem = NSExtensionItem()
         responseItem.userInfo = [
             SFExtensionMessageKey: [

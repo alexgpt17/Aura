@@ -5,6 +5,16 @@
 (function() {
     let currentTheme = null;
     const processedShadowRoots = new WeakSet();
+    // <iframe> elements whose same-origin contentDocument we've injected a
+    // themed <style data-aura-iframe> into (see handleShadowDOM /
+    // visitSameOriginIframe) — tracked only for removeTheme() cleanup.
+    const sameOriginIframeModified = new Set();
+    // Set when the opt-in Dark Mode toggle (nativeDarkModeEnabled) has
+    // successfully flipped the site's own native dark-mode convention (see
+    // applyNativeDarkModeIfEnabled) — records exactly what was changed on
+    // <html> so revertNativeDarkMode() can put it back precisely, including
+    // restoring a pre-existing attribute value rather than just deleting it.
+    let nativeDarkModeApplied = null;
     let mutationObserver = null;
     let customEventListenerAttached = false;
     // Elements we forced opaque because they are position:fixed/sticky.
@@ -63,6 +73,22 @@
     // separately from modalCardOpaqueModified (a different mechanism/gate)
     // so their revert paths never interfere with each other.
     const navMenuPanelOpaqueModified = new Set();
+    // Same transition-gating idea again, one level more general than
+    // navMenuPanelStateHistory: an in-flow (position:static/relative) card
+    // that expands with real, actionable content but carries NO nav
+    // semantics at all — e.g. booking.com's inline "Enter dates to see
+    // prices" date-picker, a plain role-less <div> that grows from
+    // collapsed to a large white card with no <nav>/links (a calendar has
+    // none) when its trigger is focused. classifyNavMenuPanelState can
+    // never reach it (requires nav tag/descendant/link-count); isLikelyModalCard
+    // can't either (requires position:fixed, precisely to avoid flagging
+    // ordinary absolute promo tiles). See classifyExpandedContentPanelState /
+    // reopaqueExpandedContentPanels below.
+    let expandedContentPanelStateHistory = new WeakMap();
+    // Elements forced opaque by reopaqueExpandedContentPanels. Tracked
+    // separately from the other opaque-modified sets for the same reason as
+    // navMenuPanelOpaqueModified above.
+    const expandedContentPanelOpaqueModified = new Set();
     // Google Ask-anything pill ancestors / decorative siblings we cleared.
     const askAnythingModified = new Set();
     // Elements whose ::before/::after we identified as a full-bleed
@@ -72,7 +98,22 @@
     const pseudoBgCleared = new Set();
     let pseudoBgStyleEl = null;
     let pseudoBgCounter = 0;
-    const pseudoBgRuleTexts = [];
+    // token (data-aura-pbg value) -> generated CSS rule text. A Map, not an
+    // array, so a nav-panel host re-derived on every pass (see
+    // pseudoBgNavPanelHosts) UPDATES its one rule in place instead of
+    // accumulating a duplicate for every walk that ever visits it.
+    const pseudoBgRulesByToken = new Map();
+    // Pseudo-bg hosts with nav semantics (see hasNavSemanticsForPseudoBg) —
+    // deliberately excluded from the permanent pseudoBgCleared cache so
+    // their fill is re-derived every pass rather than locked to whatever
+    // open/closed state they happened to be sampled in first. Tracked here
+    // only so removeTheme() can strip their data-aura-pbg attribute.
+    const pseudoBgNavPanelHosts = new Set();
+    // Elements whose background-image we cleared because it resolved to a
+    // loader/spinner asset (see clearLoaderBackgroundImages) — normally
+    // hidden behind an opaque covering element that our own transparency
+    // rule strips, exposing the loader underneath.
+    const loaderBgModified = new Set();
     let ignoreMutations = false;
     let ignoreMutationsTimer = null;
     let scrollListenerAttached = false;
@@ -113,6 +154,13 @@
     let lastAppliedThemeKey = '';
     let mutationDebounceTimer = null;
     let safetyPassesRaf = 0;
+    // Timestamp of the current theme's fresh apply — see
+    // visitExpandedContentPanelElement's fresh-mount allowance, which needs
+    // to tell "this element has no prior state because the page had only
+    // just started loading when we first saw it" apart from "this element
+    // has no prior state because it was inserted into the DOM well after
+    // the page (and this engine's initial walk of it) had already settled."
+    let engineAppliedAt = 0;
     const SPLIT_LAYER_ID = 'aura-split-bg';
     let bodyPositionForced = false;
     // Cache for the site's own !important opaque background-color rules
@@ -493,6 +541,15 @@
             // only — it is NOT the fix for the reported curtain bug, which
             // is the sticky `.page-hero` section (see
             // STICKY_PAINT_HOST_SKIPS / isStickyPaintHostSkipped above).
+            //
+            // .main-navigation__logo-image: the header logo is a solid-purple
+            // SVG wordmark (WTA_Logo_Core_Purple_RGB.svg, confirmed via the
+            // site's own markup) with no theme awareness of its own. Sitting
+            // on the new dark header background it reads as nearly invisible.
+            // No general image-contrast capability exists in the engine
+            // (IMG/SVG are always skipped by every color/contrast pass — see
+            // BRIGHT_SKIP_TAGS), so this is a targeted, site-scoped fix
+            // rather than a general one.
             match: ['wtatennis.com'],
             css: `
                 #onetrust-consent-sdk,
@@ -501,6 +558,9 @@
                 #onetrust-pc-sdk {
                     background-color: transparent !important;
                     background-image: none !important;
+                }
+                .main-navigation__logo-image {
+                    filter: invert(1) brightness(1.6) !important;
                 }
             `
         }
@@ -516,6 +576,74 @@
             .filter(entry => entry.match.some(h => hostname === h || hostname.endsWith('.' + h)))
             .map(entry => entry.css)
             .join('\n');
+    }
+
+    // Site-scoped selectors that must NEVER be matched by the universal
+    // transparency rule's own `:is(...)` selector at all — not just
+    // re-painted afterward by JS. Confirmed via extensive testing:
+    // github.com's mobile hamburger/close toggle (three <span> bars
+    // painted via `background-color: currentColor`) sits inside these
+    // plain <div> ancestors, and GitHub's CSS `transform` transition on
+    // those bars (rotating hamburger -> X when the menu opens) never
+    // composites once the universal rule's OWN stylesheet !important
+    // background-color rule matches the ancestor chain — a browser-level
+    // compositing failure. A competing !important rule (even the exact
+    // same value) or a post-hoc JS repaint does NOT avoid this; only
+    // never letting the universal rule's selector match these elements in
+    // the first place does. Paired with CHROME_REPAINT_DISABLED_HOSTS
+    // above (which stops reopaqueTopChrome from independently repainting
+    // the same chain via JS) and the matching skip inside paintChrome's
+    // inner loop.
+    //
+    // [class*=] prefix matching, not exact class names: these are
+    // CSS-module hashed class names (e.g.
+    // `MarketingHeader-module__toggleSlot__hDxbh`) whose hash suffix can
+    // change across GitHub deploys; the human-readable prefix is stable.
+    const UNIVERSAL_TRANSPARENCY_HOST_EXCLUDES = [
+        {
+            match: ['github.com'],
+            selectors: [
+                '[class*="MarketingHeader-module__toggleSlot"]',
+                '[class*="MarketingHeader-module__topRow"]',
+                '[class*="MarketingHeader-module__bar__"]',
+            ],
+        },
+    ];
+
+    function getUniversalTransparencyExcludeNot(hostname) {
+        if (!hostname) return '';
+        const host = String(hostname).toLowerCase();
+        const frags = [];
+        UNIVERSAL_TRANSPARENCY_HOST_EXCLUDES.forEach(entry => {
+            const matches = Resolve && Resolve.hostMatches
+                ? Resolve.hostMatches(host, entry.match)
+                : entry.match.some(h => host === h || host.endsWith('.' + h));
+            if (matches) {
+                entry.selectors.forEach(sel => frags.push(`:not(${sel})`));
+            }
+        });
+        return frags.join('');
+    }
+
+    // Cheap substring check mirroring getUniversalTransparencyExcludeNot,
+    // for the JS-side skip inside paintChrome's inner loop (see
+    // UNIVERSAL_TRANSPARENCY_HOST_EXCLUDES above for why both are needed).
+    function isUniversalTransparencyHostExcluded(el) {
+        if (!el || typeof el.className !== 'string' || !el.className) return false;
+        let host;
+        try { host = String(window.location.hostname || '').toLowerCase(); } catch (e) { return false; }
+        if (!host) return false;
+        for (const entry of UNIVERSAL_TRANSPARENCY_HOST_EXCLUDES) {
+            const matches = Resolve && Resolve.hostMatches
+                ? Resolve.hostMatches(host, entry.match)
+                : entry.match.some(h => host === h || host.endsWith('.' + h));
+            if (!matches) continue;
+            for (const sel of entry.selectors) {
+                const m = /\[class\*="([^"]+)"\]/.exec(sel);
+                if (m && el.className.indexOf(m[1]) >= 0) return true;
+            }
+        }
+        return false;
     }
 
     // Pick the theme that applies to the current page.
@@ -581,7 +709,8 @@
                 form, fieldset, a
         `;
         const overlayNot =
-            ':not([role="dialog"]):not([role="alertdialog"]):not([role="menu"]):not([role="listbox"]):not([aria-modal="true"]):not(dialog):not([popover])';
+            ':not([role="dialog"]):not([role="alertdialog"]):not([role="menu"]):not([role="listbox"]):not([aria-modal="true"]):not(dialog):not([popover])' +
+            getUniversalTransparencyExcludeNot(window.location.hostname);
         const textBlend = 'normal';
         const splitTextFill = (isSplit && Split && Split.liveSplitTextFillCss && Split.liveSplitTextGradient)
             ? Split.liveSplitTextFillCss(Split.liveSplitTextGradient(Split.SPLIT_PCT_START))
@@ -795,6 +924,49 @@
             }
             img, svg, video, canvas, iframe {
                 mix-blend-mode: normal !important;
+            }
+
+            /* Native form controls previously excluded from all styling
+               (checkbox/radio/range/color inputs, <progress>) — accent-color
+               is purpose-built for exactly this and broadly supported, so
+               this is near-zero-risk theming essentially for free. */
+            input[type="checkbox"], input[type="radio"], input[type="range"], progress {
+                accent-color: var(--aura-link);
+            }
+
+            /* Polish: without these, a themed page still shows the native
+               light-mode text-selection highlight, default scrollbars, and
+               default focus ring, which reads as unfinished. */
+            ::selection {
+                background: var(--aura-overlay);
+                color: var(--aura-text);
+            }
+            :focus-visible {
+                outline-color: var(--aura-link);
+            }
+            * {
+                scrollbar-color: var(--aura-elevated) var(--aura-bg);
+            }
+            ::-webkit-scrollbar-thumb {
+                background: var(--aura-elevated);
+            }
+            ::-webkit-scrollbar-track {
+                background: var(--aura-bg);
+            }
+
+            /* Printing a themed page should never waste ink on a forced-dark
+               background or produce broken on-paper contrast. */
+            @media print {
+                html, html body {
+                    color-scheme: light !important;
+                    background: #ffffff !important;
+                }
+                * {
+                    background-color: transparent !important;
+                    background-image: none !important;
+                    color: #000000 !important;
+                    box-shadow: none !important;
+                }
             }
 
             ${siteFix}
@@ -1076,7 +1248,25 @@
         const inner = H.findInnerModalCard
             ? H.findInnerModalCard(el, getComputedStyle, { vh, vw })
             : null;
-        if (inner) paintOverlaySheet(inner);
+        if (inner) {
+            paintOverlaySheet(inner);
+            return;
+        }
+        // Some genuine ARIA dialogs (role="dialog"/"alertdialog", aria-modal,
+        // <dialog>, [popover]) wrap a content panel that is ITSELF
+        // full-viewport-sized on mobile — e.g. booking.com's "More"
+        // traveller/currency/language sheet: the [role="dialog"] node has no
+        // background of its own, and the actual white panel is a plain,
+        // role-less <div> one level inside it, sized to the full viewport.
+        // findInnerModalCard/isModalCardShape deliberately won't match that
+        // shape (covering-sheet sizes are excluded there to avoid painting
+        // empty ad curtains opaque), so only look for a full-viewport
+        // content panel here — gated on `el` itself already being a
+        // confirmed ARIA overlay root, never an anonymous curtain wrapper.
+        if (H.isOverlayRoot && H.isOverlayRoot(el) && H.findInnerDialogPanel) {
+            const panel = H.findInnerDialogPanel(el, getComputedStyle, { vh, vw });
+            if (panel) paintOverlaySheet(panel);
+        }
     }
 
     /**
@@ -1441,12 +1631,37 @@
     // confirmation that the curtain is still gone — this is the second time
     // that exact change has reintroduced it.
     //
-    // Net effect: the opened hamburger menu on this host stays transparent
-    // (same bug as before, unresolved) — that trade was made deliberately
-    // to keep the curtain fixed, since the curtain was reported as the more
-    // severe issue. If the menu needs fixing, it needs a mechanism that
-    // targets it without going through any of these four passes.
-    const CHROME_REPAINT_DISABLED_HOSTS = ['wtatennis.com'];
+    // Net effect: the opened hamburger menu on this host is NOT repainted by
+    // any of these four — that trade was made deliberately to keep the
+    // curtain fixed, since the curtain was reported as the more severe
+    // issue. The menu is instead fixed by a mechanism outside these four:
+    // wtatennis.com paints its mobile menu's background via a `::before`
+    // pseudo-element (`.main-navigation__mobile:before`), not a real
+    // element background, so it's handled by visitPseudoBgElement's
+    // nav-panel branch (see clearFullBleedPseudoBackgrounds) instead —
+    // untouched by this host-disable, and by construction never touches
+    // `.page-hero`/the sticky nav bar, so it carries no risk of
+    // reintroducing the curtain.
+    //
+    // github.com: confirmed via extensive headless + on-device testing —
+    // the mobile hamburger/close toggle is three <span> bars painted via
+    // `background-color: currentColor` (see visitContrastElement's
+    // currentColor-fill skip), inside plain <div> ancestors that
+    // reopaqueTopChrome repaints as chrome. GitHub runs a CSS `transform`
+    // transition on those bars when the menu opens (rotating hamburger ->
+    // X); with reopaqueTopChrome repeatedly repainting the same ancestor
+    // chain while that transition is active, the browser's compositor
+    // fails to ever paint the transitioning bars — genuinely present
+    // (correct color, correct geometry) but zero rendered pixels. Neither
+    // a competing stylesheet rule nor a post-hoc JS repaint avoids this;
+    // only leaving the chain alone entirely does (see
+    // UNIVERSAL_TRANSPARENCY_HOST_EXCLUDES below for the other half of
+    // this fix — CSS-level exclusion for the same ancestor chain). Net
+    // effect, same trade-off as wtatennis.com above: the header loses its
+    // themed background (falls back to GitHub's own near-black chrome)
+    // while the mobile menu is open, in exchange for the close button,
+    // logo, and sign-in link being visible at all.
+    const CHROME_REPAINT_DISABLED_HOSTS = ['wtatennis.com', 'github.com'];
 
     function isChromeRepaintDisabledForHost() {
         let host;
@@ -1496,6 +1711,24 @@
         let rect;
         try { rect = el.getBoundingClientRect(); } catch (e) { return; }
         const mask = style.webkitMaskImage || style.maskImage;
+        // Layout geometry (unlike background-color, which the universal
+        // transparency rule already forces !important before any JS pass
+        // runs) is never touched by Aura's stylesheet, so this reliably
+        // reads the site's true original layout regardless of when it's
+        // sampled. Capped at a handful of children to keep this cheap —
+        // busier bars are much more likely genuine chrome anyway, so
+        // skipping the computation there (leaving childCoverageFrac null,
+        // which the predicate treats as "don't apply this gate") is safe.
+        let childCoverageFrac = null;
+        try {
+            if (rect.width > 0 && el.children && el.children.length > 0 && el.children.length <= 4) {
+                let covered = 0;
+                for (let i = 0; i < el.children.length; i++) {
+                    covered += el.children[i].getBoundingClientRect().width;
+                }
+                childCoverageFrac = Math.min(1, covered / rect.width);
+            }
+        } catch (e) {}
         if (H.shouldSkipStickyElement({
             position: style.position,
             mask: mask || 'none',
@@ -1512,6 +1745,7 @@
             zIndex: style.zIndex,
             vh,
             vw,
+            childCoverageFrac,
         })) {
             if (stickyModified.has(el)) revertStickyPaint(el);
             return;
@@ -1740,6 +1974,7 @@
                 if (++n > 250) break;
                 if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[inner.tagName]) continue;
                 if (inner.getAttribute('role') === 'button') continue;
+                if (isUniversalTransparencyHostExcluded(inner)) continue;
                 // A fixed/sticky descendant renders in its own layer,
                 // detached from this element's box (e.g. a <header> that
                 // stays in normal flow while an inner .header-bar div is
@@ -1974,6 +2209,105 @@
         }
     }
 
+    // Position-agnostic counterpart to isLikelyModalCard, for cards that
+    // expand IN PLACE (display:none -> block, height:0 -> auto) with no
+    // position:fixed of their own and no nav semantics — see
+    // expandedContentPanelStateHistory above for the booking.com date-picker
+    // shape this exists to catch. Same collapsed -> expanded transition gate
+    // as the nav drawer / nav menu panel paths, via the same
+    // isNavDrawerOpenTransition function (its logic is generic to any two
+    // state strings) — required so an ordinary always-present content block
+    // (a sidebar card, a footer panel) never gets swept up merely for
+    // "currently looking card-shaped."
+    function revertExpandedContentPanelPaint(el) {
+        try {
+            el.style.removeProperty('background-color');
+            el.style.removeProperty('background-image');
+        } catch (e) {}
+        expandedContentPanelOpaqueModified.delete(el);
+    }
+
+    // How long after a fresh theme apply the page/engine is assumed to have
+    // "settled" — see isFreshlyMountedContentPanel below.
+    const CONTENT_PANEL_SETTLE_MS = 1500;
+
+    // booking.com's date-picker doesn't exist in the DOM at all until its
+    // trigger is focused (confirmed live: querySelector finds nothing for
+    // it before the click, then the whole subtree appears already
+    // 'expanded') — so isNavDrawerOpenTransition's collapsed -> expanded
+    // gate can never fire for it; there is no earlier 'collapsed' sighting
+    // to transition FROM. A first-ever sighting is only trusted as "just
+    // opened" when BOTH: (1) it happens well after the theme's initial
+    // apply, so it can't be ordinary content the very first full walk simply
+    // hadn't reached yet, and (2) the element isn't one of several siblings
+    // sharing its class name — a repeated class is the standard shape of an
+    // infinite-scroll/list-append batch (e.g. more property-card tiles
+    // loading in), which is exactly the kind of "new but not a popup"
+    // insertion this must not paint as a near-black overlay.
+    function isFreshlyMountedContentPanel(el, prevState) {
+        if (prevState !== undefined) return false;
+        if (!engineAppliedAt || (Date.now() - engineAppliedAt) < CONTENT_PANEL_SETTLE_MS) return false;
+        const cls = typeof el.className === 'string' ? el.className : '';
+        if (!cls || !el.parentElement) return true;
+        let siblingsWithSameClass = 0;
+        const siblings = el.parentElement.children;
+        for (let i = 0; i < siblings.length; i++) {
+            if (siblings[i] !== el && siblings[i].className === cls) {
+                siblingsWithSameClass++;
+                if (siblingsWithSameClass >= 1) return false;
+            }
+        }
+        return true;
+    }
+
+    function visitExpandedContentPanelElement(el, vh, vw) {
+        if (!el || el.nodeType !== 1 || !H || !H.classifyExpandedContentPanelState) return;
+        if (isChromeRepaintDisabledForHost()) return;
+        const panelState = H.classifyExpandedContentPanelState(el, getComputedStyle, { vh, vw });
+        if (panelState === 'expanded') {
+            const prevState = expandedContentPanelStateHistory.get(el);
+            const isOpenTransition = !!(H.isNavDrawerOpenTransition
+                && H.isNavDrawerOpenTransition(prevState, panelState))
+                || isFreshlyMountedContentPanel(el, prevState);
+            expandedContentPanelStateHistory.set(el, 'expanded');
+            if (isOpenTransition || expandedContentPanelOpaqueModified.has(el)) {
+                let style;
+                try { style = getComputedStyle(el); } catch (e) { return; }
+                if (style.visibility === 'hidden' || style.opacity === '0') return;
+                if (style.display === 'none') return;
+                let rect;
+                try { rect = el.getBoundingClientRect(); } catch (e2) { return; }
+                if (rect.width < 1 || rect.height < 1) return;
+                el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
+                el.style.setProperty('background-image', 'none', 'important');
+                expandedContentPanelOpaqueModified.add(el);
+            }
+            return;
+        }
+        if (panelState === 'collapsed') {
+            expandedContentPanelStateHistory.set(el, 'collapsed');
+            if (expandedContentPanelOpaqueModified.has(el)) revertExpandedContentPanelPaint(el);
+        }
+        // 'ambiguous' or null: leave history and any existing paint alone.
+    }
+
+    function reopaqueExpandedContentPanels(root) {
+        if (!root || !currentTheme || !H) return;
+        const { vh, vw } = passViewport();
+        Array.from(expandedContentPanelOpaqueModified).forEach(el => {
+            if (!el || !el.isConnected) {
+                expandedContentPanelOpaqueModified.delete(el);
+                return;
+            }
+            safeVisit(e => visitExpandedContentPanelElement(e, vh, vw), el);
+        });
+        const elements = collectElements(root);
+        const limit = Math.min(elements.length, WALK_SLICE);
+        for (let i = 0; i < limit; i++) {
+            safeVisit(e => visitExpandedContentPanelElement(e, vh, vw), elements[i]);
+        }
+    }
+
     function restoreAuthoredChromeOpacity(root) {
         if (!root || !currentTheme || !H || !H.isLikelyNavMenu) return;
         if (isChromeRepaintDisabledForHost()) return;
@@ -2029,6 +2363,25 @@
         if (H.isStackedDuplicateLabel && H.isStackedDuplicateLabel(el)) return;
         let style;
         try { style = getComputedStyle(el); } catch (e) { return; }
+        // A decorative shape whose visible fill IS its own `color` via
+        // `background-color: currentColor` (a common technique for
+        // monochrome icon bars — confirmed on github.com's mobile-menu
+        // hamburger/close toggle, three <span>s built exactly this way).
+        // Rewriting `color` here for text-contrast purposes also silently
+        // rewrites the element's entire visible fill, which can — and,
+        // depending on the surrounding context at the moment of each
+        // re-run, unpredictably will — make the shape blend into its own
+        // background instead of fixing anything. Self-stabilizing: once
+        // true this stays true on every future re-visit too, since
+        // `currentColor` recomputes automatically whenever `color` changes,
+        // so there's no stale-cache risk from skipping here.
+        const rawColor = H.parseCssRgb(style.color);
+        const rawBg = H.parseCssRgb(style.backgroundColor);
+        if (rawColor && rawBg
+            && rawColor.r === rawBg.r && rawColor.g === rawBg.g && rawColor.b === rawBg.b
+            && Math.abs((rawColor.a == null ? 1 : rawColor.a) - (rawBg.a == null ? 1 : rawBg.a)) < 0.01) {
+            return;
+        }
         let rect;
         try { rect = el.getBoundingClientRect(); } catch (e2) { return; }
         if (H.isUnpaintedForContrast && H.isUnpaintedForContrast({
@@ -2171,7 +2524,26 @@
         return pseudoBgStyleEl;
     }
 
-    function visitPseudoBgElement(el) {
+    // A element carrying real nav semantics (its own <nav>/role=navigation,
+    // or a handful of links) might currently be closed/collapsed the first
+    // time this pass ever sees it — e.g. a mobile menu sampled on initial
+    // page load, long before the user ever taps the hamburger. Structural
+    // signal only, deliberately state-independent (no size/visibility
+    // check): used purely to decide whether this element is EVER allowed
+    // into the permanent pseudoBgCleared cache below, since permanently
+    // caching "not a nav panel" from a closed-state sample would freeze
+    // that verdict forever and never revisit it once genuinely opened.
+    function hasNavSemanticsForPseudoBg(el) {
+        if (!el) return false;
+        if (el.tagName === 'NAV') return true;
+        if (el.getAttribute && el.getAttribute('role') === 'navigation') return true;
+        try {
+            if (el.querySelector && el.querySelector('nav, [role="navigation"]')) return true;
+            return el.querySelectorAll('a[href]').length >= 3;
+        } catch (e) { return false; }
+    }
+
+    function visitPseudoBgElement(el, vh, vw) {
         if (!el || el.nodeType !== 1 || !H) return;
         if (pseudoBgCleared.has(el)) return;
         if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[el.tagName]) return;
@@ -2204,19 +2576,233 @@
             token = String(++pseudoBgCounter);
             el.setAttribute('data-aura-pbg', token);
         }
-        pseudoBgRuleTexts.push(
-            `[data-aura-pbg="${token}"]${matched} { background-color: transparent !important; background-image: none !important; }`
-        );
-        ensurePseudoBgStyleEl().textContent = pseudoBgRuleTexts.join('\n');
-        pseudoBgCleared.add(el);
+
+        // A nav-drawer/menu-panel that paints its own background via this
+        // pseudo-element (confirmed e.g. on wtatennis.com's
+        // `.main-navigation__mobile:before`, a `position:fixed` mobile menu
+        // whose real background lives entirely on `::before { inset:0 }`)
+        // must stay OPAQUE, not be cleared — clearing it here, correct for
+        // a stale opaque card layer sitting on top of already-themed content
+        // (the leaderboard-card case this pass was originally built for),
+        // instead turns an open mobile menu fully see-through to the page
+        // behind it.
+        if (hasNavSemanticsForPseudoBg(el)) {
+            const viewport = { vh: vh, vw: vw };
+            const isNavPanelHost = !!(
+                (H.isLikelyNavDrawer && H.isLikelyNavDrawer(el, getComputedStyle, viewport)) ||
+                (H.classifyNavMenuPanelState && H.classifyNavMenuPanelState(el, getComputedStyle, viewport) === 'expanded') ||
+                (H.isLikelyNavMenu && H.isLikelyNavMenu(el, getComputedStyle, viewport))
+            );
+            const fill = isNavPanelHost ? 'var(--aura-overlay) !important' : 'transparent !important';
+            pseudoBgNavPanelHosts.add(el);
+            pseudoBgRulesByToken.set(token,
+                `[data-aura-pbg="${token}"]${matched} { background-color: ${fill}; background-image: none !important; }`
+            );
+            // Deliberately NOT added to pseudoBgCleared: a nav-shaped host
+            // must be re-derived on every pass (it can open/close after
+            // this visit), never permanently locked to whatever state it
+            // happened to be sampled in first.
+        } else {
+            pseudoBgRulesByToken.set(token,
+                `[data-aura-pbg="${token}"]${matched} { background-color: transparent !important; background-image: none !important; }`
+            );
+            pseudoBgCleared.add(el);
+        }
+        ensurePseudoBgStyleEl().textContent = Array.from(pseudoBgRulesByToken.values()).join('\n');
     }
 
     function clearFullBleedPseudoBackgrounds(root) {
         if (!root || !currentTheme || !H) return;
+        const { vh, vw } = passViewport();
         const elements = collectElements(root);
         const limit = Math.min(elements.length, WALK_SLICE);
         for (let i = 0; i < limit; i++) {
-            safeVisit(visitPseudoBgElement, elements[i]);
+            safeVisit(e => visitPseudoBgElement(e, vh, vw), elements[i]);
+        }
+    }
+
+    // 3f. LOADER / SPINNER BACKGROUND-IMAGE SAFETY NET
+    // Some sites set a static loading-spinner GIF as an element's
+    // background-image, permanently, relying on an opaque covering
+    // background-color (their own button/card fill) to keep it hidden until
+    // an active/loading state swaps something on top of it (seen e.g. on UC
+    // Davis OASIS's login button: `#enterButtonSection` carries
+    // `background-image: url(loader.circle.medium.gif)` under its own
+    // translucent white `background-color`). The universal transparency
+    // rule (getFullStyleSheet's layoutTags) clears background-color
+    // site-wide but has no concept of background-image, so once the
+    // covering color is gone, the loader asset is left permanently visible.
+    // Safe to clear unconditionally: a loader/spinner asset visible at rest
+    // is never desirable under any theme, regardless of what exposed it.
+    function visitLoaderBgElement(el) {
+        if (!el || el.nodeType !== 1 || !H || !H.isLoaderBackgroundImageUrl) return;
+        if (loaderBgModified.has(el)) return;
+        let style;
+        try { style = getComputedStyle(el); } catch (e) { return; }
+        if (!H.isLoaderBackgroundImageUrl(style.backgroundImage)) return;
+        el.style.setProperty('background-image', 'none', 'important');
+        loaderBgModified.add(el);
+    }
+
+    function clearLoaderBackgroundImages(root) {
+        if (!root || !currentTheme || !H) return;
+        const elements = collectElements(root);
+        const limit = Math.min(elements.length, WALK_SLICE);
+        for (let i = 0; i < limit; i++) {
+            safeVisit(visitLoaderBgElement, elements[i]);
+        }
+    }
+
+    // 3g. CONSERVATIVE LOGO / IMAGE CONTRAST
+    // IMG/SVG are unconditionally skipped by every other color pass
+    // (BRIGHT_SKIP_TAGS) — there is no general image-contrast capability
+    // anywhere else in the engine, so a solid-color logo (e.g. a dark
+    // wordmark meant for a white header) can end up nearly invisible once
+    // its surroundings go dark (confirmed on wtatennis.com's
+    // WTA_Logo_Core_Purple_RGB.svg, #2d0046 on black). This pass generalizes
+    // that fix, gated tightly enough to never touch a photo or multi-color
+    // graphic: small candidate images only, in a brand-mark position, pixel-
+    // sampled via canvas and only inverted when (a) confidently near-
+    // monochrome and (b) the sampled color genuinely fails contrast against
+    // the current theme background. Any failure mode (no src, cross-origin
+    // without permissive CORS headers throwing on getImageData, multi-color
+    // sample) leaves the image completely untouched — never a guess.
+    function isElementInHeaderOrNav(el) {
+        try {
+            return !!(el.closest && el.closest('header, nav, [role="banner"], [role="navigation"]'));
+        } catch (e) { return false; }
+    }
+
+    function hasLogoClassHint(el) {
+        try {
+            if (/logo|brand/i.test(el.className || '')) return true;
+            let p = el.parentElement;
+            for (let i = 0; i < 3 && p; i++) {
+                if (typeof p.className === 'string' && /logo|brand/i.test(p.className)) return true;
+                p = p.parentElement;
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    function isHomeLinkImage(el) {
+        try {
+            const a = el.closest && el.closest('a[href]');
+            if (!a) return false;
+            const href = a.getAttribute('href') || '';
+            if (!href) return false;
+            const url = new URL(href, window.location.href);
+            return url.pathname === '/' && url.origin === window.location.origin;
+        } catch (e) { return false; }
+    }
+
+    let logoSampleCanvas = null;
+    // Cache keyed by image src: sampled pixel stats, or null for a
+    // permanently-failed sample (cross-origin/decode failure) — never
+    // retried, since decode+sample has a real cost and a CORS failure will
+    // never resolve differently on a later pass.
+    const logoColorSampleCache = new Map();
+    const logoContrastModified = new Set();
+
+    function sampleImageDominantColor(imgEl) {
+        if (!logoSampleCanvas) {
+            try { logoSampleCanvas = document.createElement('canvas'); } catch (e) { return null; }
+        }
+        const SAMPLE = 24;
+        logoSampleCanvas.width = SAMPLE;
+        logoSampleCanvas.height = SAMPLE;
+        let ctx;
+        try { ctx = logoSampleCanvas.getContext('2d', { willReadFrequently: true }); } catch (e) { return null; }
+        if (!ctx) return null;
+        try {
+            ctx.clearRect(0, 0, SAMPLE, SAMPLE);
+            ctx.drawImage(imgEl, 0, 0, SAMPLE, SAMPLE);
+            const data = ctx.getImageData(0, 0, SAMPLE, SAMPLE).data;
+            let rMin = 255, rMax = 0, gMin = 255, gMax = 0, bMin = 255, bMax = 0;
+            let rSum = 0, gSum = 0, bSum = 0, count = 0;
+            for (let i = 0; i < data.length; i += 4) {
+                if (data[i + 3] < 32) continue; // skip near-transparent pixels
+                const r = data[i], g = data[i + 1], b = data[i + 2];
+                if (r < rMin) rMin = r;
+                if (r > rMax) rMax = r;
+                if (g < gMin) gMin = g;
+                if (g > gMax) gMax = g;
+                if (b < bMin) bMin = b;
+                if (b > bMax) bMax = b;
+                rSum += r; gSum += g; bSum += b; count++;
+            }
+            if (count === 0) return null;
+            return {
+                rSpread: rMax - rMin, gSpread: gMax - gMin, bSpread: bMax - bMin,
+                r: Math.round(rSum / count), g: Math.round(gSum / count), b: Math.round(bSum / count),
+            };
+        } catch (e) {
+            // Cross-origin without permissive CORS headers throws a
+            // SecurityError on getImageData ("tainted canvas") — safe,
+            // expected no-op.
+            return null;
+        }
+    }
+
+    function revertLogoContrastElement(el) {
+        try { el.style.removeProperty('filter'); } catch (e) {}
+        logoContrastModified.delete(el);
+    }
+
+    function visitLogoContrastElement(el) {
+        if (!el || el.nodeType !== 1 || !H || !H.isLikelyLogoCandidateInfo) return;
+        if (el.tagName !== 'IMG') return;
+        let rect;
+        try { rect = el.getBoundingClientRect(); } catch (e) { return; }
+        const info = {
+            width: rect.width,
+            height: rect.height,
+            inHeaderOrNav: isElementInHeaderOrNav(el),
+            hasLogoClassHint: hasLogoClassHint(el),
+            isHomeLinkImage: isHomeLinkImage(el),
+        };
+        if (!H.isLikelyLogoCandidateInfo(info)) return;
+        if (rect.width < 1 || rect.height < 1) return;
+
+        const src = el.currentSrc || el.src || '';
+        if (!src) return;
+        let sample = logoColorSampleCache.get(src);
+        if (sample === undefined) {
+            sample = sampleImageDominantColor(el);
+            logoColorSampleCache.set(src, sample);
+        }
+        if (!sample || !H.isNearMonochromeColorStats(sample)) {
+            if (logoContrastModified.has(el)) revertLogoContrastElement(el);
+            return;
+        }
+
+        let style;
+        try { style = getComputedStyle(el); } catch (e) { return; }
+        // Never fight a site's own filter — unless it's our own from a
+        // prior pass, in which case we need to re-derive it below (the
+        // theme background may have changed since).
+        if (style.filter && style.filter !== 'none' && !logoContrastModified.has(el)) return;
+
+        const dominant = { r: sample.r, g: sample.g, b: sample.b, a: 1 };
+        const bg = H.effectiveBackground
+            ? H.effectiveBackground(el, getComputedStyle, currentTheme.background)
+            : (H.parseHexColor && H.parseHexColor(currentTheme.background));
+        if (!bg) return;
+        const needsInvert = !!(H.hasPoorContrast && H.hasPoorContrast(dominant, bg, 3.0));
+        if (needsInvert) {
+            el.style.setProperty('filter', 'invert(1)', 'important');
+            logoContrastModified.add(el);
+        } else if (logoContrastModified.has(el)) {
+            revertLogoContrastElement(el);
+        }
+    }
+
+    function rethemeLogoContrast(root) {
+        if (!root || !currentTheme || !H) return;
+        const elements = collectElements(root);
+        const limit = Math.min(elements.length, WALK_SLICE);
+        for (let i = 0; i < limit; i++) {
+            safeVisit(visitLogoContrastElement, elements[i]);
         }
     }
 
@@ -2258,12 +2844,15 @@
         // correctly-themed html/body and reads as "the whole page is white".
         safePass(() => rethemeOpaqueShells(root));
         safePass(() => clearFullBleedPseudoBackgrounds(root));
+        safePass(() => clearLoaderBackgroundImages(root));
+        safePass(() => rethemeLogoContrast(root));
         safePass(() => reopaqueOverlays(root));
         safePass(() => revertGrownModalCards(vh, vw));
         safePass(() => paintGoogleImagesViewer(root));
         safePass(() => reopaqueTopChrome(root));
         safePass(() => restoreAuthoredChromeOpacity(root));
         safePass(() => reopaqueExpandedNavMenuPanels(root));
+        safePass(() => reopaqueExpandedContentPanels(root));
         safePass(() => rethemeAskAnythingComposer(root));
 
         const overlaySeen = new Set();
@@ -2298,6 +2887,87 @@
         });
     }
 
+    // 3g. NATIVE DARK MODE (opt-in, nativeDarkModeEnabled)
+    // Gathers the DOM-facing signals H.classifyNativeDarkModeInfo needs —
+    // see that function's doc comment for exactly what each convention
+    // requires and why (GitHub Primer, Bootstrap 5.3+, Docusaurus/VitePress/
+    // Daisy UI, Tailwind's class="dark" convention).
+    function gatherNativeDarkModeInfo() {
+        const html = document.documentElement;
+        if (!html) return {};
+        const dataColorMode = html.getAttribute('data-color-mode');
+        const hasDarkThemeCompanion = html.hasAttribute('data-dark-theme') && html.hasAttribute('data-light-theme');
+        let hasDataBsTheme = false;
+        try { hasDataBsTheme = !!document.querySelector('[data-bs-theme]'); } catch (e) {}
+        const dataBsTheme = html.getAttribute('data-bs-theme');
+        const dataTheme = html.getAttribute('data-theme');
+        let hasDarkClassEvidence = false;
+        try {
+            const meta = document.querySelector('meta[name="color-scheme"]');
+            if (meta && /dark/i.test(meta.getAttribute('content') || '')) hasDarkClassEvidence = true;
+        } catch (e) {}
+        if (!hasDarkClassEvidence) {
+            try { hasDarkClassEvidence = !!document.querySelector('[class*="dark:"]'); } catch (e) {}
+        }
+        return {
+            hasDataColorMode: dataColorMode != null,
+            dataColorMode: dataColorMode,
+            hasDarkThemeCompanion: hasDarkThemeCompanion,
+            hasDataBsTheme: hasDataBsTheme,
+            dataBsTheme: dataBsTheme,
+            hasDataTheme: dataTheme != null,
+            dataTheme: dataTheme,
+            hasDarkClassEvidence: hasDarkClassEvidence,
+            hasDarkClassAlready: html.classList ? html.classList.contains('dark') : false,
+        };
+    }
+
+    function revertNativeDarkMode() {
+        if (!nativeDarkModeApplied) return;
+        const html = document.documentElement;
+        try {
+            if (html) {
+                if (nativeDarkModeApplied.attr === 'class') {
+                    html.classList.remove(nativeDarkModeApplied.value);
+                } else if (nativeDarkModeApplied.hadAttrBefore) {
+                    html.setAttribute(nativeDarkModeApplied.attr, nativeDarkModeApplied.prevValue);
+                } else {
+                    html.removeAttribute(nativeDarkModeApplied.attr);
+                }
+            }
+        } catch (e) {}
+        nativeDarkModeApplied = null;
+    }
+
+    // Returns true when a known native-dark-mode convention was found and
+    // activated — the caller (applyTheme) uses this to decide whether to
+    // skip Aura's own generic override stylesheet/JS engine entirely for
+    // this page, letting the site's own (designed, complete, self-
+    // consistent) dark palette do the work instead.
+    function applyNativeDarkModeIfEnabled() {
+        if (!H || !H.classifyNativeDarkModeInfo) return false;
+        const html = document.documentElement;
+        if (!html) return false;
+        const info = gatherNativeDarkModeInfo();
+        let result;
+        try { result = H.classifyNativeDarkModeInfo(info); } catch (e) { return false; }
+        if (!result) return false;
+        try {
+            if (result.attr === 'class') {
+                html.classList.add(result.value);
+                nativeDarkModeApplied = { attr: 'class', value: result.value };
+            } else {
+                const prevValue = html.getAttribute(result.attr);
+                const hadAttrBefore = prevValue !== null;
+                html.setAttribute(result.attr, result.value);
+                nativeDarkModeApplied = { attr: result.attr, value: result.value, hadAttrBefore: hadAttrBefore, prevValue: prevValue };
+            }
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
     // 4. THEME APPLICATION
     function applyTheme(theme) {
         try {
@@ -2311,17 +2981,38 @@
         const themeKey = [
             theme.background, theme.text, theme.link,
             theme.backgroundType || '', theme.backgroundGradient || '',
-            theme.enabled === false ? '0' : '1'
+            theme.enabled === false ? '0' : '1',
+            theme.nativeDarkModeEnabled ? '1' : '0',
         ].join('|');
-        if (themeKey === lastAppliedThemeKey && document.getElementById('aura-core-engine')) {
+        if (themeKey === lastAppliedThemeKey && (document.getElementById('aura-core-engine') || nativeDarkModeApplied)) {
             return;
         }
+
+        // Fully undo any prior paint — generic overrides OR a previous
+        // native-dark-mode flip — before deciding what this call should do.
+        // The two modes are mutually exclusive and must never blend
+        // leftover state from one into the other.
+        removeTheme();
+
         lastAppliedThemeKey = themeKey;
         currentTheme = theme;
+        engineAppliedAt = Date.now();
         cancelWalkSlices();
 
-        const oldStyleEl = document.getElementById('aura-core-engine');
-        if (oldStyleEl) oldStyleEl.remove();
+        // Opt-in Dark Mode toggle: prefer the site's own native dark mode
+        // over Aura's palette where one is confidently detected (AMP has
+        // its own dedicated, isolated path below and doesn't participate —
+        // its small custom-element vocabulary has no such framework
+        // convention to piggyback on). On success, the site's own CSS does
+        // all the work — skip Aura's generic override stylesheet and JS
+        // safety-net engine entirely for this page.
+        if (!IS_AMP_CONSENT_FRAME && !IS_AMP_DOCUMENT && theme.nativeDarkModeEnabled) {
+            if (applyNativeDarkModeIfEnabled()) {
+                const earlyShield = document.getElementById('aura-early-shield');
+                if (earlyShield) earlyShield.remove();
+                return;
+            }
+        }
 
         const styleEl = document.createElement('style');
         styleEl.id = 'aura-core-engine';
@@ -2375,6 +3066,8 @@
 
     function removeTheme() {
         lastAppliedThemeKey = '';
+        engineAppliedAt = 0;
+        revertNativeDarkMode();
         cancelWalkSlices();
         if (safetyPassesRaf) {
             try { cancelAnimationFrame(safetyPassesRaf); } catch (e) {}
@@ -2442,6 +3135,14 @@
         });
         navMenuPanelOpaqueModified.clear();
         navMenuPanelStateHistory = new WeakMap();
+        expandedContentPanelOpaqueModified.forEach(el => {
+            try {
+                el.style.removeProperty('background-color');
+                el.style.removeProperty('background-image');
+            } catch (e) {}
+        });
+        expandedContentPanelOpaqueModified.clear();
+        expandedContentPanelStateHistory = new WeakMap();
         revertGoogleImagesMosaic();
         contrastModified.forEach(el => {
             try { el.style.removeProperty('color'); } catch (e) {}
@@ -2478,17 +3179,72 @@
             try { el.removeAttribute('data-aura-pbg'); } catch (e) {}
         });
         pseudoBgCleared.clear();
-        pseudoBgRuleTexts.length = 0;
+        pseudoBgNavPanelHosts.forEach(el => {
+            try { el.removeAttribute('data-aura-pbg'); } catch (e) {}
+        });
+        pseudoBgNavPanelHosts.clear();
+        pseudoBgRulesByToken.clear();
+        loaderBgModified.forEach(el => {
+            try { el.style.removeProperty('background-image'); } catch (e) {}
+        });
+        loaderBgModified.clear();
+        logoContrastModified.forEach(el => {
+            try { el.style.removeProperty('filter'); } catch (e) {}
+        });
+        logoContrastModified.clear();
         revertAskAnythingComposer();
         document.querySelectorAll('style[data-aura-shadow]').forEach(s => {
             try { s.remove(); } catch (e) {}
         });
+        sameOriginIframeModified.forEach(el => {
+            try {
+                const doc = el.contentDocument;
+                const s = doc && doc.querySelector('style[data-aura-iframe]');
+                if (s) s.remove();
+            } catch (e) {}
+        });
+        sameOriginIframeModified.clear();
     }
 
-    // 5. SHADOW DOM HANDLER - Prevent duplicate style injections
+    // Same-origin iframes (help panels, embedded settings, same-origin
+    // widgets) get no theming at all otherwise — unlike shadow DOM, whose
+    // light-DOM stylesheet doesn't inherit into shadow roots either, but has
+    // the handling right above. A cross-origin iframe's contentDocument
+    // throws/returns null on access (same-origin policy) — that failure is
+    // caught and treated as a safe, expected no-op, not an error.
+    function visitSameOriginIframe(iframeEl) {
+        if (!iframeEl || !H) return;
+        try {
+            let host = '';
+            try { host = new URL(iframeEl.src, window.location.href).hostname; } catch (e) {}
+            if (host && (
+                (H.isAdNetworkHost && H.isAdNetworkHost(host)) ||
+                (H.isChatWidgetHost && H.isChatWidgetHost(host))
+            )) {
+                return;
+            }
+            const doc = iframeEl.contentDocument;
+            if (!doc) return;
+            const target = doc.head || doc.documentElement;
+            if (!target) return;
+            let style = doc.querySelector('style[data-aura-iframe]');
+            if (!style) {
+                style = doc.createElement('style');
+                style.setAttribute('data-aura-iframe', 'true');
+                target.appendChild(style);
+            }
+            style.textContent = getFullStyleSheet(currentTheme);
+            sameOriginIframeModified.add(iframeEl);
+        } catch (e) {
+            // Cross-origin, or the iframe document isn't in a themeable
+            // state yet — safe, expected no-op.
+        }
+    }
+
+    // 5. SHADOW DOM + SAME-ORIGIN IFRAME HANDLER - Prevent duplicate style injections
     function handleShadowDOM(root) {
         if (!root) return;
-        
+
         if (root.shadowRoot) {
             const existingStyle = root.shadowRoot.querySelector('style[data-aura-shadow]');
             if (existingStyle) {
@@ -2501,7 +3257,11 @@
             }
             processedShadowRoots.add(root.shadowRoot);
         }
-        
+
+        if (root.tagName === 'IFRAME') {
+            visitSameOriginIframe(root);
+        }
+
         // Only process direct children, not all descendants
         for (let i = 0; i < root.children.length; i++) {
             const child = root.children[i];
@@ -2698,7 +3458,14 @@
                     childList: true,
                     subtree: true,
                     attributes: true,
-                    attributeFilter: ['style', 'class', 'hidden', 'open', 'aria-expanded', 'aria-hidden'],
+                    // 'data-state' covers Radix UI / Headless UI / Ariakit
+                    // (the foundation of shadcn/ui and a large share of
+                    // modern React sites) — those toggle open/closed via
+                    // data-state="open"|"closed" instead of aria-expanded/
+                    // class, so without it every transition-gated pass
+                    // (nav-drawer, nav-menu-panel, overlay) never re-runs
+                    // when one of these components opens.
+                    attributeFilter: ['style', 'class', 'hidden', 'open', 'aria-expanded', 'aria-hidden', 'data-state'],
                 });
             }
 

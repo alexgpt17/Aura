@@ -5,6 +5,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  Switch,
   Alert,
 } from 'react-native';
 import { saveThemes, getThemes } from '../storage';
@@ -47,11 +48,13 @@ const SafariScreen: React.FC<SafariScreenProps> = ({ navigation }) => {
   const [siteThemes, setSiteThemes] = useState<Record<string, WebsiteTheme>>({});
   /** Shown until the Safari extension has run at least once (App Group heartbeat). */
   const [showSafariSetupBanner, setShowSafariSetupBanner] = useState(false);
+  const [nativeDarkModeEnabled, setNativeDarkModeEnabled] = useState(false);
 
   useEffect(() => {
     loadCurrentTheme();
     loadSiteThemes();
     loadExtensionState();
+    loadDarkModeSetting();
   }, []);
 
   useEffect(() => {
@@ -59,9 +62,31 @@ const SafariScreen: React.FC<SafariScreenProps> = ({ navigation }) => {
       loadCurrentTheme();
       loadSiteThemes();
       loadExtensionState();
+      loadDarkModeSetting();
     });
     return unsubscribe;
   }, [navigation]);
+
+  const loadDarkModeSetting = async () => {
+    try {
+      const themeData = await getThemes();
+      setNativeDarkModeEnabled(themeData?.nativeDarkModeEnabled ?? false);
+    } catch (error) {
+      console.error('Error loading dark mode setting:', error);
+      setNativeDarkModeEnabled(false);
+    }
+  };
+
+  const handleToggleDarkMode = async (value: boolean) => {
+    try {
+      const currentData = await getThemes();
+      await saveThemes({ ...currentData, nativeDarkModeEnabled: value });
+      setNativeDarkModeEnabled(value);
+    } catch (error) {
+      console.error('Error toggling dark mode:', error);
+      Alert.alert('Error', 'Failed to update setting. Please try again.');
+    }
+  };
 
   const loadExtensionState = async () => {
     try {
@@ -197,6 +222,21 @@ const SafariScreen: React.FC<SafariScreenProps> = ({ navigation }) => {
             <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
           </TouchableOpacity>
         )}
+
+        <View style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}>
+          <View style={styles.settingContent}>
+            <Text style={[styles.settingLabel, { color: textColor }]}>Dark Mode</Text>
+            <Text style={[styles.settingDescription, { color: textColor }]}>
+              Use each website's own dark mode instead of your theme colors.
+            </Text>
+          </View>
+          <Switch
+            value={nativeDarkModeEnabled}
+            onValueChange={handleToggleDarkMode}
+            trackColor={{ false: '#3e3e3e', true: appThemeColor }}
+            thumbColor="#FFFFFF"
+          />
+        </View>
 
         {currentTheme ? (
           <View style={[styles.themeCard, { borderColor }]}>
@@ -344,6 +384,19 @@ const styles = StyleSheet.create({
   warningTextWrap: { flex: 1 },
   warningTitle: { fontSize: 15, fontWeight: '700', marginBottom: 4 },
   warningBody: { fontSize: 13, lineHeight: 18, opacity: 0.85 },
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  settingContent: { flex: 1, marginRight: 12 },
+  settingLabel: { fontSize: 16, fontWeight: '600', marginBottom: 4 },
+  settingDescription: { fontSize: 14, lineHeight: 18, opacity: 0.7 },
   themeCard: {
     borderRadius: 0,
     paddingVertical: 10,

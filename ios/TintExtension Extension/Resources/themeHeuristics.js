@@ -43,6 +43,8 @@
     var MODAL_MIN_WIDTH = 160;
     var MODAL_MIN_HEIGHT = 80;
     var MODAL_MIN_TEXT = 8;
+    var DIALOG_PANEL_MIN_TEXT = 40;
+    var DIALOG_PANEL_MIN_LINKS = 2;
     var SEARCH_CHROME_MAX_HEIGHT = 180;
     var TOP_CHROME_MAX_VH = 0.32;
     // A literal <header>/<nav> tag (or role="banner") is a reliable "this is
@@ -329,6 +331,49 @@
         }
         for (var i = 0; i < AD_NETWORK_HOST_SUFFIXES.length; i++) {
             var suffix = AD_NETWORK_HOST_SUFFIXES[i];
+            if (host === suffix || host.slice(-(suffix.length + 1)) === '.' + suffix) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Known chat/support-widget vendors (Intercom, Zendesk, Drift, Crisp,
+     * Tawk.to, HubSpot Conversations, Salesforce LiveAgent). Same spirit as
+     * AD_NETWORK_HOST_SUFFIXES: these render a same-origin-reachable
+     * launcher button/panel wrapper on the host page (the actual chat panel
+     * is usually a same-origin iframe from one of these hosts), and both
+     * are vendor-branded chrome that can break if a generic pass force-
+     * clears or repaints it. Used to skip these iframes in the same-origin
+     * iframe pass and to keep generic sticky/overlay repaint passes off
+     * their host-page wrapper elements.
+     */
+    var CHAT_WIDGET_HOST_SUFFIXES = [
+        'intercom.io',
+        'intercomcdn.com',
+        'zendesk.com',
+        'zdassets.com',
+        'zopim.com',
+        'drift.com',
+        'driftt.com',
+        'crisp.chat',
+        'tawk.to',
+        'hubspot.com',
+        'hs-scripts.com',
+        'usemessages.com',
+        'salesforceliveagent.com',
+        'force.com',
+    ];
+
+    function isChatWidgetHost(hostname) {
+        if (!hostname) return false;
+        var host = String(hostname).toLowerCase();
+        if (host.indexOf(':') >= 0) {
+            host = host.split(':')[0];
+        }
+        for (var i = 0; i < CHAT_WIDGET_HOST_SUFFIXES.length; i++) {
+            var suffix = CHAT_WIDGET_HOST_SUFFIXES[i];
             if (host === suffix || host.slice(-(suffix.length + 1)) === '.' + suffix) {
                 return true;
             }
@@ -1069,6 +1114,94 @@
     }
 
     /**
+     * Same content-substance gate as isModalCardShape (size floor, real
+     * text, an interactive element) but WITHOUT the covering-sheet
+     * exclusion (isCoveringSheetRect: >=75% viewport width AND >=45%
+     * viewport height) — only the stricter full-viewport one stays. That
+     * exclusion exists to protect isLikelyModalCard/findInnerModalCard,
+     * which have no other way to tell a real card apart from an empty
+     * curtain sized to match it, since neither is transition-gated. On a
+     * narrow mobile viewport, an entirely ordinary in-flow card (a
+     * date-picker, an accordion section) routinely crosses 75% width /
+     * 45% height just by being a normal-sized block in a narrow, short
+     * viewport — confirmed on booking.com's inline "Enter dates to see
+     * prices" calendar (370x386 in a 390x664 viewport). This is only ever
+     * called from classifyExpandedContentPanelStateInfo below, which is
+     * ALWAYS paired with a confirmed collapsed -> expanded transition gate
+     * in content.js (isNavDrawerOpenTransition) before anything gets
+     * painted — a deceptive curtain has no reason to avoid position:fixed,
+     * so it is caught by isLikelyModalCard's fixed-only path instead; an
+     * in-flow div that only just grew from a confirmed-collapsed size is
+     * far more characteristic of a legitimate expand-in-place panel.
+     */
+    function isExpandableContentPanelShape(info) {
+        if (!info) return false;
+        if (info.visibility === 'hidden' || info.opacity === '0') return false;
+        if (isSearchChromeInfo(info)) return false;
+        var width = info.width || 0;
+        var height = info.height || 0;
+        if (width < MODAL_MIN_WIDTH || height < MODAL_MIN_HEIGHT) return false;
+        var sheetRect = {
+            width: width,
+            height: height,
+            top: typeof info.top === 'number' ? info.top : 0,
+            left: typeof info.left === 'number' ? info.left : 0,
+        };
+        if (isFullViewportRect(sheetRect, info.vh || 0, info.vw || 0)) return false;
+        if ((info.textLength || 0) < MODAL_MIN_TEXT) return false;
+        return !!info.hasAction;
+    }
+
+    /**
+     * Position-agnostic counterpart to isLikelyModalCard, for cards that
+     * expand IN PLACE (display:none -> block, height:0 -> auto) with no
+     * position:fixed of their own AND no nav semantics — e.g. booking.com's
+     * inline "Enter dates to see prices" date-picker: a plain, role-less
+     * <div> in normal document flow (position: static) that grows from
+     * collapsed to a large, texty, actionable white card when its trigger
+     * is focused. isLikelyModalCard can never reach this shape (it requires
+     * position:fixed, specifically to avoid flagging ordinary
+     * absolute-positioned promo tiles/carousels as modals);
+     * classifyNavMenuPanelState can't either (it requires nav tag/
+     * descendant/link-count — a calendar has none of those). Uses the
+     * purely-geometric isNavMenuPanelCollapsedInfo for the collapsed side —
+     * its checks (hidden/display/visibility/opacity/offscreen/tiny-rect)
+     * carry no nav-specific meaning despite the name.
+     */
+    function classifyExpandedContentPanelStateInfo(info) {
+        if (isExpandableContentPanelShape(info)) return 'expanded';
+        if (isNavMenuPanelCollapsedInfo(info)) return 'collapsed';
+        return 'ambiguous';
+    }
+
+    /** @returns {'expanded'|'collapsed'|'ambiguous'|null} */
+    function classifyExpandedContentPanelState(el, getStyle, viewport) {
+        if (!el || el.nodeType !== 1) return null;
+        // ARIA overlays (role=dialog/menu/listbox, aria-modal, <dialog>,
+        // [popover]) are already governed by reopaqueOverlays/
+        // findInnerDialogPanel — never double-paint from this path.
+        if (isOverlayChrome(el)) return null;
+        if (isSearchChrome(el)) return null;
+        var styleFn = resolveStyleFn(getStyle);
+        if (!styleFn) return null;
+        var style;
+        try { style = styleFn(el); } catch (e) { return null; }
+        var rect;
+        try { rect = el.getBoundingClientRect(); } catch (e2) { return null; }
+        var vp = resolveViewport(viewport);
+        var offscreen = rect.right <= 0 || rect.bottom <= 0
+            || rect.left >= vp.vw || rect.top >= vp.vh;
+        var hiddenAttr = !!(el.hidden || (el.hasAttribute && el.hasAttribute('hidden')));
+        var ariaHidden = !!(el.getAttribute && el.getAttribute('aria-hidden') === 'true');
+        var info = modalCardInfoFromElement(el, style, rect, vp);
+        info.display = style.display;
+        info.offscreen = offscreen;
+        info.hiddenAttr = hiddenAttr;
+        info.ariaHidden = ariaHidden;
+        return classifyExpandedContentPanelStateInfo(info);
+    }
+
+    /**
      * Largest non-fullscreen card-like child under a full-viewport scrim.
      * Walks a few levels so portals that wrap the card in extra divs still hit.
      */
@@ -1115,6 +1248,87 @@
             }
         }
         return best;
+    }
+
+    /**
+     * Full-viewport / covering-sheet inner panel under a genuine ARIA
+     * dialog root (role="dialog"/"alertdialog", aria-modal, <dialog>,
+     * [popover]). findInnerModalCard/isModalCardShape deliberately reject
+     * covering-sheet sizes to protect against curtain artifacts (ad
+     * wrappers, consent walls that stay empty) — but on mobile, a real
+     * dialog's own content panel is routinely full-screen itself (e.g. a
+     * "More" traveller/currency/language settings sheet: the
+     * [role="dialog"] node carries no background of its own, and the
+     * actual white panel is a plain, role-less <div> one level inside it,
+     * sized to the full viewport). A content-substance signal — real text
+     * plus interactive elements or links — is what tells an authentic
+     * panel apart from an empty curtain div, which essentially never
+     * carries this much content. Only called when the search root is
+     * already a confirmed ARIA overlay root (see isOverlayRoot), so this
+     * never fires on an anonymous curtain wrapper.
+     */
+    function isLikelyDialogPanelInfo(info) {
+        if (!info) return false;
+        if (info.visibility === 'hidden' || info.opacity === '0') return false;
+        var width = info.width || 0;
+        var height = info.height || 0;
+        if (width < 1 || height < 1) return false;
+        if ((info.textLength || 0) < DIALOG_PANEL_MIN_TEXT) return false;
+        return !!info.hasAction || (info.linkCount || 0) >= DIALOG_PANEL_MIN_LINKS;
+    }
+
+    /**
+     * Shallowest content-bearing descendant under a genuine ARIA dialog
+     * root, allowing full-viewport sizes (unlike findInnerModalCard).
+     * Searches level-by-level (breadth-first), not by largest area: a
+     * scrollable content sub-div nested a level or two deeper routinely has
+     * a taller bounding rect (its full scroll height) than the actual panel
+     * wrapper that carries the real background one level below the dialog
+     * root — area-first picking would match that inner scroller and leave
+     * the panel's own header strip transparent above it. The true panel is
+     * the outermost div with real content, so the first level with any
+     * match wins; only among multiple candidates at that same level is the
+     * largest preferred.
+     */
+    function findInnerDialogPanel(el, getStyle, viewport) {
+        if (!el) return null;
+        var styleFn = resolveStyleFn(getStyle);
+        if (!styleFn) return null;
+        var queue = [el];
+        var depth = 0;
+        while (queue.length && depth < 4) {
+            var nextQueue = [];
+            var levelBest = null;
+            var levelBestArea = 0;
+            for (var q = 0; q < queue.length; q++) {
+                var node = queue[q];
+                if (!node || !node.children) continue;
+                var children = node.children;
+                for (var i = 0; i < children.length; i++) {
+                    var child = children[i];
+                    if (!child || child.nodeType !== 1 || isSearchChrome(child)) continue;
+                    var childStyle;
+                    var childRect;
+                    try { childStyle = styleFn(child); } catch (e0) { childStyle = null; }
+                    try { childRect = child.getBoundingClientRect(); } catch (e1) { childRect = null; }
+                    if (childStyle && childRect
+                        && isLikelyDialogPanelInfo(
+                            modalCardInfoFromElement(child, childStyle, childRect, viewport)
+                        )) {
+                        var area = (childRect.width || 0) * (childRect.height || 0);
+                        if (area > levelBestArea) {
+                            levelBestArea = area;
+                            levelBest = child;
+                        }
+                    }
+                    nextQueue.push(child);
+                }
+            }
+            if (levelBest) return levelBest;
+            queue = nextQueue;
+            depth++;
+        }
+        return null;
     }
 
     /**
@@ -1218,7 +1432,8 @@
      * @param {{ position?: string, mask?: string, visibility?: string,
      *   opacity?: string, overlayChrome?: boolean, width?: number, height?: number,
      *   top?: number, left?: number, vh?: number, vw?: number, tag?: string,
-     *   zIndex?: number|string, id?: string, className?: string }} info
+     *   zIndex?: number|string, id?: string, className?: string,
+     *   childCoverageFrac?: number|null }} info
      */
     function shouldSkipStickyElement(info) {
         if (!info) return true;
@@ -1256,6 +1471,24 @@
         // Overlay / CMP / notification tiers (OneSignal, OneTrust, video float).
         var z = parseInt(info.zIndex, 10);
         if (!isNaN(z) && z >= 1000) {
+            return true;
+        }
+        // A wide, short sticky/fixed element whose direct children cover
+        // only a small fraction of its own width is very likely a
+        // positioning wrapper for one small floating control (a "back to
+        // top" button parked at one edge via justify-content:flex-end, a
+        // chat launcher, etc.) — not a real chrome bar. Painting the WHOLE
+        // WRAPPER opaque then produces a bar spanning the wrapper's full
+        // width where only the small control should be visible (confirmed
+        // on github.com's `.BackToTop`: position:sticky, display:flex,
+        // justify-content:flex-end, hosting one 36px button in a 390px-wide
+        // box with no background of its own). A genuine chrome bar's
+        // content (logo, nav links, search) typically spans most of its
+        // own box, so this can't misfire on real chrome. Width-gated so it
+        // never affects small badges/pills already handled elsewhere.
+        if (typeof info.childCoverageFrac === 'number'
+            && (info.width || 0) >= 150
+            && info.childCoverageFrac < 0.5) {
             return true;
         }
         return false;
@@ -1453,6 +1686,114 @@
         return /url\s*\(/i.test(String(value));
     }
 
+    // A static loading-spinner/throbber asset set as a background-image is
+    // almost always meant to stay hidden behind an opaque covering element
+    // until an active/loading state — never something a themed page should
+    // show at rest. Deliberately narrow (whole-word "loader"/"spinner"/
+    // "throbber" in the url() path, not bare "spin"/"load") so it can't
+    // false-positive on unrelated asset filenames.
+    var LOADER_BACKGROUND_IMAGE_RE = /\b(loader|spinner|throbber)\b/i;
+
+    function isLoaderBackgroundImageUrl(value) {
+        if (!value || value === 'none') return false;
+        var s = String(value);
+        var match = /url\s*\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(s);
+        if (!match) return false;
+        return LOADER_BACKGROUND_IMAGE_RE.test(match[1]);
+    }
+
+    /**
+     * Recognizes known "flip a site into its own native dark mode"
+     * conventions, for the opt-in Dark Mode toggle (nativeDarkModeEnabled
+     * in the synced theme data) — when the user wants each site's own
+     * designed dark palette instead of Aura's chosen theme colors, this
+     * decides HOW to activate it. Deliberately conservative: only a
+     * handful of well-known, unambiguous framework conventions are
+     * recognized; anything else returns null and the caller falls through
+     * to Aura's normal generic override passes (fail safe — never guess at
+     * a bespoke `class="dark"` toggle without corroborating evidence, since
+     * blindly adding an arbitrary class could do nothing on this site, or
+     * collide with an unrelated class of the same name).
+     *
+     * Already-dark sites (dataColorMode/dataTheme already "dark") return
+     * null — nothing to flip.
+     *
+     * @param {{
+     *   hasDataColorMode?: boolean,       // <html data-color-mode> present (GitHub Primer)
+     *   dataColorMode?: string,           // its current value
+     *   hasDarkThemeCompanion?: boolean,  // data-dark-theme/data-light-theme present alongside it
+     *   hasDataBsTheme?: boolean,         // [data-bs-theme] present anywhere (Bootstrap 5.3+)
+     *   hasDataTheme?: boolean,           // <html data-theme> present (Docusaurus/VitePress/Daisy UI)
+     *   dataTheme?: string,
+     *   hasDarkClassEvidence?: boolean,   // corroborating `dark:` utility class or
+     *                                     // <meta name="color-scheme" content="... dark ...">
+     *                                     // seen in the page's own markup/stylesheets
+     * }} info
+     * @returns {{ attr: string, value: string } | null} the attribute (or
+     *   "class") and value to set on <html> to activate the site's own dark
+     *   mode, or null if no known convention was recognized / already dark.
+     */
+    function classifyNativeDarkModeInfo(info) {
+        if (!info) return null;
+        if (info.hasDataColorMode && info.hasDarkThemeCompanion && info.dataColorMode !== 'dark') {
+            return { attr: 'data-color-mode', value: 'dark' };
+        }
+        if (info.hasDataBsTheme && info.dataBsTheme !== 'dark') {
+            return { attr: 'data-bs-theme', value: 'dark' };
+        }
+        if (info.hasDataTheme && info.dataTheme !== 'dark') {
+            return { attr: 'data-theme', value: 'dark' };
+        }
+        if (info.hasDarkClassEvidence && !info.hasDarkClassAlready) {
+            return { attr: 'class', value: 'dark' };
+        }
+        return null;
+    }
+
+    // Geometry gate for the conservative logo-contrast pass
+    // (visitLogoContrastElement in content.js). Deliberately narrow: only
+    // small images plausibly acting as a brand mark ever become candidates
+    // — anything bigger is far more likely a photo/hero image, which this
+    // must never touch.
+    var LOGO_CANDIDATE_MIN_WIDTH = 16;
+    var LOGO_CANDIDATE_MIN_HEIGHT = 16;
+    var LOGO_CANDIDATE_MAX_WIDTH = 220;
+    var LOGO_CANDIDATE_MAX_HEIGHT = 120;
+
+    /**
+     * @param {{ width?: number, height?: number, inHeaderOrNav?: boolean,
+     *   hasLogoClassHint?: boolean, isHomeLinkImage?: boolean }} info
+     */
+    function isLikelyLogoCandidateInfo(info) {
+        if (!info) return false;
+        var w = info.width || 0;
+        var h = info.height || 0;
+        if (w < LOGO_CANDIDATE_MIN_WIDTH || h < LOGO_CANDIDATE_MIN_HEIGHT) return false;
+        if (w > LOGO_CANDIDATE_MAX_WIDTH || h > LOGO_CANDIDATE_MAX_HEIGHT) return false;
+        return !!(info.inHeaderOrNav || info.hasLogoClassHint || info.isHomeLinkImage);
+    }
+
+    // Same threshold philosophy as isLowChroma/LIGHT_SURFACE_CHROMA, applied
+    // to raw sampled pixel channels instead of a single computed-style
+    // color: a near-single-color image (a flat-fill logo/wordmark) has a
+    // small max-min range per channel across all sampled pixels. A photo or
+    // multi-color graphic has a much wider spread and must never qualify —
+    // there is no exception path, since inverting a photo would always be
+    // wrong.
+    var LOGO_MONOCHROME_MAX_SPREAD = 40;
+
+    /**
+     * @param {{ rSpread: number, gSpread: number, bSpread: number }} stats
+     *   channel spreads (max-min) across all sampled pixels of a candidate
+     *   image, as produced by a canvas getImageData sample in content.js.
+     */
+    function isNearMonochromeColorStats(stats) {
+        if (!stats) return false;
+        return stats.rSpread <= LOGO_MONOCHROME_MAX_SPREAD
+            && stats.gSpread <= LOGO_MONOCHROME_MAX_SPREAD
+            && stats.bSpread <= LOGO_MONOCHROME_MAX_SPREAD;
+    }
+
     function shouldClearShellBackground(info) {
         if (!info) return false;
         var tag = (info.tag || '').toUpperCase();
@@ -1506,6 +1847,8 @@
         isFullViewportRect: isFullViewportRect,
         isCoveringSheetRect: isCoveringSheetRect,
         isAdNetworkHost: isAdNetworkHost,
+        CHAT_WIDGET_HOST_SUFFIXES: CHAT_WIDGET_HOST_SUFFIXES,
+        isChatWidgetHost: isChatWidgetHost,
         isAmpPrivacyFrameHost: isAmpPrivacyFrameHost,
         isAmpDocument: isAmpDocument,
         isAmpOverlayChrome: isAmpOverlayChrome,
@@ -1536,6 +1879,9 @@
         isNavMenuPanelCollapsedInfo: isNavMenuPanelCollapsedInfo,
         classifyNavMenuPanelStateInfo: classifyNavMenuPanelStateInfo,
         classifyNavMenuPanelState: classifyNavMenuPanelState,
+        classifyExpandedContentPanelStateInfo: classifyExpandedContentPanelStateInfo,
+        classifyExpandedContentPanelState: classifyExpandedContentPanelState,
+        isExpandableContentPanelShape: isExpandableContentPanelShape,
         isLikelyNavMenuInfo: isLikelyNavMenuInfo,
         isSearchChrome: isSearchChrome,
         isSearchChromeInfo: isSearchChromeInfo,
@@ -1543,6 +1889,8 @@
         isTopChromeBar: isTopChromeBar,
         isTopChromeBarInfo: isTopChromeBarInfo,
         findInnerModalCard: findInnerModalCard,
+        findInnerDialogPanel: findInnerDialogPanel,
+        isLikelyDialogPanelInfo: isLikelyDialogPanelInfo,
         effectiveBackground: effectiveBackground,
         shouldSkipBrightElement: shouldSkipBrightElement,
         shouldSkipStickyElement: shouldSkipStickyElement,
@@ -1556,6 +1904,14 @@
         isCustomLayoutElement: isCustomLayoutElement,
         isGradientBackgroundImage: isGradientBackgroundImage,
         isPhotographicBackgroundImage: isPhotographicBackgroundImage,
+        isLoaderBackgroundImageUrl: isLoaderBackgroundImageUrl,
+        classifyNativeDarkModeInfo: classifyNativeDarkModeInfo,
+        isLikelyLogoCandidateInfo: isLikelyLogoCandidateInfo,
+        isNearMonochromeColorStats: isNearMonochromeColorStats,
+        LOGO_CANDIDATE_MIN_WIDTH: LOGO_CANDIDATE_MIN_WIDTH,
+        LOGO_CANDIDATE_MIN_HEIGHT: LOGO_CANDIDATE_MIN_HEIGHT,
+        LOGO_CANDIDATE_MAX_WIDTH: LOGO_CANDIDATE_MAX_WIDTH,
+        LOGO_CANDIDATE_MAX_HEIGHT: LOGO_CANDIDATE_MAX_HEIGHT,
         shouldClearShellBackground: shouldClearShellBackground,
         shouldClearLayoutGradient: shouldClearLayoutGradient,
     };
