@@ -89,6 +89,12 @@
     // separately from the other opaque-modified sets for the same reason as
     // navMenuPanelOpaqueModified above.
     const expandedContentPanelOpaqueModified = new Set();
+    // Elements forced opaque by visitFloatingIconControlElement — small
+    // icon-only controls (close/share/kebab-menu) pinned via position:fixed/
+    // absolute to float over media (a photo, a map) whose own translucent
+    // scrim backing the universal transparency rule stripped. See
+    // isLikelyFloatingIconControl in themeHeuristics.js.
+    const floatingIconControlModified = new Set();
     // Google Ask-anything pill ancestors / decorative siblings we cleared.
     const askAnythingModified = new Set();
     // Elements whose ::before/::after we identified as a full-bleed
@@ -1754,6 +1760,38 @@
         stickyModified.add(el);
     }
 
+    // Small icon-only controls (close/share/kebab-menu) pinned via
+    // position:fixed/absolute to float over media — a product photo, a map
+    // — routinely carry their own translucent scrim so the icon stays
+    // legible over whatever's underneath. The universal transparency rule
+    // strips that scrim like any other div/a background, leaving a bare
+    // icon glyph with nothing behind it (confirmed via screenshot on Google
+    // Shopping's item-photo share/kebab-menu/close cluster). Idempotent,
+    // no transition-gating needed (unlike the expand-in-place panels
+    // above) — these controls don't toggle open/closed, they're just
+    // present or not, so re-checking the current shape every pass and
+    // reverting the moment it stops matching is sufficient.
+    function revertFloatingIconControlPaint(el) {
+        try {
+            el.style.removeProperty('background-color');
+            el.style.removeProperty('background-image');
+        } catch (e) {}
+        floatingIconControlModified.delete(el);
+    }
+
+    function visitFloatingIconControlElement(el, vh, vw) {
+        if (!el || el.nodeType !== 1 || !H || !H.isLikelyFloatingIconControl) return;
+        if (isChromeRepaintDisabledForHost()) return;
+        if (isAdThemingSkipped(el)) return;
+        if (H.isLikelyFloatingIconControl(el, getComputedStyle, { vh, vw })) {
+            el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
+            el.style.setProperty('background-image', 'none', 'important');
+            floatingIconControlModified.add(el);
+            return;
+        }
+        if (floatingIconControlModified.has(el)) revertFloatingIconControlPaint(el);
+    }
+
     function reopaqueStickyFixed(root) {
         if (!root || !currentTheme || !H) return;
         if (isChromeRepaintDisabledForHost()) return;
@@ -1968,6 +2006,27 @@
             } catch (e) {
                 return;
             }
+            // Precompute once per outer bar (not per descendant — an
+            // O(inner x selectors) el.matches() scan could hit 250 x 300
+            // calls per bar per pass) which descendants the SITE ITSELF
+            // marked !important opaque. A non-fixed/sticky descendant that
+            // matches (and passes the same accept-gate
+            // restoreAuthoredChromeOpacity uses) must not be blindly forced
+            // transparent below — confirmed on Google Maps' search pill:
+            // its icon buttons and input track are position:absolute, not
+            // fixed/sticky, so they fell through to the unconditional
+            // `transparent` line every pass, including the scroll fast-path
+            // (window 'scroll' listener below calls reopaqueTopChrome alone,
+            // not restoreAuthoredChromeOpacity) — this branch is load-
+            // bearing on its own, not just a redundant hedge against that
+            // other pass.
+            let authoredOpaqueDescendants = null;
+            const authoredSelectorsForChrome = H ? getAuthoredOpaqueBgSelectors() : [];
+            if (authoredSelectorsForChrome.length) {
+                authoredOpaqueDescendants = new Set(
+                    findAuthoredOpaqueElements(el, authoredSelectorsForChrome)
+                );
+            }
             let n = 0;
             for (const inner of inners) {
                 if (!inner || inner.nodeType !== 1) continue;
@@ -1991,6 +2050,23 @@
                         inner.style.setProperty('background-image', 'none', 'important');
                         chromeModified.add(inner);
                         chromeFixedInnerModified.add(inner);
+                        painted.add(inner);
+                    }
+                    continue;
+                }
+                if (authoredOpaqueDescendants && authoredOpaqueDescendants.has(inner)
+                    && !isAdThemingSkipped(inner) && !isChromePaintHostSkipped(inner)
+                    && (H.isLikelyNavMenu(inner, getComputedStyle, { vh, vw })
+                        || (H.isLikelyAuthoredSurface && H.isLikelyAuthoredSurface(inner, getComputedStyle, { vh, vw })))) {
+                    if (!painted.has(inner)) {
+                        // --aura-overlay, not --aura-bg: matches what
+                        // restoreAuthoredChromeOpacity and the floating-icon-
+                        // control pass already paint this class of surface,
+                        // so a pill's icon children and its own wrapper
+                        // don't show a visible color seam between them.
+                        inner.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
+                        inner.style.setProperty('background-image', 'none', 'important');
+                        chromeModified.add(inner);
                         painted.add(inner);
                     }
                     continue;
@@ -2039,8 +2115,23 @@
 
         let seeds;
         try {
+            // Search/combobox fields are seeded directly too, not just their
+            // semantic wrappers — isTopChromeBarInfo already accepts a
+            // near-top bar purely on `hasSearchField` with no tag/role
+            // requirement (Google Shopping's <header> comment above), but
+            // that only helps if `outermost()` ever gets called starting
+            // from somewhere inside the bar. A search bar built as a plain,
+            // role-less <div> (no <form>/[role=search]/<header> wrapper —
+            // the likely shape of Google Maps' "Find a place" bar, going
+            // transparent with no live-DOM confirmation possible: Google's
+            // bot detection blocked every attempt to load the real page
+            // this session) is otherwise invisible to this pass no matter
+            // how correct isTopChromeBar's own logic is.
             seeds = scope.querySelectorAll(
-                'header, nav, [role="banner"], [role="search"], form, #searchform'
+                'header, nav, [role="banner"], [role="search"], form, #searchform, ' +
+                '[role="combobox"], [role="searchbox"], ' +
+                'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):' +
+                'not([type="submit"]):not([type="button"]):not([type="password"]), textarea'
             );
         } catch (e) {
             return;
@@ -2087,9 +2178,20 @@
             const rule = rules[i];
             budget.scanned++;
             if (!rule) continue;
-            if (rule.cssRules) {
+            // Recurse into genuinely nested rule groups — @media/@supports/
+            // @layer, OR native CSS Nesting's inline nested selectors within
+            // an ordinary style rule. Browsers with CSS Nesting support
+            // (Chromium 120+, Safari 17.2+ — i.e. most real devices today)
+            // expose a `cssRules` CSSRuleList on EVERY CSSStyleRule now, not
+            // just grouping at-rules, so mere truthiness can no longer tell
+            // "this is a container" apart from "this is a plain rule with
+            // an incidental empty list" — check length instead. And do NOT
+            // `continue` after recursing: a nesting-parent rule (`.card { .. }
+            // & .icon { .. } }`) can carry its own !important background
+            // declaration too, so its own selector must still be checked
+            // below regardless of whether it also has nested children.
+            if (rule.cssRules && rule.cssRules.length > 0) {
                 try { collectImportantBgSelectors(rule.cssRules, out, budget); } catch (e) {}
-                continue;
             }
             if (!rule.style || !rule.selectorText) continue;
             let bg = '';
@@ -2142,6 +2244,29 @@
         return selectors;
     }
 
+    // Shared by restoreAuthoredChromeOpacity and paintChrome's inner loop:
+    // find every element under `scope` matching any of the (capped,
+    // TTL-cached) authored !important-opaque selectors. One combined
+    // comma-list query is a single native tree walk — cheaper than either
+    // scanning `scope` with a broad candidate pre-filter first, or running
+    // one querySelectorAll per selector. Falls back to per-selector queries
+    // (deduped via the Set) only if the combined string itself is malformed
+    // — one bad fragment in a 300-selector comma-list would otherwise fail
+    // the whole query, unlike el.matches() which fails per-selector.
+    function findAuthoredOpaqueElements(scope, selectors) {
+        try {
+            return scope.querySelectorAll(selectors.join(','));
+        } catch (e) {
+            const seen = new Set();
+            for (let i = 0; i < selectors.length; i++) {
+                try {
+                    scope.querySelectorAll(selectors[i]).forEach(el => seen.add(el));
+                } catch (e2) {}
+            }
+            return Array.from(seen);
+        }
+    }
+
     // Position-agnostic counterpart to the isLikelyNavDrawer transition gate
     // in visitOverlayModalWalk, for menus that expand IN PLACE (display:none
     // -> block, height:0 -> auto) rather than as a position:fixed/sticky
@@ -2168,8 +2293,15 @@
             const prevNavState = navMenuPanelStateHistory.get(el);
             const isOpenTransition = !!(H.isNavDrawerOpenTransition
                 && H.isNavDrawerOpenTransition(prevNavState, navState));
-            navMenuPanelStateHistory.set(el, 'expanded');
+            // Same history-poisoning fix as visitExpandedContentPanelElement
+            // above: only record 'expanded' once actually treated as an
+            // open. A panel that ever mounts pre-expanded (no earlier
+            // 'collapsed' sighting — e.g. opened via a URL hash on load)
+            // would otherwise get prevNavState stuck at 'expanded' forever,
+            // and isNavDrawerOpenTransition (which requires prevState ===
+            // 'collapsed') could never fire again for it.
             if (isOpenTransition || navMenuPanelOpaqueModified.has(el)) {
+                navMenuPanelStateHistory.set(el, 'expanded');
                 let style;
                 try { style = getComputedStyle(el); } catch (e) { return; }
                 if (style.visibility === 'hidden' || style.opacity === '0') return;
@@ -2269,8 +2401,22 @@
             const isOpenTransition = !!(H.isNavDrawerOpenTransition
                 && H.isNavDrawerOpenTransition(prevState, panelState))
                 || isFreshlyMountedContentPanel(el, prevState);
-            expandedContentPanelStateHistory.set(el, 'expanded');
+            // Only record 'expanded' once we've actually decided to treat
+            // this sighting as an open — never on a declined pass. Writing
+            // it unconditionally here would permanently poison prevState
+            // for any element whose first-ever 'expanded' sighting fails
+            // isFreshlyMountedContentPanel's settle-time/sibling gate (e.g.
+            // a panel that mounts within the settle window, or shares a
+            // wrapper class with a sibling at mount time): every later pass
+            // would see prevState === 'expanded' instead of `undefined`, so
+            // isFreshlyMountedContentPanel could never re-qualify it and
+            // isNavDrawerOpenTransition could never fire either (it needs
+            // prevState === 'collapsed', which this element never has) —
+            // the element would stay transparent forever. Leaving prevState
+            // as `undefined` on a declined pass lets the next pass retry
+            // isFreshlyMountedContentPanel fresh instead of locking out.
             if (isOpenTransition || expandedContentPanelOpaqueModified.has(el)) {
+                expandedContentPanelStateHistory.set(el, 'expanded');
                 let style;
                 try { style = getComputedStyle(el); } catch (e) { return; }
                 if (style.visibility === 'hidden' || style.opacity === '0') return;
@@ -2314,40 +2460,34 @@
         const selectors = getAuthoredOpaqueBgSelectors();
         if (!selectors.length) return;
         const scope = root.nodeType === 1 ? root : document.documentElement;
-        let candidates;
-        try {
-            candidates = scope.querySelectorAll(
-                'nav, [role="navigation"], header, [role="banner"], ' +
-                '[class*="menu" i], [class*="nav" i], [id*="menu" i], [id*="nav" i]'
-            );
-        } catch (e) {
-            return;
-        }
+        // Query every authored !important-opaque selector directly — this is
+        // a strict superset of the old nav-ish pre-filter (which also
+        // required el.matches(selectors[i]) afterward), and catches compact,
+        // non-nav-shaped surfaces (a stat card, a "Sign in" pill, a
+        // selected-tab highlight) the old candidate list could never reach
+        // no matter what el.matches() found, since they were never queried
+        // for in the first place. See isLikelyAuthoredSurface below.
+        const candidates = findAuthoredOpaqueElements(scope, selectors);
         const { vh, vw } = passViewport();
         let n = 0;
-        candidates.forEach(el => {
-            if (n > 200) return;
-            if (chromeAuthoredModified.has(el)) return;
-            if (isAdThemingSkipped(el) || isChromePaintHostSkipped(el)) return;
-            if (H.isAmpOverlayChrome && H.isAmpOverlayChrome(el)) return;
+        for (let ci = 0; ci < candidates.length && n <= 200; ci++) {
+            const el = candidates[ci];
+            if (chromeAuthoredModified.has(el)) continue;
+            if (isAdThemingSkipped(el) || isChromePaintHostSkipped(el)) continue;
+            if (H.isAmpOverlayChrome && H.isAmpOverlayChrome(el)) continue;
             let style;
-            try { style = getComputedStyle(el); } catch (e2) { return; }
+            try { style = getComputedStyle(el); } catch (e2) { continue; }
             const parsed = H.parseCssRgb && H.parseCssRgb(style.backgroundColor);
             const currentlyTransparent = !parsed || parsed.a < 0.5;
-            if (!currentlyTransparent) return;
-            let authored = false;
-            for (let i = 0; i < selectors.length; i++) {
-                try {
-                    if (el.matches(selectors[i])) { authored = true; break; }
-                } catch (e3) {}
-            }
-            if (!authored) return;
-            if (!H.isLikelyNavMenu(el, getComputedStyle, { vh, vw })) return;
+            if (!currentlyTransparent) continue;
+            const accepted = H.isLikelyNavMenu(el, getComputedStyle, { vh, vw })
+                || (H.isLikelyAuthoredSurface && H.isLikelyAuthoredSurface(el, getComputedStyle, { vh, vw }));
+            if (!accepted) continue;
             n++;
             el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
             el.style.setProperty('background-image', 'none', 'important');
             chromeAuthoredModified.add(el);
-        });
+        }
     }
 
     // 3d. TEXT CONTRAST SAFETY NET — pick black/white against the visible stack.
@@ -2877,6 +3017,7 @@
             visitOverlayModalWalk(el, vh, vw, overlaySeen);
             visitBrightElement(el, vh, vw);
             visitStickyElement(el, vh, vw);
+            visitFloatingIconControlElement(el, vh, vw);
         }, function () {
             if (gen !== walkGeneration) return;
             if (skipContrast) {
@@ -3143,6 +3284,13 @@
         });
         expandedContentPanelOpaqueModified.clear();
         expandedContentPanelStateHistory = new WeakMap();
+        floatingIconControlModified.forEach(el => {
+            try {
+                el.style.removeProperty('background-color');
+                el.style.removeProperty('background-image');
+            } catch (e) {}
+        });
+        floatingIconControlModified.clear();
         revertGoogleImagesMosaic();
         contrastModified.forEach(el => {
             try { el.style.removeProperty('color'); } catch (e) {}

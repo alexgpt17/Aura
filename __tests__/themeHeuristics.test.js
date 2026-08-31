@@ -543,6 +543,145 @@ describe('isTopChromeBarInfo', () => {
   });
 });
 
+describe('isLikelyFloatingIconControlInfo', () => {
+  const chip = {
+    visibility: 'visible',
+    opacity: '1',
+    position: 'absolute',
+    width: 36,
+    height: 36,
+    textLength: 0,
+    isActionable: true,
+  };
+
+  test('matches a small icon-only control positioned over media', () => {
+    expect(H.isLikelyFloatingIconControlInfo(chip)).toBe(true);
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, position: 'fixed' })).toBe(true);
+    // Slightly rectangular (a rounded "..." pill) is still fine.
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, width: 44, height: 32 })).toBe(true);
+  });
+
+  test('rejects an ordinary icon button left in normal document flow', () => {
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, position: 'static' })).toBe(false);
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, position: 'relative' })).toBe(false);
+  });
+
+  test('rejects non-icon shapes and sizes', () => {
+    // Too small (a notification dot, not an actionable control).
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, width: 10, height: 10 })).toBe(false);
+    // Too large (not an icon-sized control).
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, width: 120, height: 120 })).toBe(false);
+    // Too elongated to be an icon chip (a wide pill/button).
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, width: 140, height: 32 })).toBe(false);
+    // Real text content, not an icon-only glyph (e.g. "Track price").
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, textLength: 24 })).toBe(false);
+  });
+
+  test('requires the element to be actionable', () => {
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, isActionable: false })).toBe(false);
+  });
+
+  test('rejects hidden elements', () => {
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, visibility: 'hidden' })).toBe(false);
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, opacity: '0' })).toBe(false);
+  });
+});
+
+describe('elementHasSearchField placeholder fallback', () => {
+  test('matches a plain text input with Search/Find placeholder wording', () => {
+    document.body.innerHTML = '<div id="bar1"><input type="text" placeholder="Find a place"></div>' +
+      '<div id="bar2"><input type="text" placeholder="Search maps"></div>' +
+      '<div id="bar3"><input type="text" placeholder="Enter your name"></div>';
+    expect(H.elementHasSearchField(document.getElementById('bar1'))).toBe(true);
+    expect(H.elementHasSearchField(document.getElementById('bar2'))).toBe(true);
+    expect(H.elementHasSearchField(document.getElementById('bar3'))).toBe(false);
+    document.body.innerHTML = '';
+  });
+
+  test('matches role="searchbox"', () => {
+    document.body.innerHTML = '<div id="bar4"><div role="searchbox"></div></div>';
+    expect(H.elementHasSearchField(document.getElementById('bar4'))).toBe(true);
+    document.body.innerHTML = '';
+  });
+});
+
+describe('isLikelyAuthoredSurfaceInfo', () => {
+  const compact = {
+    visibility: 'visible', opacity: '1', width: 90, height: 36, top: 200, left: 20, vh: 800, vw: 400,
+  };
+
+  test('accepts a compact authored surface well below the modal-card size floor', () => {
+    expect(H.isLikelyAuthoredSurfaceInfo(compact)).toBe(true);
+  });
+
+  test('accepts a wide, short pill shape isLikelyModalCard would reject on height alone', () => {
+    // width 180 >= MODAL_MIN_WIDTH (160) but height 48 < MODAL_MIN_HEIGHT (80) —
+    // demonstrates why this predicate exists independent of isLikelyModalCard.
+    // (Kept under this predicate's own 50vw ceiling — 200 here — unlike the
+    // covering-sheet-adjacent case below, which deliberately exceeds it.)
+    expect(H.isLikelyAuthoredSurfaceInfo({ ...compact, width: 180, height: 48 })).toBe(true);
+  });
+
+  test('rejects when invisible', () => {
+    expect(H.isLikelyAuthoredSurfaceInfo({ ...compact, visibility: 'hidden' })).toBe(false);
+    expect(H.isLikelyAuthoredSurfaceInfo({ ...compact, opacity: '0' })).toBe(false);
+  });
+
+  test('rejects a degenerate near-zero-size surface', () => {
+    expect(H.isLikelyAuthoredSurfaceInfo({ ...compact, width: 2, height: 2 })).toBe(false);
+  });
+
+  test('rejects a full-viewport-sized surface', () => {
+    expect(H.isLikelyAuthoredSurfaceInfo({ ...compact, width: 380, height: 780 })).toBe(false);
+  });
+
+  test('rejects a covering-sheet-sized surface', () => {
+    expect(H.isLikelyAuthoredSurfaceInfo({ ...compact, width: 320, height: 400 })).toBe(false);
+  });
+
+  test('rejects a wide-but-short promo card under the covering-sheet floor but over this predicate\'s own ceiling', () => {
+    // ~90% vw x 35% vh: fails isCoveringSheetRect's 45% vh floor, but should
+    // still be rejected by AUTHORED_SURFACE_MAX_WIDTH_FRAC/HEIGHT_FRAC —
+    // otherwise a hero/promo card that should stay themed would get restored
+    // on the authored-!important signal alone.
+    expect(H.isLikelyAuthoredSurfaceInfo({ ...compact, width: 360, height: 280 })).toBe(false);
+  });
+
+  test('rejects an element with a repeated-class sibling (card-grid batch shape)', () => {
+    expect(H.isLikelyAuthoredSurfaceInfo({ ...compact, hasSiblingWithSameClass: true })).toBe(false);
+  });
+});
+
+describe('isLikelyAuthoredSurface (live DOM)', () => {
+  test('excludes anything inside an ARIA overlay/dialog', () => {
+    document.body.innerHTML = '<div role="dialog"><div id="chip"></div></div>';
+    const chip = document.getElementById('chip');
+    jest.spyOn(chip, 'getBoundingClientRect').mockReturnValue({ width: 90, height: 36, top: 200, left: 20 });
+    expect(H.isLikelyAuthoredSurface(chip, () => ({ visibility: 'visible', opacity: '1' }), { vh: 800, vw: 400 })).toBe(false);
+    document.body.innerHTML = '';
+  });
+
+  test('detects a repeated-class sibling via the live DOM', () => {
+    document.body.innerHTML = '<div><div class="card" id="a"></div><div class="card" id="b"></div></div>';
+    const a = document.getElementById('a');
+    const b = document.getElementById('b');
+    jest.spyOn(a, 'getBoundingClientRect').mockReturnValue({ width: 90, height: 36, top: 200, left: 20 });
+    jest.spyOn(b, 'getBoundingClientRect').mockReturnValue({ width: 90, height: 36, top: 200, left: 120 });
+    const style = () => ({ visibility: 'visible', opacity: '1' });
+    expect(H.isLikelyAuthoredSurface(a, style, { vh: 800, vw: 400 })).toBe(false);
+    expect(H.isLikelyAuthoredSurface(b, style, { vh: 800, vw: 400 })).toBe(false);
+    document.body.innerHTML = '';
+  });
+
+  test('accepts a lone compact surface with no matching sibling', () => {
+    document.body.innerHTML = '<div><div class="signin-btn" id="c"></div></div>';
+    const c = document.getElementById('c');
+    jest.spyOn(c, 'getBoundingClientRect').mockReturnValue({ width: 70, height: 36, top: 10, left: 300 });
+    expect(H.isLikelyAuthoredSurface(c, () => ({ visibility: 'visible', opacity: '1' }), { vh: 800, vw: 400 })).toBe(true);
+    document.body.innerHTML = '';
+  });
+});
+
 describe('isLightContentSurface', () => {
   test('clears light gray and off-white; skips mid gray and brand color', () => {
     expect(H.isLightContentSurface(H.parseCssRgb('rgb(255,255,255)'))).toBe(true);

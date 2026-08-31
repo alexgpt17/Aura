@@ -652,8 +652,15 @@
         try {
             return !!el.querySelector(
                 'textarea, input[type="search"], input[name="q"], input[role="combobox"],' +
-                ' [role="combobox"], input[aria-label*="Search" i], input[aria-label*="Ask" i],' +
-                ' textarea[aria-label*="Ask" i], textarea[aria-label*="Search" i]'
+                ' [role="combobox"], [role="searchbox"], input[aria-label*="Search" i], input[aria-label*="Ask" i],' +
+                ' textarea[aria-label*="Ask" i], textarea[aria-label*="Search" i],' +
+                // Placeholder-text fallback for search-shaped fields with no
+                // distinguishing attribute at all — a plain text input with
+                // "Search"/"Find" wording (e.g. Google Maps' "Find a place"
+                // field, which carries none of the patterns above) is an
+                // extremely common, general shape, not something specific to
+                // one site.
+                ' input[placeholder*="Search" i], input[placeholder*="Find" i]'
             );
         } catch (e) {
             return false;
@@ -1000,6 +1007,100 @@
             isNavTagOrRole: nav.isNavTagOrRole,
             hasNavDescendant: nav.hasNavDescendant,
             linkCount: nav.linkCount,
+        });
+    }
+
+    var AUTHORED_SURFACE_MIN_SIZE = 8;
+    var AUTHORED_SURFACE_DECOY_MIN_WIDTH_FRAC = 0.7;
+    var AUTHORED_SURFACE_DECOY_MIN_HEIGHT_FRAC = 0.25;
+
+    /**
+     * Size-permissive counterpart to isLikelyNavMenu for
+     * restoreAuthoredChromeOpacity, for a compact UI surface with no nav
+     * semantics at all — a stat card, a pill button ("Sign in"), a selected-
+     * tab highlight, a search-bar pill — that the site marked !important
+     * opaque but is well below isLikelyModalCard's MODAL_MIN_WIDTH/HEIGHT
+     * (160x80) floor. Deliberately has NO size floor of its own (the whole
+     * point is to catch things below the modal-card one) but IS bounded:
+     * excludes full-viewport/covering-sheet sizes (isFullViewportRect/
+     * isCoveringSheetRect) plus a tighter own ceiling for the case those two
+     * don't reach — a promo/hero card sized ~90vw x 35vh passes neither
+     * (isCoveringSheetRect needs >=45vh) but has no business being restored
+     * on the authored-opacity signal alone. That extra ceiling requires BOTH
+     * dimensions to be simultaneously large (width AND height, not either
+     * alone) — a lone width (or height) floor would also reject an entirely
+     * legitimate full-width, short search-bar pill (~94vw x ~6vh on a phone
+     * screen — confirmed via live-engine test to be exactly this shape), an
+     * ordinary and common "chrome bar" shape, not the wide-and-tall promo-
+     * card shape this ceiling exists to catch. Also excludes an element that
+     * is one of several DOM siblings sharing its exact class name — the
+     * same infinite-scroll/card-grid-batch protection
+     * isFreshlyMountedContentPanel (content.js) already uses for the same
+     * reason: a card-grid item with its own authored !important background
+     * must stay governed by that transition-gated path, not get restored
+     * unconditionally by this broader one.
+     * @param {{ visibility?: string, opacity?: string, width?: number,
+     *   height?: number, top?: number, left?: number, vh?: number,
+     *   vw?: number, hasSiblingWithSameClass?: boolean }} info
+     */
+    function isLikelyAuthoredSurfaceInfo(info) {
+        if (!info) return false;
+        if (info.visibility === 'hidden' || info.opacity === '0') return false;
+        var width = info.width || 0;
+        var height = info.height || 0;
+        if (width < AUTHORED_SURFACE_MIN_SIZE || height < AUTHORED_SURFACE_MIN_SIZE) return false;
+        var vh = info.vh || 0;
+        var vw = info.vw || 0;
+        var sheetRect = {
+            width: width,
+            height: height,
+            top: typeof info.top === 'number' ? info.top : 0,
+            left: typeof info.left === 'number' ? info.left : 0,
+        };
+        if (isFullViewportRect(sheetRect, vh, vw)) return false;
+        if (isCoveringSheetRect(sheetRect, vh, vw)) return false;
+        if (vh > 0 && vw > 0
+            && width > vw * AUTHORED_SURFACE_DECOY_MIN_WIDTH_FRAC
+            && height > vh * AUTHORED_SURFACE_DECOY_MIN_HEIGHT_FRAC) {
+            return false;
+        }
+        if (info.hasSiblingWithSameClass) return false;
+        return true;
+    }
+
+    function isLikelyAuthoredSurface(el, getStyle, viewport) {
+        if (!el || el.nodeType !== 1) return false;
+        if (isOverlayChrome(el)) return false;
+        var styleFn = resolveStyleFn(getStyle);
+        if (!styleFn) return false;
+        var style;
+        try { style = styleFn(el); } catch (e) { return false; }
+        var rect;
+        try { rect = el.getBoundingClientRect(); } catch (e2) { return false; }
+        var vp = resolveViewport(viewport);
+        var hasSiblingWithSameClass = false;
+        try {
+            var cls = typeof el.className === 'string' ? el.className : '';
+            if (cls && el.parentElement) {
+                var sibs = el.parentElement.children;
+                for (var i = 0; i < sibs.length; i++) {
+                    if (sibs[i] !== el && sibs[i].className === cls) {
+                        hasSiblingWithSameClass = true;
+                        break;
+                    }
+                }
+            }
+        } catch (e3) {}
+        return isLikelyAuthoredSurfaceInfo({
+            visibility: style.visibility,
+            opacity: style.opacity,
+            width: rect.width,
+            height: rect.height,
+            top: rect.top,
+            left: rect.left,
+            vh: vp.vh,
+            vw: vp.vw,
+            hasSiblingWithSameClass: hasSiblingWithSameClass,
         });
     }
 
@@ -1421,6 +1522,76 @@
             vw: vp.vw,
             visibility: style ? style.visibility : 'visible',
             opacity: style ? style.opacity : '1',
+        });
+    }
+
+    var ICON_CONTROL_MIN_SIZE = 20;
+    var ICON_CONTROL_MAX_SIZE = 64;
+    var ICON_CONTROL_MIN_ASPECT = 0.55;
+    var ICON_CONTROL_MAX_ASPECT = 1.8;
+    var ICON_CONTROL_MAX_TEXT = 16;
+
+    /**
+     * A small, icon-only, actionable control taken OUT of normal document
+     * flow (position:fixed/absolute) to float over other visual content it
+     * doesn't share layout with — a close/share/more-options button pinned
+     * to the corner of a photo, video, or map (Google Shopping's item-photo
+     * controls: share / kebab-menu / close, all confirmed via screenshot to
+     * lose their backing and become hard to see once themed). These
+     * routinely carry their own translucent scrim so the icon glyph stays
+     * legible regardless of what's underneath — a background the universal
+     * transparency rule strips like any other div/a, leaving a bare icon
+     * with nothing behind it. `position` is the key discriminator versus an
+     * ordinary icon button living in normal document flow on the page's own
+     * themed background, which never needed its own backdrop and must NOT
+     * get one invented for it (a `position:static` icon button matching the
+     * rest of this shape is left alone). Also excludes anything already
+     * governed by the ARIA overlay/menu machinery (`isOverlayChrome`) — a
+     * dialog's own close button sits on a background reopaqueOverlays/
+     * findInnerDialogPanel already painted, so a second backing chip there
+     * would be redundant, not a fix.
+     * @param {{ visibility?: string, opacity?: string, position?: string,
+     *   width?: number, height?: number, textLength?: number,
+     *   isActionable?: boolean }} info
+     */
+    function isLikelyFloatingIconControlInfo(info) {
+        if (!info) return false;
+        if (info.visibility === 'hidden' || info.opacity === '0') return false;
+        if (info.position !== 'fixed' && info.position !== 'absolute') return false;
+        var w = info.width || 0;
+        var h = info.height || 0;
+        if (w < ICON_CONTROL_MIN_SIZE || w > ICON_CONTROL_MAX_SIZE) return false;
+        if (h < ICON_CONTROL_MIN_SIZE || h > ICON_CONTROL_MAX_SIZE) return false;
+        var ratio = w / h;
+        if (ratio < ICON_CONTROL_MIN_ASPECT || ratio > ICON_CONTROL_MAX_ASPECT) return false;
+        if ((info.textLength || 0) > ICON_CONTROL_MAX_TEXT) return false;
+        return !!info.isActionable;
+    }
+
+    function isLikelyFloatingIconControl(el, getStyle, viewport) {
+        if (!el || el.nodeType !== 1) return false;
+        if (isOverlayChrome(el)) return false;
+        if (isSearchChrome(el)) return false;
+        var styleFn = resolveStyleFn(getStyle);
+        if (!styleFn) return false;
+        var style;
+        try { style = styleFn(el); } catch (e) { return false; }
+        var rect;
+        try { rect = el.getBoundingClientRect(); } catch (e2) { return false; }
+        var text = '';
+        try { text = String(el.textContent || '').replace(/\s+/g, ' ').trim(); } catch (e3) {}
+        var tag = (el.tagName || '').toUpperCase();
+        var role = el.getAttribute ? el.getAttribute('role') : null;
+        var isActionable = tag === 'A' || tag === 'BUTTON' || role === 'button' || role === 'link'
+            || style.cursor === 'pointer';
+        return isLikelyFloatingIconControlInfo({
+            visibility: style.visibility,
+            opacity: style.opacity,
+            position: style.position,
+            width: rect.width,
+            height: rect.height,
+            textLength: text.length,
+            isActionable: isActionable,
         });
     }
 
@@ -1875,6 +2046,8 @@
         classifyNavDrawerState: classifyNavDrawerState,
         isNavDrawerOpenTransition: isNavDrawerOpenTransition,
         isLikelyNavMenu: isLikelyNavMenu,
+        isLikelyAuthoredSurfaceInfo: isLikelyAuthoredSurfaceInfo,
+        isLikelyAuthoredSurface: isLikelyAuthoredSurface,
         isLikelyNavMenuPanelInfo: isLikelyNavMenuPanelInfo,
         isNavMenuPanelCollapsedInfo: isNavMenuPanelCollapsedInfo,
         classifyNavMenuPanelStateInfo: classifyNavMenuPanelStateInfo,
@@ -1888,6 +2061,8 @@
         elementHasSearchField: elementHasSearchField,
         isTopChromeBar: isTopChromeBar,
         isTopChromeBarInfo: isTopChromeBarInfo,
+        isLikelyFloatingIconControl: isLikelyFloatingIconControl,
+        isLikelyFloatingIconControlInfo: isLikelyFloatingIconControlInfo,
         findInnerModalCard: findInnerModalCard,
         findInnerDialogPanel: findInnerDialogPanel,
         isLikelyDialogPanelInfo: isLikelyDialogPanelInfo,
