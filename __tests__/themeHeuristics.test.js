@@ -61,6 +61,15 @@ describe('contrast helpers', () => {
 });
 
 describe('shouldSkipBrightElement', () => {
+  test('skips syntax-highlighted code blocks (pre/code) — background + token colors are a co-designed pair', () => {
+    // Confirmed on dev.to: Rouge output uses bare single/double-letter token
+    // classes (c1/k/nf/s2/...) that no generic selector could target, so
+    // clearing just the (often near-white) background strips the half of
+    // that pair token colors were tuned against.
+    expect(H.shouldSkipBrightElement({ tag: 'PRE', width: 400, height: 200 })).toBe(true);
+    expect(H.shouldSkipBrightElement({ tag: 'CODE', width: 400, height: 200 })).toBe(true);
+  });
+
   test('skips controls, icons, tiny tiles, overlays, floaters', () => {
     expect(H.shouldSkipBrightElement({ tag: 'BUTTON', width: 100, height: 40 })).toBe(true);
     expect(H.shouldSkipBrightElement({
@@ -169,6 +178,248 @@ describe('shouldSkipBrightElement', () => {
       tag: 'RECT', width: 96, height: 133, inSvg: true, visibility: 'visible', opacity: '1', mask: 'none',
     })).toBe(true);
   });
+
+  test('a small icon-only button (mic/send-style composer control) is no longer skipped', () => {
+    expect(H.shouldSkipBrightElement({
+      tag: 'BUTTON', width: 40, height: 40, textLength: 0,
+      visibility: 'visible', opacity: '1', mask: 'none',
+    })).toBe(false);
+  });
+
+  test('a text-labeled button ("Sign in with Google") stays skipped — the core regression guard', () => {
+    expect(H.shouldSkipBrightElement({
+      tag: 'BUTTON', width: 200, height: 40, textLength: 17,
+      visibility: 'visible', opacity: '1', mask: 'none',
+    })).toBe(true);
+  });
+
+  test('a small icon-only button whose own className contains "icon" is still not skipped', () => {
+    // Regression guard: the pre-existing className-icon-hint gate would
+    // otherwise immediately re-skip the exact element the BUTTON carve-out
+    // above just let through.
+    expect(H.shouldSkipBrightElement({
+      tag: 'BUTTON', width: 40, height: 40, textLength: 0, className: 'mic-icon-button',
+      visibility: 'visible', opacity: '1', mask: 'none',
+    })).toBe(false);
+  });
+
+  test('a small icon-only button that is also an overlay/modal-card root is still skipped', () => {
+    expect(H.shouldSkipBrightElement({
+      tag: 'BUTTON', width: 40, height: 40, textLength: 0, overlayRoot: true,
+    })).toBe(true);
+    expect(H.shouldSkipBrightElement({
+      tag: 'BUTTON', width: 40, height: 40, textLength: 0, modalCard: true,
+    })).toBe(true);
+  });
+
+  test('an identically-shaped INPUT/SELECT stays skipped — the carve-out is BUTTON-only', () => {
+    expect(H.shouldSkipBrightElement({
+      tag: 'INPUT', width: 40, height: 40, textLength: 0,
+      visibility: 'visible', opacity: '1', mask: 'none',
+    })).toBe(true);
+    expect(H.shouldSkipBrightElement({
+      tag: 'SELECT', width: 40, height: 40, textLength: 0,
+      visibility: 'visible', opacity: '1', mask: 'none',
+    })).toBe(true);
+  });
+});
+
+describe('isLikelySmallIconOnlyButtonInfo', () => {
+  test('icon-sized, textless button qualifies', () => {
+    expect(H.isLikelySmallIconOnlyButtonInfo({ width: 40, height: 40, textLength: 0 })).toBe(true);
+  });
+
+  test('same shape with a visible label does not qualify', () => {
+    expect(H.isLikelySmallIconOnlyButtonInfo({ width: 40, height: 40, textLength: 12 })).toBe(false);
+  });
+
+  test('too small does not qualify', () => {
+    expect(H.isLikelySmallIconOnlyButtonInfo({ width: 10, height: 10, textLength: 0 })).toBe(false);
+  });
+
+  test('bad aspect ratio does not qualify', () => {
+    expect(H.isLikelySmallIconOnlyButtonInfo({ width: 100, height: 30, textLength: 0 })).toBe(false);
+  });
+
+  test('undefined/missing info does not qualify', () => {
+    expect(H.isLikelySmallIconOnlyButtonInfo(undefined)).toBe(false);
+    expect(H.isLikelySmallIconOnlyButtonInfo({})).toBe(false);
+  });
+});
+
+describe('isLikelyInlineHighlightSpanInfo', () => {
+  test('true positive: mid-tone wash inline in prose (the reported bug shape)', () => {
+    // isLightContentSurface would miss this — it only fires on near-white
+    // fills, and this background is a mid-tone dark wash, not white.
+    expect(H.isLikelyInlineHighlightSpanInfo({
+      tag: 'SPAN',
+      backgroundColor: { r: 50, g: 48, b: 45, a: 0.4 },
+      ownTextLength: 20,
+      parentHasSiblingText: true,
+    })).toBe(true);
+  });
+
+  test('non-SPAN tag never qualifies', () => {
+    expect(H.isLikelyInlineHighlightSpanInfo({
+      tag: 'DIV',
+      backgroundColor: { r: 50, g: 48, b: 45, a: 0.4 },
+      ownTextLength: 20,
+      parentHasSiblingText: true,
+    })).toBe(false);
+  });
+
+  test('inside pre/code is excluded (protects syntax-highlighted tokens)', () => {
+    expect(H.isLikelyInlineHighlightSpanInfo({
+      tag: 'SPAN',
+      backgroundColor: { r: 50, g: 48, b: 45, a: 0.4 },
+      ownTextLength: 20,
+      parentHasSiblingText: true,
+      inCodeOrPre: true,
+    })).toBe(false);
+  });
+
+  test('inside a button/role=button control is excluded (chrome, not prose)', () => {
+    expect(H.isLikelyInlineHighlightSpanInfo({
+      tag: 'SPAN',
+      backgroundColor: { r: 50, g: 48, b: 45, a: 0.4 },
+      ownTextLength: 20,
+      parentHasSiblingText: true,
+      inButtonControl: true,
+    })).toBe(false);
+  });
+
+  test('icon className hint is excluded', () => {
+    expect(H.isLikelyInlineHighlightSpanInfo({
+      tag: 'SPAN',
+      backgroundColor: { r: 50, g: 48, b: 45, a: 0.4 },
+      ownTextLength: 20,
+      parentHasSiblingText: true,
+      hasIconClassHint: true,
+    })).toBe(false);
+  });
+
+  test('alpha below the floor is excluded (effectively transparent)', () => {
+    expect(H.isLikelyInlineHighlightSpanInfo({
+      tag: 'SPAN',
+      backgroundColor: { r: 10, g: 10, b: 10, a: 0.05 },
+      ownTextLength: 20,
+      parentHasSiblingText: true,
+    })).toBe(false);
+  });
+
+  test('a vivid/high-chroma background is left alone (assumed intentional color-coding)', () => {
+    expect(H.isLikelyInlineHighlightSpanInfo({
+      tag: 'SPAN',
+      backgroundColor: { r: 220, g: 20, b: 20, a: 0.9 },
+      ownTextLength: 20,
+      parentHasSiblingText: true,
+    })).toBe(false);
+  });
+
+  test('too-short own text (icon-only/near-empty span) is excluded', () => {
+    expect(H.isLikelyInlineHighlightSpanInfo({
+      tag: 'SPAN',
+      backgroundColor: { r: 50, g: 48, b: 45, a: 0.4 },
+      ownTextLength: 1,
+      parentHasSiblingText: true,
+    })).toBe(false);
+  });
+
+  test('no sibling text — span is the sole content of its container (a chip/badge, not prose)', () => {
+    expect(H.isLikelyInlineHighlightSpanInfo({
+      tag: 'SPAN',
+      backgroundColor: { r: 50, g: 48, b: 45, a: 0.4 },
+      ownTextLength: 20,
+      parentHasSiblingText: false,
+    })).toBe(false);
+  });
+
+  test('null background is excluded', () => {
+    expect(H.isLikelyInlineHighlightSpanInfo({
+      tag: 'SPAN',
+      backgroundColor: null,
+      ownTextLength: 20,
+      parentHasSiblingText: true,
+    })).toBe(false);
+  });
+});
+
+describe('classifyMutationBatchInfo', () => {
+  test('missing/undefined info falls back to full', () => {
+    expect(H.classifyMutationBatchInfo(undefined)).toBe('full');
+    expect(H.classifyMutationBatchInfo({})).toBe('full');
+  });
+
+  test('a small, localized batch (typing/streaming) is scoped', () => {
+    expect(H.classifyMutationBatchInfo({ recordCount: 5, addedNodeCount: 5, removedNodeCount: 0 })).toBe('scoped');
+  });
+
+  test('more than the record-count threshold falls back to full', () => {
+    expect(H.classifyMutationBatchInfo({ recordCount: 41, addedNodeCount: 5, removedNodeCount: 0 })).toBe('full');
+  });
+
+  test('within the record-count threshold but over the node-count threshold falls back to full', () => {
+    expect(H.classifyMutationBatchInfo({ recordCount: 10, addedNodeCount: 40, removedNodeCount: 21 })).toBe('full');
+  });
+});
+
+describe('findCommonMutationAncestor (jsdom)', () => {
+  function buildTree() {
+    const root = document.createElement('div');
+    const parent = document.createElement('div');
+    const childA = document.createElement('span');
+    const childB = document.createElement('span');
+    parent.appendChild(childA);
+    parent.appendChild(childB);
+    root.appendChild(parent);
+    document.body.appendChild(root);
+    return { root, parent, childA, childB };
+  }
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  test('targets sharing the same direct parent return that parent', () => {
+    const { parent, childA, childB } = buildTree();
+    expect(H.findCommonMutationAncestor([childA, childB], parent)).toBe(parent);
+  });
+
+  test('a single, repeated target returns that element', () => {
+    const { parent, childA } = buildTree();
+    expect(H.findCommonMutationAncestor([childA, childA], parent)).toBe(childA);
+  });
+
+  test('a target that IS the root returns the root', () => {
+    const { root, childA } = buildTree();
+    expect(H.findCommonMutationAncestor([root, childA], root)).toBe(root);
+  });
+
+  test('empty targets array falls back to root', () => {
+    const { root } = buildTree();
+    expect(H.findCommonMutationAncestor([], root)).toBe(root);
+  });
+
+  test('a disconnected node does not throw and falls back to root', () => {
+    const { root } = buildTree();
+    const orphan = document.createElement('span');
+    expect(() => H.findCommonMutationAncestor([orphan], root)).not.toThrow();
+    expect(H.findCommonMutationAncestor([orphan], root)).toBe(root);
+  });
+
+  test('scattered targets across unrelated branches fall back to root', () => {
+    const root = document.createElement('div');
+    const branchA = document.createElement('div');
+    const branchB = document.createElement('div');
+    const leafA = document.createElement('span');
+    const leafB = document.createElement('span');
+    branchA.appendChild(leafA);
+    branchB.appendChild(leafB);
+    root.appendChild(branchA);
+    root.appendChild(branchB);
+    document.body.appendChild(root);
+    expect(H.findCommonMutationAncestor([leafA, leafB], root)).toBe(root);
+  });
 });
 
 describe('near-white thresholds', () => {
@@ -185,6 +436,19 @@ describe('near-white thresholds', () => {
 });
 
 describe('shouldSkipStickyElement', () => {
+  test('skips sticky table header tags — governed by the dedicated :is(thead) CSS rule instead', () => {
+    // Confirmed on coingecko's markets table: position:sticky <thead>/<th>/
+    // <td>. Letting the generic chrome-bar heuristic also paint these risks
+    // an inline --aura-bg JS write overriding the purpose-built elevated
+    // shade that rule gives sticky headers.
+    ['THEAD', 'TR', 'TH'].forEach((tag) => {
+      expect(H.shouldSkipStickyElement({
+        position: 'sticky', tag, mask: 'none', visibility: 'visible', opacity: '1',
+        width: 400, height: 40, vh: 800, vw: 400,
+      })).toBe(true);
+    });
+  });
+
   test('keeps short chrome bars', () => {
     expect(H.shouldSkipStickyElement({
       position: 'sticky',
@@ -307,6 +571,41 @@ describe('shouldSkipStickyElement', () => {
       vw: 390,
       zIndex: '7',
     })).toBe(false);
+  });
+
+  test('modest z-index (1000-1999) no longer trips the overlay-tier gate — real chrome commonly uses this range', () => {
+    // Confirmed real false positives at the old z>=1000 threshold:
+    // bbc.com's live-match tab bar (role="tablist", z-index:1003) and
+    // workspace.google.com's shadow-DOM "Sign in / Get Gmail" bottom action
+    // bar (z-index:1016, no ARIA role at all — an ordinary bottom bar).
+    // Neither is a notification/CMP tier; both are raised to 2000, below
+    // which ordinary framework-convention chrome (Bootstrap's own scale
+    // tops out ~1090) now paints normally regardless of ARIA role.
+    expect(H.shouldSkipStickyElement({
+      position: 'sticky', mask: 'none', visibility: 'visible', opacity: '1',
+      width: 390, height: 45, top: 0, left: 0, vh: 664, vw: 390,
+      zIndex: '1003', hasTablistRole: true,
+    })).toBe(false);
+    expect(H.shouldSkipStickyElement({
+      position: 'fixed', mask: 'none', visibility: 'visible', opacity: '1',
+      width: 390, height: 62, top: 616, left: 0, vh: 678, vw: 390,
+      zIndex: '1016', hasTablistRole: false,
+    })).toBe(false);
+  });
+
+  test('a role="tablist" sticky sub-nav is exempted even at a z-index well past the raised 2000 threshold', () => {
+    expect(H.shouldSkipStickyElement({
+      position: 'sticky', mask: 'none', visibility: 'visible', opacity: '1',
+      width: 390, height: 45, top: 0, left: 0, vh: 664, vw: 390,
+      zIndex: '5000', hasTablistRole: true,
+    })).toBe(false);
+    // Without the tablist signal, this extreme z-index still (correctly)
+    // skips — confirms the gate still catches real notification tiers.
+    expect(H.shouldSkipStickyElement({
+      position: 'sticky', mask: 'none', visibility: 'visible', opacity: '1',
+      width: 390, height: 45, top: 0, left: 0, vh: 664, vw: 390,
+      zIndex: '5000', hasTablistRole: false,
+    })).toBe(true);
   });
 
   test('semantic header/nav tags get the taller TOP_CHROME_MAX_VH_SEMANTIC allowance', () => {
@@ -464,6 +763,94 @@ describe('shouldSkipStickyElement', () => {
       childCoverageFrac: 0.1,
     })).toBe(false);
   });
+
+  test('a sticky bottom bar whose buttons already have their own opaque background is skipped (sky.coflnet.com shape)', () => {
+    // Notify / copy / scroll-to-top buttons filling most of the bar's
+    // width, each with its own authored fill — the wrapper itself has
+    // no background and shouldn't be painted just because the buttons
+    // cover most of its width.
+    expect(H.shouldSkipStickyElement({
+      position: 'fixed',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 390,
+      height: 56,
+      top: 788,
+      left: 0,
+      vh: 844,
+      vw: 390,
+      zIndex: '10',
+      childCoverageFrac: 0.9,
+      childOpaqueCoverageFrac: 0.9,
+    })).toBe(true);
+  });
+
+  test('moderate opaque coverage (padded/spaced-out buttons) is enough to skip — threshold is 0.35, not 0.5', () => {
+    // Same coflnet-style bar, but with generous padding/gaps around compact
+    // buttons so they only cover ~40% of the bar's width. The buttons being
+    // self-opaque is a strong enough signal on its own; requiring them to
+    // also dominate the width would miss bars with roomy layout.
+    expect(H.shouldSkipStickyElement({
+      position: 'fixed',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 390,
+      height: 56,
+      top: 788,
+      left: 0,
+      vh: 844,
+      vw: 390,
+      zIndex: '10',
+      childCoverageFrac: 0.4,
+      childOpaqueCoverageFrac: 0.4,
+    })).toBe(true);
+    // But not so low that it's basically nothing — below 0.35 still paints.
+    expect(H.shouldSkipStickyElement({
+      position: 'fixed',
+      width: 390,
+      height: 56,
+      vh: 844,
+      vw: 390,
+      zIndex: '10',
+      childOpaqueCoverageFrac: 0.2,
+    })).toBe(false);
+  });
+
+  test('a genuine chrome bar whose children have no authored background still paints, even with high width coverage', () => {
+    // Plain text nav links spanning most of the bar's width but with no
+    // background of their own — the bar still needs painting for legibility.
+    expect(H.shouldSkipStickyElement({
+      position: 'sticky',
+      mask: 'none',
+      visibility: 'visible',
+      opacity: '1',
+      width: 390,
+      height: 56,
+      top: 0,
+      left: 0,
+      vh: 844,
+      vw: 390,
+      zIndex: '7',
+      childCoverageFrac: 0.85,
+      childOpaqueCoverageFrac: 0,
+    })).toBe(false);
+  });
+
+  test('childOpaqueCoverageFrac is ignored (gate never applies) when null, or the element is narrow', () => {
+    expect(H.shouldSkipStickyElement({
+      position: 'sticky', width: 390, height: 56, vh: 844, vw: 390, zIndex: '7',
+      childCoverageFrac: 0.9,
+      childOpaqueCoverageFrac: null,
+    })).toBe(false);
+    // Under the 150px width floor — a small badge, already handled by
+    // other gates; this new one must not additionally affect it.
+    expect(H.shouldSkipStickyElement({
+      position: 'fixed', width: 60, height: 24, vh: 844, vw: 390, zIndex: '7',
+      childOpaqueCoverageFrac: 1,
+    })).toBe(false);
+  });
 });
 
 describe('isCoveringSheetRect', () => {
@@ -584,6 +971,50 @@ describe('isLikelyFloatingIconControlInfo', () => {
   test('rejects hidden elements', () => {
     expect(H.isLikelyFloatingIconControlInfo({ ...chip, visibility: 'hidden' })).toBe(false);
     expect(H.isLikelyFloatingIconControlInfo({ ...chip, opacity: '0' })).toBe(false);
+  });
+
+  test('rejects an icon control docked inside a text-entry composer shell, even if fixed/absolute', () => {
+    // A mic/send-style icon docked inside a chat/search input pill sits on
+    // an already-themed, predictable background — unlike a photo/video/map,
+    // it never needs a legibility scrim, and painting one only adds a stray
+    // dark pill artifact (the reported Google AI-chat composer bug).
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, inTextInputShell: true })).toBe(false);
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, position: 'fixed', inTextInputShell: true })).toBe(false);
+  });
+
+  test('a matching control outside any text-entry shell is unaffected by the new field', () => {
+    expect(H.isLikelyFloatingIconControlInfo({ ...chip, inTextInputShell: false })).toBe(true);
+    expect(H.isLikelyFloatingIconControlInfo(chip)).toBe(true);
+  });
+});
+
+describe('isLikelyFloatingIconControl (jsdom) — text-input-shell exclusion', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  test('a mic/send icon button docked next to a composer textarea is excluded', () => {
+    document.body.innerHTML = `
+      <div id="composer">
+        <textarea id="ask" placeholder="Ask anything"></textarea>
+        <button id="mic" style="position:absolute;" aria-label="Use microphone"></button>
+      </div>
+    `;
+    const mic = document.getElementById('mic');
+    mic.getBoundingClientRect = () => ({ width: 40, height: 40, top: 0, left: 0, right: 40, bottom: 40 });
+    expect(H.isLikelyFloatingIconControl(mic, getComputedStyle, { vh: 800, vw: 400 })).toBe(false);
+  });
+
+  test('an icon control positioned over media with no nearby text field is unaffected', () => {
+    document.body.innerHTML = `
+      <div id="photoCard">
+        <img src="x.jpg">
+        <button id="close" style="position:absolute;" aria-label="Close"></button>
+      </div>
+    `;
+    const closeBtn = document.getElementById('close');
+    closeBtn.getBoundingClientRect = () => ({ width: 40, height: 40, top: 0, left: 0, right: 40, bottom: 40 });
+    expect(H.isLikelyFloatingIconControl(closeBtn, getComputedStyle, { vh: 800, vw: 400 })).toBe(true);
   });
 });
 
@@ -1340,6 +1771,42 @@ describe('effectiveBackground (jsdom)', () => {
     );
     expect(fallback).toEqual({ r: 16, g: 32, b: 48, a: 1 });
   });
+
+  test('an optional cache returns identical results and short-circuits repeat lookups', () => {
+    document.body.innerHTML = `
+      <div id="card" style="background-color: rgb(232, 232, 232);">
+        <span id="labelA" style="background-color: transparent;">A</span>
+        <span id="labelB" style="background-color: transparent;">B</span>
+      </div>
+    `;
+    const labelA = document.getElementById('labelA');
+    const labelB = document.getElementById('labelB');
+
+    const uncached = H.effectiveBackground(labelA, getComputedStyle, '#112233');
+
+    const cache = new WeakMap();
+    let calls = 0;
+    const countingGetStyle = (el) => { calls++; return getComputedStyle(el); };
+
+    const cachedA = H.effectiveBackground(labelA, countingGetStyle, '#112233', cache);
+    expect(cachedA).toEqual(uncached);
+    const callsAfterFirst = calls;
+    expect(callsAfterFirst).toBeGreaterThan(0);
+
+    // labelB shares the same resolved ancestor (card) — a second lookup
+    // through a sibling should hit the cache before ever reaching `card`
+    // again, so it can't cost as many getStyle calls as the first lookup did.
+    const cachedB = H.effectiveBackground(labelB, countingGetStyle, '#112233', cache);
+    expect(cachedB).toEqual(uncached);
+    expect(calls - callsAfterFirst).toBeLessThan(callsAfterFirst);
+
+    // A direct repeat lookup for the same element is served entirely from
+    // cache — zero additional getStyle calls.
+    const callsBeforeRepeat = calls;
+    const cachedARepeat = H.effectiveBackground(labelA, countingGetStyle, '#112233', cache);
+    expect(cachedARepeat).toEqual(uncached);
+    expect(calls).toBe(callsBeforeRepeat);
+  });
 });
 
 describe('isLikelyModalCard / findInnerModalCard (jsdom)', () => {
@@ -1366,6 +1833,36 @@ describe('isLikelyModalCard / findInnerModalCard (jsdom)', () => {
     expect(H.isLikelyModalCard(scrim)).toBe(false);
     expect(H.isLikelyModalCard(sheet)).toBe(true);
     expect(H.findInnerModalCard(scrim)).toBe(sheet);
+  });
+
+  test('finds an in-flow (non-fixed) inner card under a non-ARIA covering scrim (Google scorecard shape)', () => {
+    // A custom bottom-sheet widget with no role="dialog"/aria-modal at all —
+    // the scrim is a plain position:fixed div, and the card inside it is an
+    // ordinary in-flow (position:static) block, not itself position:fixed.
+    // findInnerModalCard/isModalCardShape must not require ARIA or a fixed
+    // inner card ("any in-flow position is fine" for the inner card).
+    document.body.innerHTML = `
+      <div id="scrim" style="position:fixed; inset:0;">
+        <div id="card" style="position:static;">
+          Round of 16 - Arthur Ashe Stadium - Live
+          <button>Close</button>
+        </div>
+      </div>
+    `;
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    const scrim = document.getElementById('scrim');
+    const card = document.getElementById('card');
+    scrim.getBoundingClientRect = () => ({
+      width: 390, height: 844, top: 0, left: 0, bottom: 844, right: 390,
+    });
+    card.getBoundingClientRect = () => ({
+      width: 350, height: 320, top: 250, left: 20, bottom: 570, right: 370,
+    });
+
+    expect(scrim.getAttribute('role')).toBeNull();
+    expect(card.getAttribute('role')).toBeNull();
+    expect(H.findInnerModalCard(scrim)).toBe(card);
   });
 });
 
@@ -1923,16 +2420,53 @@ describe('classifyNativeDarkModeInfo', () => {
     })).toEqual({ attr: 'data-color-mode', value: 'dark' });
   });
 
-  test('data-color-mode without the dark-theme companion is not trusted (avoid a false match)', () => {
+  test('data-color-mode with an ambiguous (non light/dark) value and no companion is not trusted (avoid a false match)', () => {
+    // An unrelated attribute that coincidentally shares this name but holds
+    // some other value (not the clean light/dark enum) still needs the
+    // Primer companion attributes to be trusted.
     expect(H.classifyNativeDarkModeInfo({
-      hasDataColorMode: true, dataColorMode: 'light', hasDarkThemeCompanion: false,
+      hasDataColorMode: true, dataColorMode: 'auto', hasDarkThemeCompanion: false,
     })).toBeNull();
   });
 
-  test('already dark returns null — nothing to flip', () => {
+  test('data-color-mode alone (no Primer companion) is trusted when its value is a clean light/dark enum', () => {
+    // Confirmed on joshwcomeau.com: <html data-color-mode="light"> with no
+    // data-dark-theme/data-light-theme companion attributes at all — the
+    // companion-only check missed this real site's convention entirely.
+    expect(H.classifyNativeDarkModeInfo({
+      hasDataColorMode: true, dataColorMode: 'light', hasDarkThemeCompanion: false,
+    })).toEqual({ attr: 'data-color-mode', value: 'dark' });
+    expect(H.classifyNativeDarkModeInfo({
+      hasDataColorMode: true, dataColorMode: 'dark', hasDarkThemeCompanion: false,
+    })).toEqual({ alreadyDark: true });
+  });
+
+  test('already dark returns { alreadyDark: true } — nothing to flip, but the caller must still defer', () => {
+    // Distinct from "unrecognized" (plain null) — both used to collapse to
+    // null, which made the caller give up and apply Aura's own theme on top
+    // of an already-correctly-dark site.
     expect(H.classifyNativeDarkModeInfo({
       hasDataColorMode: true, dataColorMode: 'dark', hasDarkThemeCompanion: true,
-    })).toBeNull();
+    })).toEqual({ alreadyDark: true });
+    expect(H.classifyNativeDarkModeInfo({ hasDataBsTheme: true, dataBsTheme: 'dark' }))
+      .toEqual({ alreadyDark: true });
+    expect(H.classifyNativeDarkModeInfo({ hasDataTheme: true, dataTheme: 'dark' }))
+      .toEqual({ alreadyDark: true });
+  });
+
+  test('a recognized body-level dark class (e.g. twitch.tv body.dark-theme) returns alreadyDark', () => {
+    expect(H.classifyNativeDarkModeInfo({ hasBodyDarkClass: true }))
+      .toEqual({ alreadyDark: true });
+    expect(H.classifyNativeDarkModeInfo({ hasBodyDarkClass: false })).toBeNull();
+  });
+
+  test('a pure CSS prefers-color-scheme dark theme with no DOM signal at all returns alreadyDark', () => {
+    // Confirmed live on overreacted.io: no class/data-attribute of any kind,
+    // real dark background (rgb(40,44,53)) rendered purely by the site's own
+    // @media (prefers-color-scheme: dark) rule matching the OS setting.
+    expect(H.classifyNativeDarkModeInfo({ hasPrefersColorSchemeDarkCss: true }))
+      .toEqual({ alreadyDark: true });
+    expect(H.classifyNativeDarkModeInfo({ hasPrefersColorSchemeDarkCss: false })).toBeNull();
   });
 
   test('Bootstrap 5.3+ data-bs-theme', () => {
@@ -1949,7 +2483,7 @@ describe('classifyNativeDarkModeInfo', () => {
     expect(H.classifyNativeDarkModeInfo({ hasDarkClassEvidence: true, hasDarkClassAlready: false }))
       .toEqual({ attr: 'class', value: 'dark' });
     expect(H.classifyNativeDarkModeInfo({ hasDarkClassEvidence: true, hasDarkClassAlready: true }))
-      .toBeNull();
+      .toEqual({ alreadyDark: true });
   });
 
   test('no known convention, or no info at all, returns null (fail safe)', () => {

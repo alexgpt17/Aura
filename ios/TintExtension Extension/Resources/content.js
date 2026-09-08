@@ -159,6 +159,11 @@
 
     let lastAppliedThemeKey = '';
     let mutationDebounceTimer = null;
+    // MutationRecords buffered across the debounce window AND across any
+    // pass currently running (queue-and-coalesce, not drop-while-busy) — see
+    // dispatchSafetyPasses. Used only to decide how to scope the next walk;
+    // never read for its own content beyond target/addedNodes/removedNodes.
+    let pendingMutationRecords = [];
     let safetyPassesRaf = 0;
     // Timestamp of the current theme's fresh apply — see
     // visitExpandedContentPanelElement's fresh-mount allowance, which needs
@@ -716,6 +721,17 @@
         `;
         const overlayNot =
             ':not([role="dialog"]):not([role="alertdialog"]):not([role="menu"]):not([role="listbox"]):not([aria-modal="true"]):not(dialog):not([popover])' +
+            // Toast/snackbar notifications (react-toastify, notistack, sonner,
+            // ...) use role="alert"/"status" or aria-live, not role="dialog" —
+            // exempt them from the blanket transparency strip too, so their
+            // own semantic color (red/green/blue for error/success/info)
+            // survives instead of leaving a colorless, backgroundless
+            // notification. Unlike a real dialog/menu, a toast's color IS the
+            // message, so it's exempted from the strip rather than routed
+            // through the generic --aura-overlay wash the JS overlay pass
+            // uses for ARIA dialogs. A toast that happens to be near-white is
+            // still caught by the separate (tag-based) bright-surface pass.
+            ':not([role="alert"]):not([role="status"]):not([aria-live="assertive"]):not([aria-live="polite"])' +
             getUniversalTransparencyExcludeNot(window.location.hostname);
         const textBlend = 'normal';
         const splitTextFill = (isSplit && Split && Split.liveSplitTextFillCss && Split.liveSplitTextGradient)
@@ -738,28 +754,36 @@
                 --aura-muted: color-mix(in srgb, var(--aura-text) 65%, transparent);
                 --aura-border: ${border};
                 --aura-overlay: color-mix(in srgb, var(--aura-bg) 82%, #000000);
-                /* Semantic / design-system tokens (Wikipedia Codex, etc.) */
-                --color-base: var(--aura-text);
-                --color-emphasized: var(--aura-text);
-                --color-subtle: var(--aura-muted);
-                --color-progressive: var(--aura-link);
-                --color-visited: var(--aura-link);
-                --color-link: var(--aura-link);
-                --color-link-red: var(--aura-link);
-                --color-base-fixed: var(--aura-text);
-                --color-emphasized-fixed: var(--aura-text);
-                --background-color-base: var(--aura-bg);
-                --background-color-neutral: var(--aura-surface);
-                --background-color-neutral-subtle: transparent;
-                --background-color-interactive: var(--aura-elevated);
-                --background-color-interactive-subtle: var(--aura-surface);
+                /* Semantic / design-system tokens (Wikipedia Codex, etc.).
+                   !important on all of these: they deliberately collide with
+                   real sites' own variable names to hijack their theming —
+                   confirmed live on Wikipedia, whose own native dark mode
+                   defines "html.skin-theme-clientpref-night { --color-base:
+                   #eaecf0 }", a higher-specificity selector than bare :root
+                   that silently wins (and defeats this hijack) whenever a
+                   user has Wikipedia's own dark mode active, since neither
+                   side previously had !important to settle it. */
+                --color-base: var(--aura-text) !important;
+                --color-emphasized: var(--aura-text) !important;
+                --color-subtle: var(--aura-muted) !important;
+                --color-progressive: var(--aura-link) !important;
+                --color-visited: var(--aura-link) !important;
+                --color-link: var(--aura-link) !important;
+                --color-link-red: var(--aura-link) !important;
+                --color-base-fixed: var(--aura-text) !important;
+                --color-emphasized-fixed: var(--aura-text) !important;
+                --background-color-base: var(--aura-bg) !important;
+                --background-color-neutral: var(--aura-surface) !important;
+                --background-color-neutral-subtle: transparent !important;
+                --background-color-interactive: var(--aura-elevated) !important;
+                --background-color-interactive-subtle: var(--aura-surface) !important;
                 /* Discord / common app-shell tokens */
-                --background-primary: var(--aura-bg);
-                --background-secondary: var(--aura-surface);
-                --background-tertiary: var(--aura-elevated);
-                --md-sys-color-surface: var(--aura-surface);
-                --bg-primary: var(--aura-bg);
-                --color-background: var(--aura-bg);
+                --background-primary: var(--aura-bg) !important;
+                --background-secondary: var(--aura-surface) !important;
+                --background-tertiary: var(--aura-elevated) !important;
+                --md-sys-color-surface: var(--aura-surface) !important;
+                --bg-primary: var(--aura-bg) !important;
+                --color-background: var(--aura-bg) !important;
             }
             html {
                 color-scheme: ${colorScheme} !important;
@@ -801,6 +825,20 @@
                 background-color: transparent !important;
                 backdrop-filter: none !important;
                 -webkit-backdrop-filter: none !important;
+            }
+
+            /* thead is swept into the transparent rule above like every other
+               layout tag, flattening header/body rows into an undifferentiated
+               grid on every site except Wikipedia's dedicated .wikitable fix.
+               Same :is()+overlayNot shape as the rule above, so this matches
+               it in specificity and wins purely by coming later in the
+               stylesheet — no JS pass needed. Scoped to <thead> only (not
+               <th> generally) so scattered <th scope="row"> cells inside a
+               data table's body aren't individually painted. thead's own
+               background legitimately shows through its (already-transparent)
+               child tr/th cells per normal table background-painting rules. */
+            :is(thead)${overlayNot} {
+                background-color: var(--aura-elevated) !important;
             }
 
             /* Common SPA roots: first-paint assist. JS inline !important is the guarantee. */
@@ -935,29 +973,63 @@
             /* Native form controls previously excluded from all styling
                (checkbox/radio/range/color inputs, <progress>) — accent-color
                is purpose-built for exactly this and broadly supported, so
-               this is near-zero-risk theming essentially for free. */
+               this is near-zero-risk theming essentially for free.
+               !important: same class of bug just confirmed for scrollbar
+               styling — accent-color is a popular, easy-to-set property many
+               sites use for their own branded form controls (Bootstrap 5.3+
+               form-checks among them), and a bare, non-important rule here
+               loses to any such site rule of equal-or-higher specificity
+               regardless of injection order. */
             input[type="checkbox"], input[type="radio"], input[type="range"], progress {
-                accent-color: var(--aura-link);
+                accent-color: var(--aura-link) !important;
+            }
+
+            /* <meter> isn't part of the CSS Accent Color spec (unlike
+               checkbox/radio/range/progress above), so it's completely
+               untouched by the rule above and shows its default light track
+               forever. Retint just the track via the WebKit pseudo-element
+               Safari actually renders it with (this is a Safari extension) —
+               the semantic value-color pseudo-elements (optimum/sub-optimum/
+               even-less-good) are left alone. */
+            meter {
+                background: var(--aura-surface) !important;
+            }
+            meter::-webkit-meter-bar {
+                background: var(--aura-surface) !important;
             }
 
             /* Polish: without these, a themed page still shows the native
                light-mode text-selection highlight, default scrollbars, and
-               default focus ring, which reads as unfinished. */
+               default focus ring, which reads as unfinished. !important on
+               both: sites very commonly style their own ::selection (brand
+               highlight color) and :focus-visible (accessibility/brand
+               outline color) — same missing-!important defect class just
+               confirmed for scrollbars and accent-color, and these two are
+               if anything more commonly overridden by site CSS than either
+               of those. */
             ::selection {
-                background: var(--aura-overlay);
-                color: var(--aura-text);
+                background: var(--aura-overlay) !important;
+                color: var(--aura-text) !important;
             }
             :focus-visible {
-                outline-color: var(--aura-link);
+                outline-color: var(--aura-link) !important;
             }
+            /* !important on all three: sites very commonly define their own
+               scoped, higher-specificity scrollbar rules (confirmed on
+               vuejs.org: ".file-selector[data-v-...]::-webkit-scrollbar-thumb
+               { background-color: var(--color-branding) }") — without
+               !important here, Aura's bare/universal selectors lose to any
+               such rule regardless of injection order, leaving a
+               light-mode-authored scrollbar color behind on an otherwise
+               dark page. */
             * {
-                scrollbar-color: var(--aura-elevated) var(--aura-bg);
+                scrollbar-color: var(--aura-elevated) var(--aura-bg) !important;
             }
             ::-webkit-scrollbar-thumb {
-                background: var(--aura-elevated);
+                background: var(--aura-elevated) !important;
             }
             ::-webkit-scrollbar-track {
-                background: var(--aura-bg);
+                background: var(--aura-bg) !important;
             }
 
             /* Printing a themed page should never waste ink on a forced-dark
@@ -1155,6 +1227,18 @@
         const collapseFade = isAiOverviewCollapseFade(el);
         if (collapseFade) return;
 
+        // Only computed for BUTTON — el.textContent walks the whole subtree,
+        // and every other tag ignores this field, so computing it
+        // unconditionally for every element in the main walk would add an
+        // O(subtree-size) cost site-wide for a value only the icon-only-
+        // button carve-out (shouldSkipBrightElement) ever reads.
+        let textLength;
+        if (el.tagName === 'BUTTON') {
+            let text = '';
+            try { text = String(el.textContent || '').replace(/\s+/g, ' ').trim(); } catch (e) {}
+            textLength = text.length;
+        }
+
         if (H.shouldSkipBrightElement({
             tag: el.tagName,
             role: el.getAttribute('role'),
@@ -1169,6 +1253,7 @@
             floatingBannerRoot,
             modalCard,
             hasSearchField,
+            textLength,
         })) {
             return;
         }
@@ -1223,6 +1308,15 @@
     function paintOverlaySheet(el) {
         el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
         el.style.setProperty('mix-blend-mode', 'normal', 'important');
+        // Icon-font glyphs (Font Awesome et al.) render via inherited `color`
+        // with no text content of their own, so the separate contrast pass
+        // (which reads textContent) never sees them — pairing a guaranteed
+        // legible text color with every opaque background write here avoids
+        // a same-tone icon-on-background invisibility (confirmed as a risk
+        // on coingecko's fixed scroll-to-top button, whose Tailwind
+        // light-mode text-color classes would otherwise sit unchanged on a
+        // freshly dark-painted background).
+        el.style.setProperty('color', 'var(--aura-text)', 'important');
         overlayModified.add(el);
     }
 
@@ -1566,7 +1660,10 @@
     // inline fill cleared once a later pass decides it should be skipped
     // (covering-sheet growth while scrolling).
     function revertStickyPaint(el) {
-        try { el.style.removeProperty('background-color'); } catch (e) {}
+        try {
+            el.style.removeProperty('background-color');
+            el.style.removeProperty('color');
+        } catch (e) {}
         stickyModified.delete(el);
     }
 
@@ -1717,6 +1814,24 @@
         let rect;
         try { rect = el.getBoundingClientRect(); } catch (e) { return; }
         const mask = style.webkitMaskImage || style.maskImage;
+        // A position:fixed element that covers most of the viewport and is
+        // NOT a recognized ARIA overlay, but DOES contain a genuine
+        // modal-card-shaped descendant, is a custom (non-ARIA) modal/
+        // bottom-sheet — e.g. Google's sports scorecard panel. Route it
+        // through the same scrim treatment real ARIA dialogs already get
+        // (transparent backdrop + opaque inner card) instead of leaving it
+        // to whatever wins the plain cascade (confirmed on Google: the
+        // panel itself renders fine, but its backdrop was left a flat
+        // solid color instead of a dimmed view of the page behind it).
+        if (style.position === 'fixed'
+            && !H.isOverlayChrome(el)
+            && isOverlayCoveringSheet(rect, vh, vw)) {
+            const inner = H.findInnerModalCard && H.findInnerModalCard(el, getComputedStyle, { vh, vw });
+            if (inner) {
+                paintOverlayScrimAsTransparent(el, vh, vw);
+                return;
+            }
+        }
         // Layout geometry (unlike background-color, which the universal
         // transparency rule already forces !important before any JS pass
         // runs) is never touched by Aura's stylesheet, so this reliably
@@ -1726,15 +1841,61 @@
         // skipping the computation there (leaving childCoverageFrac null,
         // which the predicate treats as "don't apply this gate") is safe.
         let childCoverageFrac = null;
+        // Same pass, but only counting children that already carry their own
+        // opaque authored background (buttons with a real fill, not plain
+        // text/links leaning on the container for contrast). A wrapper whose
+        // children are already self-opaque doesn't need painting itself,
+        // regardless of how much of the width they cover — confirmed on
+        // sky.coflnet.com's Notify/copy/scroll-to-top bottom bar, where three
+        // pre-styled buttons fill most of the bar but the wrapper still got
+        // re-opaqued behind/around them.
+        let childOpaqueCoverageFrac = null;
         try {
-            if (rect.width > 0 && el.children && el.children.length > 0 && el.children.length <= 4) {
-                let covered = 0;
-                for (let i = 0; i < el.children.length; i++) {
-                    covered += el.children[i].getBoundingClientRect().width;
+            if (rect.width > 0) {
+                // A position:fixed element is very often just a placement
+                // shell around exactly one inner flex/grid row that does the
+                // actual layout, with the buttons as THAT row's children —
+                // not the outer shell's direct children (Tailwind-style
+                // `fixed bottom-4` wrapper + `flex gap-2` row is the common
+                // shape). Unwrap a couple of single-child levels first, same
+                // "portals wrap the card in extra divs" philosophy as
+                // findInnerModalCard, so the buttons are measured against
+                // the row that actually holds them.
+                let row = el;
+                let unwrapDepth = 0;
+                while (unwrapDepth < 2 && row.children && row.children.length === 1) {
+                    row = row.children[0];
+                    unwrapDepth++;
                 }
-                childCoverageFrac = Math.min(1, covered / rect.width);
+                if (row.children && row.children.length > 0 && row.children.length <= 6) {
+                    let covered = 0;
+                    let coveredOpaque = 0;
+                    for (let i = 0; i < row.children.length; i++) {
+                        const child = row.children[i];
+                        const w = child.getBoundingClientRect().width;
+                        covered += w;
+                        try {
+                            const parsed = H.parseCssRgb(getComputedStyle(child).backgroundColor);
+                            if (parsed && parsed.a >= 0.5) coveredOpaque += w;
+                        } catch (e2) {}
+                    }
+                    childCoverageFrac = Math.min(1, covered / rect.width);
+                    childOpaqueCoverageFrac = Math.min(1, coveredOpaque / rect.width);
+                }
             }
         } catch (e) {}
+        // z-index >= 1000 (below) is meant to catch real overlay/CMP/
+        // notification tiers, but ordinary sticky sub-navigation commonly
+        // uses a similarly "high enough to stay above content" z-index by
+        // convention alone — confirmed on bbc.com's live-match Live
+        // Reporting/Scores/Tables tab bar (role="tablist", z-index:1003),
+        // painted transparent and overlapping the article underneath it as
+        // a result. A tablist is an unambiguous ARIA role for real
+        // navigation, never a notification/CMP widget, so it's exempted.
+        let hasTablistRole = false;
+        try {
+            hasTablistRole = el.getAttribute('role') === 'tablist' || !!el.querySelector('[role="tablist"]');
+        } catch (e4) {}
         if (H.shouldSkipStickyElement({
             position: style.position,
             mask: mask || 'none',
@@ -1752,11 +1913,18 @@
             vh,
             vw,
             childCoverageFrac,
+            childOpaqueCoverageFrac,
+            hasTablistRole,
         })) {
             if (stickyModified.has(el)) revertStickyPaint(el);
             return;
         }
         el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
+        // Same icon-legibility pairing as paintOverlaySheet — a small fixed
+        // control (e.g. a scroll-to-top button) freshly painted opaque can't
+        // rely on the separate textContent-based contrast pass to notice an
+        // icon-font glyph with no text of its own.
+        el.style.setProperty('color', 'var(--aura-text)', 'important');
         stickyModified.add(el);
     }
 
@@ -1854,6 +2022,48 @@
         clearAskAnythingFill(sib);
     }
 
+    // Icon-only controls docked in/near the Ask-anything composer (mic,
+    // send, "+"/tools) — cleared unconditionally here rather than relying
+    // solely on the general-engine BUTTON carve-out (visitBrightElement):
+    // that pass only clears a background that reads as authored near-white,
+    // and only paints a scrim (isLikelyFloatingIconControl) when
+    // position:fixed/absolute — on this specific, evolving Google surface a
+    // more permissive, site-scoped "any icon-only control near this field
+    // gets a transparent background + themed icon color" is both safer (the
+    // container is already reliably located via the Ask-anything field) and
+    // more robust to markup Aura hasn't seen a live sample of.
+    function clearAskAnythingIconButton(btn) {
+        if (!btn || btn.nodeType !== 1) return;
+        let text = '';
+        try { text = String(btn.textContent || '').trim(); } catch (e) {}
+        if (text.length > 1) return; // has a visible label — leave it alone
+        btn.style.setProperty('background-color', 'transparent', 'important');
+        btn.style.setProperty('background-image', 'none', 'important');
+        btn.style.setProperty('color', 'var(--aura-text)', 'important');
+        askAnythingModified.add(btn);
+        // `color` alone only fixes the glyph if the icon's SVG inherits via
+        // `fill: currentColor` — Google's Material-style icons often bake an
+        // explicit fill color onto the path/shape itself instead, which
+        // `color` never reaches (confirmed as the likely cause of the send
+        // button staying invisible after the background/color fix alone).
+        // Force every descendant shape directly so it's correct either way.
+        let shapes;
+        try { shapes = btn.querySelectorAll('svg, path, circle, rect, line, polygon, polyline, use'); } catch (e) { shapes = null; }
+        if (shapes) {
+            for (let i = 0; i < shapes.length; i++) {
+                shapes[i].style.setProperty('fill', 'var(--aura-text)', 'important');
+                askAnythingModified.add(shapes[i]);
+            }
+        }
+    }
+
+    function clearAskAnythingIconButtons(container) {
+        if (!container || container.nodeType !== 1) return;
+        let buttons;
+        try { buttons = container.querySelectorAll('button, [role="button"]'); } catch (e) { return; }
+        buttons.forEach(clearAskAnythingIconButton);
+    }
+
     function rethemeAskAnythingComposer(root) {
         if (!root || !currentTheme || !isGoogleHost()) return;
         const scope = root.nodeType === 1 ? root : document.documentElement;
@@ -1879,6 +2089,7 @@
                 if (rect.height > 180) break;
                 if (rect.height >= 36 && rect.width >= 160) {
                     clearAskAnythingFill(parent);
+                    clearAskAnythingIconButtons(parent);
                 }
                 // Decorative empty previous siblings behind the field / pill.
                 let sib = node.previousElementSibling;
@@ -1896,9 +2107,127 @@
             try {
                 el.style.removeProperty('background-color');
                 el.style.removeProperty('background-image');
+                el.style.removeProperty('color');
+                el.style.removeProperty('fill');
             } catch (e) {}
         });
         askAnythingModified.clear();
+    }
+
+    // GOOGLE AI-CHAT ANSWER SURFACE (site override — general per-span/
+    // per-button heuristics missed real cases on this specific, fast-
+    // evolving surface; Google's own class names are obfuscated and rotate,
+    // so instead of guessing at them this anchors on a fixed, visible,
+    // user-facing string Google shows under every AI-generated answer:
+    // "AI responses may include mistakes." Once that landmark locates the
+    // answer card, everything inside it is scoped tightly enough that a
+    // much more permissive "clear every block background, clear every
+    // icon-only button" pass is safe — the false-positive risk is contained
+    // to this one identified card, not the rest of google.com.
+    const googleAiChatModified = new Set();
+    const AI_DISCLAIMER_TEXT_RE = /AI responses may include mistakes/i;
+    const AI_ANSWER_ROOT_MIN_WIDTH = 200;
+    const AI_ANSWER_ROOT_MIN_HEIGHT = 150;
+    // The disclaimer search below scans every leaf div/p/span/small under
+    // `scope` and reads each one's textContent — cheap on a small scoped
+    // subtree, but this pass runs on every reactive repaint, including one
+    // per keystroke while typing in a contenteditable composer (a plain
+    // <textarea>'s value changes don't mutate the DOM at all, but a rich
+    // composer's often does). Re-running the full scan every keystroke was
+    // a real, self-inflicted lag source. New AI answer cards don't appear
+    // anywhere near that often, so the search itself is throttled — the
+    // (cheap, container-scoped) re-clearing of already-found cards still
+    // runs every pass to catch newly streamed-in content inside them.
+    let googleAiAnswerRootsCache = [];
+    let googleAiAnswerRootsCacheAt = 0;
+    const GOOGLE_AI_ANSWER_ROOT_RESCAN_MS = 1500;
+
+    function findGoogleAiAnswerRoot(el) {
+        let node = el;
+        let best = null;
+        for (let depth = 0; node && depth < 10; depth++) {
+            let rect;
+            try { rect = node.getBoundingClientRect(); } catch (e) { break; }
+            if (rect.width >= AI_ANSWER_ROOT_MIN_WIDTH && rect.height >= AI_ANSWER_ROOT_MIN_HEIGHT) {
+                best = node;
+            }
+            node = node.parentElement;
+        }
+        return best;
+    }
+
+    function findGoogleAiAnswerRoots(scope) {
+        let leaves;
+        try {
+            // Leaf-like text nodes only (no element children) — the
+            // disclaimer renders as a short standalone text run, and
+            // checking only leaves keeps this O(matching elements), not
+            // O(n^2) the way testing every element's full-subtree
+            // textContent would be on a large page.
+            leaves = scope.querySelectorAll('div, p, span, small');
+        } catch (e) {
+            return [];
+        }
+        const roots = new Set();
+        for (let i = 0; i < leaves.length && roots.size < 5; i++) {
+            const el = leaves[i];
+            if (el.children && el.children.length > 0) continue;
+            let text = '';
+            try { text = el.textContent || ''; } catch (e2) { continue; }
+            if (text.length > 200 || !AI_DISCLAIMER_TEXT_RE.test(text)) continue;
+            const container = findGoogleAiAnswerRoot(el);
+            if (container) roots.add(container);
+        }
+        return Array.from(roots);
+    }
+
+    function rethemeGoogleAiChatSurface(root) {
+        if (!root || !currentTheme || !isGoogleHost()) return;
+        // Re-check prior clears first — same pattern as every other
+        // modified-Set pass — so a card outside this frame's scoped walk
+        // (see Problem 1's mutation scoping) still gets revisited.
+        Array.from(googleAiChatModified).forEach(el => {
+            if (!el || !el.isConnected) {
+                googleAiChatModified.delete(el);
+            }
+        });
+        googleAiAnswerRootsCache = googleAiAnswerRootsCache.filter(el => el && el.isConnected);
+        const now = Date.now();
+        if (googleAiAnswerRootsCache.length === 0
+            || now - googleAiAnswerRootsCacheAt > GOOGLE_AI_ANSWER_ROOT_RESCAN_MS) {
+            // Search from the document root, not just `scope` — a scoped,
+            // typing-triggered pass's root is very likely inside the
+            // composer, nowhere near the answer card the disclaimer lives
+            // in, and this call is already throttled above so the extra
+            // reach doesn't reintroduce the per-keystroke cost.
+            googleAiAnswerRootsCache = findGoogleAiAnswerRoots(document.documentElement);
+            googleAiAnswerRootsCacheAt = now;
+        }
+        googleAiAnswerRootsCache.forEach(container => {
+            let blocks;
+            try { blocks = container.querySelectorAll('div, p, li, span'); } catch (e) { return; }
+            for (let i = 0; i < blocks.length; i++) {
+                const b = blocks[i];
+                if (b.closest && b.closest('button, [role="button"]')) continue;
+                b.style.setProperty('background-color', 'transparent', 'important');
+                b.style.setProperty('background-image', 'none', 'important');
+                googleAiChatModified.add(b);
+            }
+            clearAskAnythingIconButtons(container);
+        });
+    }
+
+    function revertGoogleAiChatSurface() {
+        googleAiChatModified.forEach(el => {
+            try {
+                el.style.removeProperty('background-color');
+                el.style.removeProperty('background-image');
+                el.style.removeProperty('color');
+            } catch (e) {}
+        });
+        googleAiChatModified.clear();
+        googleAiAnswerRootsCache = [];
+        googleAiAnswerRootsCacheAt = 0;
     }
 
     // 3d-bis. TOP CHROME — headers/search bars that are not sticky/fixed yet
@@ -1910,6 +2239,7 @@
         try {
             el.style.removeProperty('background-color');
             el.style.removeProperty('background-image');
+            el.style.removeProperty('color');
         } catch (e) {}
         chromeOuterModified.delete(el);
         chromeModified.delete(el);
@@ -1995,6 +2325,7 @@
             painted.add(el);
             el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
             el.style.setProperty('background-image', 'none', 'important');
+            el.style.setProperty('color', 'var(--aura-text)', 'important');
             chromeModified.add(el);
             chromeOuterModified.add(el);
 
@@ -2322,7 +2653,7 @@
         // 'ambiguous' or null: leave history and any existing paint alone.
     }
 
-    function reopaqueExpandedNavMenuPanels(root) {
+    function reopaqueExpandedNavMenuPanels(root, precollected) {
         if (!root || !currentTheme || !H) return;
         const { vh, vw } = passViewport();
         // Re-check prior paints first — they may have closed without being
@@ -2334,7 +2665,7 @@
             }
             safeVisit(e => visitNavMenuPanelElement(e, vh, vw), el);
         });
-        const elements = collectElements(root);
+        const elements = precollected || collectElements(root);
         const limit = Math.min(elements.length, WALK_SLICE);
         for (let i = 0; i < limit; i++) {
             safeVisit(e => visitNavMenuPanelElement(e, vh, vw), elements[i]);
@@ -2424,6 +2755,23 @@
                 let rect;
                 try { rect = el.getBoundingClientRect(); } catch (e2) { return; }
                 if (rect.width < 1 || rect.height < 1) return;
+                // A video player's own auto-hide controls overlay (play/pause,
+                // volume, settings, fullscreen) legitimately cycles collapsed
+                // <-> expanded just like a real popup — but it's a SIBLING of
+                // the <video> in every player markup checked, stacked in
+                // front of it, not an ARIA dialog. Painting it opaque hides
+                // the video frame behind it while the overlay's own icon
+                // children still render on top of their own parent's paint,
+                // looking exactly like "the video got painted over" while
+                // controls stay visible (confirmed on twitch.tv). Checking
+                // the immediate container's subtree catches both that shape
+                // and a wrap-the-video-as-descendant shape in one check.
+                let hasVideoSibling = false;
+                try { hasVideoSibling = !!(el.parentElement && el.parentElement.querySelector('video')); } catch (e3) {}
+                if (hasVideoSibling) {
+                    if (expandedContentPanelOpaqueModified.has(el)) revertExpandedContentPanelPaint(el);
+                    return;
+                }
                 el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
                 el.style.setProperty('background-image', 'none', 'important');
                 expandedContentPanelOpaqueModified.add(el);
@@ -2437,7 +2785,7 @@
         // 'ambiguous' or null: leave history and any existing paint alone.
     }
 
-    function reopaqueExpandedContentPanels(root) {
+    function reopaqueExpandedContentPanels(root, precollected) {
         if (!root || !currentTheme || !H) return;
         const { vh, vw } = passViewport();
         Array.from(expandedContentPanelOpaqueModified).forEach(el => {
@@ -2447,7 +2795,7 @@
             }
             safeVisit(e => visitExpandedContentPanelElement(e, vh, vw), el);
         });
-        const elements = collectElements(root);
+        const elements = precollected || collectElements(root);
         const limit = Math.min(elements.length, WALK_SLICE);
         for (let i = 0; i < limit; i++) {
             safeVisit(e => visitExpandedContentPanelElement(e, vh, vw), elements[i]);
@@ -2494,11 +2842,27 @@
     // Skipped for split themes so invert (white + difference) is not flattened.
     // Painted aria-hidden copies (Airbnb host stats, currentColor icons) are
     // rewritten; unused stacked Google Images labels are still skipped.
-    function visitContrastElement(el) {
+    function visitContrastElement(el, effectiveBgCache) {
         if (!el || el.nodeType !== 1 || !H || !H.hasPoorContrast || !currentTheme) return;
         if (isActiveSplitTheme(currentTheme)) return;
         const tag = el.tagName;
-        if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[tag]) return;
+        // BRIGHT_SKIP_TAGS exists to protect native form-control CHROME
+        // (the browser's own checkbox/select/OS-rendered appearance) from
+        // the bright-surface-clearing pass — but this pass only ever
+        // rewrites `color` on text, never a background, and a <button> is
+        // just a text label sitting on an (intentionally untouched —
+        // buttons are never in layoutTags and are skip-tagged everywhere
+        // else too) authored background. Reusing the same list here blinds
+        // this pass to exactly the common case where a button's text has no
+        // color of its own, inherits Aura's light global text color via
+        // normal CSS inheritance, and ends up light-on-light against the
+        // button's own background that never changed (confirmed on Gmail's
+        // search bar and several other buttons — general, not site-
+        // specific). Still skip the rest of BRIGHT_SKIP_TAGS (INPUT/SELECT/
+        // TEXTAREA/OPTION and friends): those carry native, OS-rendered, or
+        // user-typed content where forcing a color is more likely to look
+        // broken than helpful.
+        if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[tag] && tag !== 'BUTTON') return;
         if (typeof el.className === 'string' && /icon/i.test(el.className)) return;
         if (H.isStackedDuplicateLabel && H.isStackedDuplicateLabel(el)) return;
         let style;
@@ -2533,7 +2897,7 @@
         })) return;
         const fg = H.parseCssRgb(style.color);
         const bgParsed = H.effectiveBackground
-            ? H.effectiveBackground(el, getComputedStyle, currentTheme.background)
+            ? H.effectiveBackground(el, getComputedStyle, currentTheme.background, effectiveBgCache)
             : (H.parseHexColor && H.parseHexColor(currentTheme.background));
         if (!fg || !bgParsed) return;
         if (!H.hasPoorContrast(fg, bgParsed, 3.0)) return;
@@ -2610,11 +2974,11 @@
         } catch (e) {}
     }
 
-    function rethemeOpaqueShells(root) {
+    function rethemeOpaqueShells(root, precollected) {
         if (!root || !currentTheme || !H || !H.shouldClearShellBackground) return;
         const { vh, vw } = passViewport();
         rethemeKnownShells(root);
-        const elements = collectElements(root);
+        const elements = precollected || collectElements(root);
         const limit = Math.min(elements.length, WALK_SLICE);
         for (let i = 0; i < limit; i++) {
             visitShellElement(elements[i], vh, vw);
@@ -2751,10 +3115,10 @@
         ensurePseudoBgStyleEl().textContent = Array.from(pseudoBgRulesByToken.values()).join('\n');
     }
 
-    function clearFullBleedPseudoBackgrounds(root) {
+    function clearFullBleedPseudoBackgrounds(root, precollected) {
         if (!root || !currentTheme || !H) return;
         const { vh, vw } = passViewport();
-        const elements = collectElements(root);
+        const elements = precollected || collectElements(root);
         const limit = Math.min(elements.length, WALK_SLICE);
         for (let i = 0; i < limit; i++) {
             safeVisit(e => visitPseudoBgElement(e, vh, vw), elements[i]);
@@ -2774,9 +3138,28 @@
     // covering color is gone, the loader asset is left permanently visible.
     // Safe to clear unconditionally: a loader/spinner asset visible at rest
     // is never desirable under any theme, regardless of what exposed it.
+    function revertLoaderBgElement(el) {
+        try { el.style.removeProperty('background-image'); } catch (e) {}
+        loaderBgModified.delete(el);
+    }
+
     function visitLoaderBgElement(el) {
         if (!el || el.nodeType !== 1 || !H || !H.isLoaderBackgroundImageUrl) return;
-        if (loaderBgModified.has(el)) return;
+        if (loaderBgModified.has(el)) {
+            // Re-check: a site can reuse the same element for real content
+            // later (a shimmer/loading container swapped to a real photo).
+            // Our own override reads back as 'none' via computed style, so
+            // lift it briefly to see the site's current underlying value.
+            el.style.removeProperty('background-image');
+            let underlying;
+            try { underlying = getComputedStyle(el).backgroundImage; } catch (e) { underlying = null; }
+            if (underlying && H.isLoaderBackgroundImageUrl(underlying)) {
+                el.style.setProperty('background-image', 'none', 'important');
+            } else {
+                revertLoaderBgElement(el);
+            }
+            return;
+        }
         let style;
         try { style = getComputedStyle(el); } catch (e) { return; }
         if (!H.isLoaderBackgroundImageUrl(style.backgroundImage)) return;
@@ -2784,9 +3167,19 @@
         loaderBgModified.add(el);
     }
 
-    function clearLoaderBackgroundImages(root) {
+    function clearLoaderBackgroundImages(root, precollected) {
         if (!root || !currentTheme || !H) return;
-        const elements = collectElements(root);
+        // Re-check prior clears first — same pattern as reopaqueStickyFixed /
+        // rethemeLogoContrast, so an element outside this frame's sliced walk
+        // still gets revisited.
+        Array.from(loaderBgModified).forEach(el => {
+            if (!el || !el.isConnected) {
+                loaderBgModified.delete(el);
+                return;
+            }
+            safeVisit(visitLoaderBgElement, el);
+        });
+        const elements = precollected || collectElements(root);
         const limit = Math.min(elements.length, WALK_SLICE);
         for (let i = 0; i < limit; i++) {
             safeVisit(visitLoaderBgElement, elements[i]);
@@ -2901,7 +3294,13 @@
             hasLogoClassHint: hasLogoClassHint(el),
             isHomeLinkImage: isHomeLinkImage(el),
         };
-        if (!H.isLikelyLogoCandidateInfo(info)) return;
+        if (!H.isLikelyLogoCandidateInfo(info)) {
+            // The image no longer qualifies (e.g. it grew past the
+            // logo-candidate size window once its responsive layout settled)
+            // — revert a prior invert instead of leaving it stuck forever.
+            if (logoContrastModified.has(el)) revertLogoContrastElement(el);
+            return;
+        }
         if (rect.width < 1 || rect.height < 1) return;
 
         const src = el.currentSrc || el.src || '';
@@ -2937,12 +3336,98 @@
         }
     }
 
-    function rethemeLogoContrast(root) {
+    function rethemeLogoContrast(root, precollected) {
         if (!root || !currentTheme || !H) return;
-        const elements = collectElements(root);
+        // Re-check prior inverts first — they may have grown past the
+        // logo-candidate size window without being re-visited by the sliced
+        // walk this frame (same pattern as reopaqueStickyFixed).
+        Array.from(logoContrastModified).forEach(el => {
+            if (!el || !el.isConnected) {
+                logoContrastModified.delete(el);
+                return;
+            }
+            safeVisit(visitLogoContrastElement, el);
+        });
+        const elements = precollected || collectElements(root);
         const limit = Math.min(elements.length, WALK_SLICE);
         for (let i = 0; i < limit; i++) {
             safeVisit(visitLogoContrastElement, elements[i]);
+        }
+    }
+
+    // A <span> version of the existing `mark {}` CSS rule (getFullStyleSheet)
+    // — see isLikelyInlineHighlightSpanInfo's doc comment in themeHeuristics.js
+    // for why the CSS rule alone can't reach this case. Same re-check-
+    // modified-first pattern as visitLoaderBgElement: lift our own override
+    // first so we judge the site's real current value, not the paint we
+    // applied last pass (a streamed-in span can gain/lose its highlight
+    // class as more content arrives).
+    const inlineHighlightModified = new Set();
+
+    function computeParentHasSiblingText(el) {
+        const parent = el.parentElement;
+        if (!parent) return false;
+        let total = '', own = '';
+        try { total = String(parent.textContent || '').replace(/\s+/g, ' ').trim(); } catch (e) { return false; }
+        try { own = String(el.textContent || '').replace(/\s+/g, ' ').trim(); } catch (e) {}
+        return (total.length - own.length) >= 3;
+    }
+
+    function revertInlineHighlightElement(el) {
+        try {
+            el.style.removeProperty('background-color');
+            el.style.removeProperty('background-image');
+            el.style.removeProperty('color');
+            el.style.removeProperty('-webkit-text-fill-color');
+        } catch (e) {}
+        inlineHighlightModified.delete(el);
+    }
+
+    function visitInlineHighlightElement(el) {
+        if (!el || el.nodeType !== 1 || el.tagName !== 'SPAN' || !H || !H.isLikelyInlineHighlightSpanInfo) return;
+        if (inlineHighlightModified.has(el)) {
+            el.style.removeProperty('background-color');
+            el.style.removeProperty('background-image');
+            el.style.removeProperty('color');
+            el.style.removeProperty('-webkit-text-fill-color');
+        }
+        let style;
+        try { style = getComputedStyle(el); } catch (e) { return; }
+        let ownText = '';
+        try { ownText = String(el.textContent || '').replace(/\s+/g, ' ').trim(); } catch (e) {}
+        const info = {
+            tag: el.tagName,
+            backgroundColor: H.parseCssRgb(style.backgroundColor),
+            ownTextLength: ownText.length,
+            hasIconClassHint: typeof el.className === 'string' && /icon/i.test(el.className),
+            inCodeOrPre: !!(el.closest && el.closest('pre, code')),
+            inButtonControl: !!(el.closest && el.closest('button, [role="button"]')),
+            parentHasSiblingText: computeParentHasSiblingText(el),
+        };
+        if (!H.isLikelyInlineHighlightSpanInfo(info)) {
+            if (inlineHighlightModified.has(el)) revertInlineHighlightElement(el);
+            return;
+        }
+        el.style.setProperty('background-color', 'var(--aura-elevated)', 'important');
+        el.style.setProperty('background-image', 'none', 'important');
+        el.style.setProperty('color', 'var(--aura-text)', 'important');
+        el.style.setProperty('-webkit-text-fill-color', 'var(--aura-text)', 'important');
+        inlineHighlightModified.add(el);
+    }
+
+    function rethemeInlineHighlights(root, precollected) {
+        if (!root || !currentTheme || !H) return;
+        Array.from(inlineHighlightModified).forEach(el => {
+            if (!el || !el.isConnected) {
+                inlineHighlightModified.delete(el);
+                return;
+            }
+            safeVisit(visitInlineHighlightElement, el);
+        });
+        const elements = precollected || collectElements(root);
+        const limit = Math.min(elements.length, WALK_SLICE);
+        for (let i = 0; i < limit; i++) {
+            safeVisit(visitInlineHighlightElement, elements[i]);
         }
     }
 
@@ -2971,6 +3456,19 @@
         safePass(() => promoteEngineStylesheet());
         safePass(() => handleShadowDOM(root));
 
+        // Collected once and shared across every pass below (previously each
+        // of the 7 full-element walks re-queried `root.querySelectorAll('*')`
+        // independently — 7 full-document scans per single reactive
+        // repaint). Safe to share: none of the passes fed this array
+        // structurally mutate `root`'s light-DOM subtree (verified directly
+        // — they only ever write inline style/attributes); the couple that
+        // DO touch the DOM tree (promoteEngineStylesheet reordering the
+        // engine's own <style>, ensurePseudoBgStyleEl appending an
+        // #aura-pseudo-overrides <style> to <head>) both run before this
+        // snapshot is taken and never touch elements any pass below cares
+        // about.
+        const elements = collectElements(root);
+
         const { vh, vw } = passViewport();
         // AMP (and other custom-element-heavy) pages route real content
         // through hyphenated tags like <amp-layout>/<i-amphtml-wrapper> that
@@ -2982,22 +3480,23 @@
         // rethemeKnownShells alone covers — without it, a site's own opaque
         // (often white) fill on one of these wrappers sits on top of the
         // correctly-themed html/body and reads as "the whole page is white".
-        safePass(() => rethemeOpaqueShells(root));
-        safePass(() => clearFullBleedPseudoBackgrounds(root));
-        safePass(() => clearLoaderBackgroundImages(root));
-        safePass(() => rethemeLogoContrast(root));
+        safePass(() => rethemeOpaqueShells(root, elements));
+        safePass(() => clearFullBleedPseudoBackgrounds(root, elements));
+        safePass(() => clearLoaderBackgroundImages(root, elements));
+        safePass(() => rethemeLogoContrast(root, elements));
+        safePass(() => rethemeInlineHighlights(root, elements));
         safePass(() => reopaqueOverlays(root));
         safePass(() => revertGrownModalCards(vh, vw));
         safePass(() => paintGoogleImagesViewer(root));
         safePass(() => reopaqueTopChrome(root));
         safePass(() => restoreAuthoredChromeOpacity(root));
-        safePass(() => reopaqueExpandedNavMenuPanels(root));
-        safePass(() => reopaqueExpandedContentPanels(root));
+        safePass(() => reopaqueExpandedNavMenuPanels(root, elements));
+        safePass(() => reopaqueExpandedContentPanels(root, elements));
         safePass(() => rethemeAskAnythingComposer(root));
+        safePass(() => rethemeGoogleAiChatSurface(root));
 
         const overlaySeen = new Set();
         const skipContrast = isActiveSplitTheme(currentTheme);
-        const elements = collectElements(root);
 
         function finish() {
             if (gen !== walkGeneration) return;
@@ -3006,6 +3505,15 @@
             ignoreMutationsTimer = setTimeout(() => {
                 ignoreMutations = false;
                 ignoreMutationsTimer = null;
+                // Mutations that arrived while this pass was running were
+                // queued (see dispatchSafetyPasses), not dropped — re-arm
+                // the same debounce path so they're not lost.
+                if (pendingMutationRecords.length && !mutationDebounceTimer) {
+                    mutationDebounceTimer = setTimeout(() => {
+                        mutationDebounceTimer = null;
+                        dispatchSafetyPasses();
+                    }, 150);
+                }
             }, 50);
         }
 
@@ -3024,7 +3532,12 @@
                 finish();
                 return;
             }
-            forEachSliced(elements, visitContrastElement, finish);
+            // Cache lives only for this one pass, created after every
+            // background-mutating pass above has already run — see
+            // effectiveBackground's doc comment in themeHeuristics.js for
+            // why that ordering is what makes caching safe here.
+            const effectiveBgCache = new WeakMap();
+            forEachSliced(elements, el => visitContrastElement(el, effectiveBgCache), finish);
         });
     }
 
@@ -3050,6 +3563,47 @@
         if (!hasDarkClassEvidence) {
             try { hasDarkClassEvidence = !!document.querySelector('[class*="dark:"]'); } catch (e) {}
         }
+        // A small whitelist of common body-level dark-mode class names (not
+        // tied to one site's exact string) — e.g. twitch.tv runs its own
+        // inline bootstrap script before Aura ever loads:
+        //   (localStorage.getItem("twilight.theme")==="1" || matchMedia(...).matches)
+        //     && document.body.classList.add("dark-theme")
+        // None of the html-level conventions above look at <body> at all.
+        const BODY_DARK_CLASS_NAMES = ['dark-theme', 'dark-mode', 'theme-dark'];
+        let hasBodyDarkClass = false;
+        try {
+            hasBodyDarkClass = !!(document.body && document.body.classList
+                && BODY_DARK_CLASS_NAMES.some(c => document.body.classList.contains(c)));
+        } catch (e) {}
+        // Sites with a pure CSS `@media (prefers-color-scheme: dark)` dark
+        // theme and no JS/DOM toggle at all (confirmed live on
+        // overreacted.io: no class/data-attribute signal whatsoever, yet it
+        // renders a real dark background — rgb(40,44,53) — purely from this
+        // media query) are invisible to every convention check above, which
+        // all look for some DOM marker. The media query itself is the only
+        // signal there is to find, and only worth checking when the OS is
+        // actually in dark mode right now (the media query auto-applies
+        // based on that alone — there's no attribute for us to flip either
+        // way, so finding this only ever means "already dark").
+        let hasPrefersColorSchemeDarkCss = false;
+        try {
+            const osPrefersDark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            if (osPrefersDark) {
+                outer: for (const sheet of document.styleSheets) {
+                    let cssRules;
+                    try { cssRules = sheet.cssRules; } catch (e2) { continue; }
+                    if (!cssRules) continue;
+                    for (const rule of cssRules) {
+                        try {
+                            if (rule.media && /prefers-color-scheme:\s*dark/i.test(rule.media.mediaText)) {
+                                hasPrefersColorSchemeDarkCss = true;
+                                break outer;
+                            }
+                        } catch (e3) {}
+                    }
+                }
+            }
+        } catch (e4) {}
         return {
             hasDataColorMode: dataColorMode != null,
             dataColorMode: dataColorMode,
@@ -3060,6 +3614,8 @@
             dataTheme: dataTheme,
             hasDarkClassEvidence: hasDarkClassEvidence,
             hasDarkClassAlready: html.classList ? html.classList.contains('dark') : false,
+            hasBodyDarkClass: hasBodyDarkClass,
+            hasPrefersColorSchemeDarkCss: hasPrefersColorSchemeDarkCss,
         };
     }
 
@@ -3093,6 +3649,11 @@
         let result;
         try { result = H.classifyNativeDarkModeInfo(info); } catch (e) { return false; }
         if (!result) return false;
+        // A known convention was recognized and the site is already dark via
+        // it (nativeDarkModeApplied stays null — there's nothing for
+        // revertNativeDarkMode to undo later). Success: caller skips Aura's
+        // own theme entirely, without us touching any attribute/class.
+        if (result.alreadyDark) return true;
         try {
             if (result.attr === 'class') {
                 html.classList.add(result.value);
@@ -3243,7 +3804,10 @@
         }
         // Revert any sticky/fixed elements we forced opaque
         stickyModified.forEach(el => {
-            try { el.style.removeProperty('background-color'); } catch (e) {}
+            try {
+                el.style.removeProperty('background-color');
+                el.style.removeProperty('color');
+            } catch (e) {}
         });
         stickyModified.clear();
         // Revert near-white surfaces we cleared
@@ -3260,6 +3824,7 @@
                 el.style.removeProperty('background-color');
                 el.style.removeProperty('background-image');
                 el.style.removeProperty('mix-blend-mode');
+                el.style.removeProperty('color');
             } catch (e) {}
         });
         overlayModified.clear();
@@ -3307,6 +3872,7 @@
             try {
                 el.style.removeProperty('background-color');
                 el.style.removeProperty('background-image');
+                el.style.removeProperty('color');
             } catch (e) {}
         });
         chromeModified.clear();
@@ -3340,7 +3906,17 @@
             try { el.style.removeProperty('filter'); } catch (e) {}
         });
         logoContrastModified.clear();
+        inlineHighlightModified.forEach(el => {
+            try {
+                el.style.removeProperty('background-color');
+                el.style.removeProperty('background-image');
+                el.style.removeProperty('color');
+                el.style.removeProperty('-webkit-text-fill-color');
+            } catch (e) {}
+        });
+        inlineHighlightModified.clear();
         revertAskAnythingComposer();
+        revertGoogleAiChatSurface();
         document.querySelectorAll('style[data-aura-shadow]').forEach(s => {
             try { s.remove(); } catch (e) {}
         });
@@ -3404,6 +3980,27 @@
                 root.shadowRoot.appendChild(style);
             }
             processedShadowRoots.add(root.shadowRoot);
+
+            // The universal stylesheet just injected strips background-color
+            // from every layout tag inside this shadow root too — but none
+            // of the JS safety-net passes below (which recognize legitimate
+            // sticky/fixed chrome and restore its opaque background) ever
+            // see shadow-root content: querySelectorAll cannot cross a
+            // shadow boundary, so collectElements(document...) never finds
+            // these elements at all. Confirmed on workspace.google.com's
+            // <gws-action-bar>: a position:fixed, white "Sign in / Get
+            // Gmail / For work" bottom bar rendered entirely inside an open
+            // shadow root goes fully transparent (universal rule strips it)
+            // with nothing to ever repaint it. Re-run the sticky/fixed
+            // re-opaque pass over this shadow root's own elements to
+            // restore parity with the light-DOM walk.
+            try {
+                const { vh, vw } = passViewport();
+                const shadowElements = root.shadowRoot.querySelectorAll('*');
+                for (let i = 0; i < shadowElements.length; i++) {
+                    safeVisit(e => visitStickyElement(e, vh, vw), shadowElements[i]);
+                }
+            } catch (e2) {}
         }
 
         if (root.tagName === 'IFRAME') {
@@ -3564,6 +4161,57 @@
         return null;
     }
 
+    function dedupeMutationTargets(records) {
+        const seen = new Set();
+        const out = [];
+        for (let i = 0; i < records.length; i++) {
+            const target = records[i].target;
+            if (target && !seen.has(target)) {
+                seen.add(target);
+                out.push(target);
+            }
+        }
+        return out;
+    }
+
+    // Runs on the MutationObserver's 150ms debounce. Classifies the batch
+    // of records queued since the last dispatch (see pendingMutationRecords
+    // — mutations arriving while a pass is running are buffered, not
+    // dropped, so a burst that straddles two passes is still judged as one
+    // batch here) and scopes the repaint to the mutated subtree when the
+    // batch is small/localized (typing/streaming) instead of always walking
+    // the full document. Any ambiguity — empty batch, a disconnected/
+    // unresolvable common ancestor — falls back to the full document, which
+    // is always correct; only a confidently "small and localized" batch
+    // narrows the walk.
+    function dispatchSafetyPasses() {
+        const records = pendingMutationRecords;
+        pendingMutationRecords = [];
+        if (!currentTheme || !records.length) return;
+        let root = document.documentElement;
+        try {
+            let addedNodeCount = 0;
+            let removedNodeCount = 0;
+            for (let i = 0; i < records.length; i++) {
+                addedNodeCount += records[i].addedNodes.length;
+                removedNodeCount += records[i].removedNodes.length;
+            }
+            const classification = H && H.classifyMutationBatchInfo
+                ? H.classifyMutationBatchInfo({ recordCount: records.length, addedNodeCount, removedNodeCount })
+                : 'full';
+            if (classification === 'scoped' && H && H.findCommonMutationAncestor) {
+                const ancestor = H.findCommonMutationAncestor(
+                    dedupeMutationTargets(records),
+                    document.documentElement
+                );
+                if (ancestor && ancestor.nodeType === 1) root = ancestor;
+            }
+        } catch (e) {
+            root = document.documentElement;
+        }
+        runSafetyPasses(root);
+    }
+
     // 9. INITIALIZATION
     async function init() {
         // Nested ad creative frames: never theme.
@@ -3593,13 +4241,21 @@
         if (!IS_AMP_DOCUMENT && !IS_AMP_CONSENT_FRAME) {
             // Set up mutation observer for Shadow DOM (only once)
             if (!mutationObserver) {
-                mutationObserver = new MutationObserver(() => {
+                mutationObserver = new MutationObserver((mutationsList) => {
+                    // Queue-and-coalesce, not drop-while-busy: buffer even
+                    // while a pass is running (ignoreMutations === true) so
+                    // dispatchSafetyPasses' scoping decision reflects
+                    // everything that happened, not just whatever arrives
+                    // after the pass's cooldown ends. Cheap — array push,
+                    // no DOM work.
+                    for (let i = 0; i < mutationsList.length; i++) {
+                        pendingMutationRecords.push(mutationsList[i]);
+                    }
                     if (ignoreMutations) return;
                     if (mutationDebounceTimer) clearTimeout(mutationDebounceTimer);
                     mutationDebounceTimer = setTimeout(() => {
                         mutationDebounceTimer = null;
-                        if (!currentTheme) return;
-                        runSafetyPasses(document.documentElement);
+                        dispatchSafetyPasses();
                     }, 150);
                 });
                 mutationObserver.observe(document.documentElement, {

@@ -19,7 +19,75 @@
         IMG: 1, SVG: 1, VIDEO: 1, CANVAS: 1, IFRAME: 1,
         SCRIPT: 1, STYLE: 1, LINK: 1, META: 1, BR: 1, HR: 1,
         PATH: 1, USE: 1, CIRCLE: 1, RECT: 1, LINE: 1, POLYLINE: 1, POLYGON: 1, G: 1,
+        // Syntax-highlighted code blocks (Rouge/Pygments/highlight.js/Prism/
+        // Shiki all use different, mutually-incompatible token class-name
+        // schemes — confirmed on dev.to, whose Rouge output uses bare
+        // single/double-letter classes like "c1"/"k"/"nf"/"s2" that no
+        // generic selector could target) carry background + token colors as
+        // ONE co-designed pair. Clearing just the (often near-white)
+        // background here strips the half of that pair token colors were
+        // tuned against, risking illegible light-gray-on-dark-page text —
+        // worse than leaving the site's own light code block intact.
+        PRE: 1, CODE: 1,
     };
+
+    // A MutationObserver batch this small/localized is treated as "typing/
+    // streaming" — cheap, frequent, confined to a small subtree — and gets a
+    // scoped repaint instead of a full-document walk. Anything larger (a
+    // modal opening, a nav drawer, an SPA route swap) spikes past these
+    // thresholds automatically and falls back to a full walk; ambiguous or
+    // missing info also falls back to full, since a full walk is always
+    // correct and a wrongly-scoped one is not.
+    var MUTATION_BATCH_SMALL_MAX_RECORDS = 40;
+    var MUTATION_BATCH_SMALL_MAX_NODES = 60;
+
+    /**
+     * @param {{ recordCount?: number, addedNodeCount?: number, removedNodeCount?: number }} info
+     * @returns {'scoped'|'full'}
+     */
+    function classifyMutationBatchInfo(info) {
+        if (!info || !info.recordCount) return 'full';
+        if (info.recordCount > MUTATION_BATCH_SMALL_MAX_RECORDS) return 'full';
+        if ((info.addedNodeCount || 0) + (info.removedNodeCount || 0) > MUTATION_BATCH_SMALL_MAX_NODES) {
+            return 'full';
+        }
+        return 'scoped';
+    }
+
+    /**
+     * Tightest common ancestor Element containing every mutation target.
+     * `targets` may include text nodes (elementified via parentElement).
+     * Falls back to `root` on anything ambiguous (empty input, a
+     * disconnected node, or a resolved ancestor that turns out to BE root or
+     * an ancestor of root) — callers must treat that as "no real narrowing",
+     * not as an error condition.
+     */
+    function findCommonMutationAncestor(targets, root) {
+        if (!targets || !targets.length || !root) return root;
+        var elements = [];
+        for (var i = 0; i < targets.length; i++) {
+            var n = targets[i];
+            if (!n) continue;
+            var el = n.nodeType === 1 ? n : n.parentElement;
+            if (el) elements.push(el);
+        }
+        if (!elements.length) return root;
+        var candidate = elements[0];
+        for (var j = 1; j < elements.length; j++) {
+            var other = elements[j];
+            var hops = 0;
+            while (candidate && candidate !== other
+                && !(candidate.contains && candidate.contains(other))
+                && hops < 200) {
+                candidate = candidate.parentElement;
+                hops++;
+            }
+            if (!candidate) return root;
+        }
+        if (!candidate || candidate === root) return root;
+        if (root.contains && !root.contains(candidate)) return root;
+        return candidate;
+    }
 
     var SPA_SHELL_IDS = {
         app: 1,
@@ -74,6 +142,15 @@
     var NAV_DRAWER_COLLAPSE_MAX_FRAC = 0.05;
     var STICKY_SKIP_TAGS = {
         IFRAME: 1, VIDEO: 1, CANVAS: 1,
+        // Sticky table headers/cells (a very common pattern on wide data
+        // tables — confirmed on coingecko's markets table: position:sticky
+        // <thead>/<th>/<td>) have their own dedicated treatment (the
+        // `:is(thead)` stylesheet rule giving them --aura-elevated). Letting
+        // the generic nav/toolbar chrome-bar heuristic also reach them risks
+        // an inline `--aura-bg` JS paint (which always wins over that
+        // stylesheet rule, same-specificity-or-not) overriding the
+        // purpose-built elevated shade with the plain page background.
+        THEAD: 1, TR: 1, TH: 1,
     };
 
     /** Host suffixes for ad creatives (aligned with content-blocker ads list). */
@@ -1438,20 +1515,26 @@
      *   className?: string, inSvg?: boolean, mask?: string, visibility?: string,
      *   opacity?: string, width?: number, height?: number, overlayRoot?: boolean,
      *   insideFloatingBanner?: boolean, modalCard?: boolean,
-     *   hasSearchField?: boolean }} info
+     *   hasSearchField?: boolean, textLength?: number }} info
      */
     function shouldSkipBrightElement(info) {
         if (!info) return true;
         var tag = (info.tag || '').toUpperCase();
         if (tag === 'HTML' || tag === 'BODY') return true;
+        // Computed once, reused at the two BUTTON-specific carve-outs below
+        // (BRIGHT_SKIP_TAGS and the icon-className check) — a small,
+        // icon-only button (mic/send in a chat composer, a docked close/
+        // clear control) is the one BUTTON shape allowed through; a
+        // text-labeled button never is (see isLikelySmallIconOnlyButtonInfo).
+        var isIconOnlyButton = tag === 'BUTTON' && isLikelySmallIconOnlyButtonInfo(info);
         if (tag === 'SVG') {
             if ((info.width || 0) < SVG_BACKGROUND_MIN_SIZE || (info.height || 0) < SVG_BACKGROUND_MIN_SIZE) {
                 return true;
             }
         } else if (BRIGHT_SKIP_TAGS[tag]) {
-            return true;
+            if (!isIconOnlyButton) return true;
         }
-        if (info.role === 'button') {
+        if (info.role === 'button' && !isIconOnlyButton) {
             // Large Ask/search composer shells are role=button but must still
             // have their white fill cleared. Small chips / Reserve stay skipped.
             var composer = !!info.hasSearchField
@@ -1459,7 +1542,11 @@
                 && (info.height || 0) >= TOP_CHROME_MIN_HEIGHT;
             if (!composer) return true;
         }
-        if (info.className && /icon/i.test(info.className)) return true;
+        // A qualifying icon-only button plausibly carries "icon" in its own
+        // className (e.g. "mic-icon-button") — without this exemption this
+        // pre-existing icon-glyph-color-protection rule would immediately
+        // re-skip exactly the element the carve-out above just let through.
+        if (info.className && /icon/i.test(info.className) && !isIconOnlyButton) return true;
         if (info.inSvg) return true;
         if (info.mask && info.mask !== 'none') return true;
         if (info.visibility === 'hidden' || info.opacity === '0') return true;
@@ -1550,14 +1637,25 @@
      * dialog's own close button sits on a background reopaqueOverlays/
      * findInnerDialogPanel already painted, so a second backing chip there
      * would be redundant, not a fix.
+     *
+     * `inTextInputShell` excludes a mic/send/clear-style icon docked
+     * (commonly `position:absolute`) inside a text-entry composer/input pill
+     * — a very common pattern for chat and search UIs alike. Unlike a photo/
+     * video/map, that shell already sits on a themed, predictable
+     * background (the input's own), so painting a scrim there is never a
+     * legibility fix — it only ever adds a stray, unexplained dark pill on
+     * top of chrome that never needed backing (confirmed as the shape of a
+     * reported bug: Google's AI-chat "Ask anything" composer icon buttons
+     * showing dark oval artifacts that weren't there before theming).
      * @param {{ visibility?: string, opacity?: string, position?: string,
      *   width?: number, height?: number, textLength?: number,
-     *   isActionable?: boolean }} info
+     *   isActionable?: boolean, inTextInputShell?: boolean }} info
      */
     function isLikelyFloatingIconControlInfo(info) {
         if (!info) return false;
         if (info.visibility === 'hidden' || info.opacity === '0') return false;
         if (info.position !== 'fixed' && info.position !== 'absolute') return false;
+        if (info.inTextInputShell) return false;
         var w = info.width || 0;
         var h = info.height || 0;
         if (w < ICON_CONTROL_MIN_SIZE || w > ICON_CONTROL_MAX_SIZE) return false;
@@ -1566,6 +1664,52 @@
         if (ratio < ICON_CONTROL_MIN_ASPECT || ratio > ICON_CONTROL_MAX_ASPECT) return false;
         if ((info.textLength || 0) > ICON_CONTROL_MAX_TEXT) return false;
         return !!info.isActionable;
+    }
+
+    // The in-flow counterpart to isLikelyFloatingIconControlInfo above: a
+    // small, icon-only <button> (mic/send/close-style control) docked
+    // inline in normal document flow (position:static/relative — never
+    // fixed/absolute, so it never qualifies for that heuristic above, which
+    // only ever ADDS a scrim to floating controls). BUTTON is unconditionally
+    // tag-skipped by shouldSkipBrightElement's BRIGHT_SKIP_TAGS check, so no
+    // button's background is ever cleared without this carve-out.
+    //
+    // Position is deliberately not a signal here. With no way to read
+    // :hover/:active state via JS, the only available signals are shape
+    // (icon-sized, roughly square/pill) and content (no visible text label)
+    // — a text-labeled button ("Sign in with Google", "Subscribe") must
+    // never match, since a visible label is the strongest available signal
+    // that a light/brand fill is intentional, not a stray pill artifact.
+    var ICON_ONLY_BUTTON_MAX_TEXT = 1;
+
+    /**
+     * @param {{ width?: number, height?: number, textLength?: number }} info
+     */
+    function isLikelySmallIconOnlyButtonInfo(info) {
+        if (!info) return false;
+        var w = info.width || 0;
+        var h = info.height || 0;
+        if (w < ICON_CONTROL_MIN_SIZE || w > ICON_CONTROL_MAX_SIZE) return false;
+        if (h < ICON_CONTROL_MIN_SIZE || h > ICON_CONTROL_MAX_SIZE) return false;
+        var ratio = w / h;
+        if (ratio < ICON_CONTROL_MIN_ASPECT || ratio > ICON_CONTROL_MAX_ASPECT) return false;
+        return (info.textLength || 0) <= ICON_ONLY_BUTTON_MAX_TEXT;
+    }
+
+    // Bounded ancestor walk (small composer/toolbar shells only — a handful
+    // of levels, never the whole document) checking whether `el` sits near
+    // a text-entry field via the same elementHasSearchField signal already
+    // used elsewhere (its selector list includes a bare `textarea`, so this
+    // generalizes to any chat/typing composer, not just search boxes).
+    var TEXT_INPUT_SHELL_MAX_DEPTH = 5;
+
+    function isNearTextInputShell(el) {
+        var node = el && el.parentElement;
+        for (var depth = 0; node && depth < TEXT_INPUT_SHELL_MAX_DEPTH; depth++) {
+            if (elementHasSearchField(node)) return true;
+            node = node.parentElement;
+        }
+        return false;
     }
 
     function isLikelyFloatingIconControl(el, getStyle, viewport) {
@@ -1592,6 +1736,7 @@
             height: rect.height,
             textLength: text.length,
             isActionable: isActionable,
+            inTextInputShell: isNearTextInputShell(el),
         });
     }
 
@@ -1604,7 +1749,8 @@
      *   opacity?: string, overlayChrome?: boolean, width?: number, height?: number,
      *   top?: number, left?: number, vh?: number, vw?: number, tag?: string,
      *   zIndex?: number|string, id?: string, className?: string,
-     *   childCoverageFrac?: number|null }} info
+     *   childCoverageFrac?: number|null, childOpaqueCoverageFrac?: number|null,
+     *   hasTablistRole?: boolean }} info
      */
     function shouldSkipStickyElement(info) {
         if (!info) return true;
@@ -1639,9 +1785,23 @@
         if (vh > 0 && (info.height || 0) > vh * maxVh) {
             return true;
         }
-        // Overlay / CMP / notification tiers (OneSignal, OneTrust, video float).
+        // Overlay / CMP / notification tiers (OneSignal, OneTrust, video
+        // float) — these tend to use extreme z-index values specifically to
+        // guarantee top-most stacking regardless of the host page's own
+        // usage (the existing test fixture uses 2147483647). Ordinary sticky
+        // chrome commonly uses a much more modest "just above normal
+        // content" z-index by convention alone (Bootstrap's own documented
+        // scale tops out around 1090 for dropdowns/modals/toasts) — both
+        // bbc.com's live-match tab bar (role="tablist", z-index:1003) and
+        // workspace.google.com's shadow-DOM "Sign in / Get Gmail" bottom
+        // action bar (z-index:1016) are real, confirmed false positives at
+        // the old z >= 1000 threshold. Raised to 2000 — comfortably above
+        // every legitimate-chrome z-index observed so far, comfortably
+        // below every real CMP/notification-tier value. The tablist
+        // exemption stays as an extra, independent safeguard for real
+        // navigation that happens to exceed even this threshold.
         var z = parseInt(info.zIndex, 10);
-        if (!isNaN(z) && z >= 1000) {
+        if (!isNaN(z) && z >= 2000 && !info.hasTablistRole) {
             return true;
         }
         // A wide, short sticky/fixed element whose direct children cover
@@ -1660,6 +1820,26 @@
         if (typeof info.childCoverageFrac === 'number'
             && (info.width || 0) >= 150
             && info.childCoverageFrac < 0.5) {
+            return true;
+        }
+        // A wide, short sticky/fixed wrapper whose children (possibly one or
+        // two levels of single-child layout wrappers deep — see
+        // unwrapSingleChildRow in content.js) already carry their own opaque
+        // background (buttons with authored fills, not plain text/links
+        // relying on the container for contrast) is just a positioning shell
+        // for pre-styled controls. Painting the wrapper too produces a solid
+        // bar behind/around already-visible buttons (confirmed on
+        // sky.coflnet.com's Notify/copy/scroll-to-top bottom bar). Threshold
+        // is deliberately lower than childCoverageFrac's 0.5 — the mere
+        // *presence* of several independently-opaque buttons is already a
+        // strong "pre-styled controls, not text chrome" signal even when
+        // generous padding/gaps keep their combined width fraction modest. A
+        // genuine chrome bar's content (logo, nav links, search) is
+        // typically plain text with no background of its own, so this can't
+        // misfire on real chrome.
+        if (typeof info.childOpaqueCoverageFrac === 'number'
+            && (info.width || 0) >= 150
+            && info.childOpaqueCoverageFrac >= 0.35) {
             return true;
         }
         return false;
@@ -1691,24 +1871,46 @@
      * First opaque computed background walking from el up to html.
      * Falls back to `fallbackHex` (theme background) when the stack is glass.
      */
-    function effectiveBackground(el, getStyle, fallbackHex) {
+    /**
+     * `cache` (optional WeakMap<Element, parsedColor|null>) memoizes the
+     * ancestor walk per element for the lifetime of a single caller-owned
+     * pass — safe ONLY because nothing in that pass mutates
+     * `background-color` after this runs (see the caller in content.js's
+     * contrast pass, which only ever writes `color`). Every ancestor
+     * visited while resolving `el` is backfilled with the same result, so a
+     * later sibling/descendant sharing that ancestor chain resolves in O(1)
+     * instead of re-walking to the same opaque ancestor or fallback.
+     */
+    function effectiveBackground(el, getStyle, fallbackHex, cache) {
         var styleFn = resolveStyleFn(getStyle);
         var node = el;
+        var visited = cache ? [] : null;
+        var result;
         while (node && node.nodeType === 1) {
+            if (cache && cache.has(node)) {
+                result = cache.get(node);
+                node = null;
+                break;
+            }
+            if (visited) visited.push(node);
             if (styleFn) {
                 var style;
                 try { style = styleFn(node); } catch (e) { style = null; }
                 if (style) {
                     var parsed = parseCssRgb(style.backgroundColor);
-                    if (parsed && parsed.a >= 0.5) return parsed;
+                    if (parsed && parsed.a >= 0.5) { result = parsed; node = null; break; }
                 }
             }
             if (typeof document !== 'undefined') {
-                if (node === document.documentElement || node === document.body) break;
+                if (node === document.documentElement || node === document.body) { node = null; break; }
             }
             node = node.parentElement;
         }
-        return parseHexColor(fallbackHex) || null;
+        if (result === undefined) result = parseHexColor(fallbackHex) || null;
+        if (visited) {
+            for (var i = 0; i < visited.length; i++) cache.set(visited[i], result);
+        }
+        return result;
     }
 
     /**
@@ -1890,33 +2092,72 @@
      * null — nothing to flip.
      *
      * @param {{
-     *   hasDataColorMode?: boolean,       // <html data-color-mode> present (GitHub Primer)
+     *   hasDataColorMode?: boolean,       // <html data-color-mode> present (GitHub Primer and others)
      *   dataColorMode?: string,           // its current value
      *   hasDarkThemeCompanion?: boolean,  // data-dark-theme/data-light-theme present alongside it
+     *                                     // (GitHub Primer specifically) — NOT required when
+     *                                     // dataColorMode is already a clean "light"/"dark" enum
+     *                                     // value, since that alone is a strong, low-ambiguity
+     *                                     // signal (confirmed on joshwcomeau.com, which uses
+     *                                     // data-color-mode="light"/"dark" with no Primer companion
+     *                                     // attributes at all — the companion-only check missed it)
      *   hasDataBsTheme?: boolean,         // [data-bs-theme] present anywhere (Bootstrap 5.3+)
      *   hasDataTheme?: boolean,           // <html data-theme> present (Docusaurus/VitePress/Daisy UI)
      *   dataTheme?: string,
      *   hasDarkClassEvidence?: boolean,   // corroborating `dark:` utility class or
      *                                     // <meta name="color-scheme" content="... dark ...">
      *                                     // seen in the page's own markup/stylesheets
+     *   hasBodyDarkClass?: boolean,       // <body> already carries a common
+     *                                     // dark-mode class name (e.g. Twitch's
+     *                                     // body.dark-theme, toggled by the
+     *                                     // site's own bootstrap script)
+     *   hasPrefersColorSchemeDarkCss?: boolean, // OS is in dark mode AND the site's
+     *                                     // own CSS has an active `@media
+     *                                     // (prefers-color-scheme: dark)` rule —
+     *                                     // confirmed on overreacted.io, which has
+     *                                     // no DOM signal (no class/data-attribute)
+     *                                     // at all, only this media query
      * }} info
-     * @returns {{ attr: string, value: string } | null} the attribute (or
-     *   "class") and value to set on <html> to activate the site's own dark
-     *   mode, or null if no known convention was recognized / already dark.
+     * @returns {{ attr: string, value: string } | { alreadyDark: true } | null}
+     *   `{ attr, value }` — the attribute (or "class") and value to set on
+     *   <html> to activate the site's own dark mode; `{ alreadyDark: true }`
+     *   — a known convention was recognized and the site is already dark via
+     *   it, so the caller should defer (skip Aura's own theme) WITHOUT
+     *   touching anything; `null` — no known convention was recognized at
+     *   all, caller falls through to Aura's own theme. Distinguishing
+     *   "already dark" from "unrecognized" matters: both used to collapse to
+     *   `null`, which made the caller give up and apply Aura's theme on top
+     *   of an already-correctly-dark site — the common case for anyone with
+     *   this feature enabled in the first place.
      */
     function classifyNativeDarkModeInfo(info) {
         if (!info) return null;
-        if (info.hasDataColorMode && info.hasDarkThemeCompanion && info.dataColorMode !== 'dark') {
-            return { attr: 'data-color-mode', value: 'dark' };
+        if (info.hasDataColorMode && (info.hasDarkThemeCompanion
+            || info.dataColorMode === 'light' || info.dataColorMode === 'dark')) {
+            return info.dataColorMode !== 'dark'
+                ? { attr: 'data-color-mode', value: 'dark' }
+                : { alreadyDark: true };
         }
-        if (info.hasDataBsTheme && info.dataBsTheme !== 'dark') {
-            return { attr: 'data-bs-theme', value: 'dark' };
+        if (info.hasDataBsTheme) {
+            return info.dataBsTheme !== 'dark'
+                ? { attr: 'data-bs-theme', value: 'dark' }
+                : { alreadyDark: true };
         }
-        if (info.hasDataTheme && info.dataTheme !== 'dark') {
-            return { attr: 'data-theme', value: 'dark' };
+        if (info.hasDataTheme) {
+            return info.dataTheme !== 'dark'
+                ? { attr: 'data-theme', value: 'dark' }
+                : { alreadyDark: true };
         }
-        if (info.hasDarkClassEvidence && !info.hasDarkClassAlready) {
-            return { attr: 'class', value: 'dark' };
+        if (info.hasDarkClassEvidence) {
+            return !info.hasDarkClassAlready
+                ? { attr: 'class', value: 'dark' }
+                : { alreadyDark: true };
+        }
+        if (info.hasBodyDarkClass) {
+            return { alreadyDark: true };
+        }
+        if (info.hasPrefersColorSchemeDarkCss) {
+            return { alreadyDark: true };
         }
         return null;
     }
@@ -1942,6 +2183,49 @@
         if (w < LOGO_CANDIDATE_MIN_WIDTH || h < LOGO_CANDIDATE_MIN_HEIGHT) return false;
         if (w > LOGO_CANDIDATE_MAX_WIDTH || h > LOGO_CANDIDATE_MAX_HEIGHT) return false;
         return !!(info.inHeaderOrNav || info.hasLogoClassHint || info.isHomeLinkImage);
+    }
+
+    // A <span> carrying its own authored, non-transparent background-color
+    // while sitting inline inside flowing text — e.g. Google AI Overview's
+    // citation/search-term highlight spans. The existing `mark {}` CSS rule
+    // (getFullStyleSheet in content.js) only reaches literal <mark> tags;
+    // this closes the gap for the same visual pattern built on a bare
+    // <span> instead, which the JS bright-surface pass also misses since it
+    // only acts on near-white fills (isLightContentSurface) — a mid-tone
+    // highlight wash isn't near-white and falls through untouched.
+    //
+    // No lightness requirement (unlike isLightContentSurface) — that's
+    // exactly the gap being closed. Chroma is capped instead: a washy/muted
+    // fill qualifies regardless of shade, but a strongly saturated color (a
+    // diff +/- indicator, a colored status label) is assumed intentional and
+    // left alone.
+    //
+    // parentHasSiblingText is the primary false-positive guard against
+    // decorative badges/chips/icon spans, which are typically the SOLE
+    // content of their own container rather than one inline run embedded
+    // among surrounding prose.
+    var INLINE_HIGHLIGHT_MIN_ALPHA = 0.15;
+    var INLINE_HIGHLIGHT_MAX_CHROMA = 60;
+    var INLINE_HIGHLIGHT_MIN_TEXT_LENGTH = 2;
+
+    /**
+     * @param {{ tag?: string, backgroundColor?: {r:number,g:number,b:number,a:number}|null,
+     *   ownTextLength?: number, hasIconClassHint?: boolean, inCodeOrPre?: boolean,
+     *   inButtonControl?: boolean, parentHasSiblingText?: boolean }} info
+     */
+    function isLikelyInlineHighlightSpanInfo(info) {
+        if (!info) return false;
+        if ((info.tag || '').toUpperCase() !== 'SPAN') return false;
+        if (info.inCodeOrPre) return false;
+        if (info.inButtonControl) return false;
+        if (info.hasIconClassHint) return false;
+        if ((info.ownTextLength || 0) < INLINE_HIGHLIGHT_MIN_TEXT_LENGTH) return false;
+        if (!info.parentHasSiblingText) return false;
+        var bg = info.backgroundColor;
+        if (!bg || bg.a == null || bg.a < INLINE_HIGHLIGHT_MIN_ALPHA) return false;
+        var spread = Math.max(bg.r, bg.g, bg.b) - Math.min(bg.r, bg.g, bg.b);
+        if (spread > INLINE_HIGHLIGHT_MAX_CHROMA) return false;
+        return true;
     }
 
     // Same threshold philosophy as isLowChroma/LIGHT_SURFACE_CHROMA, applied
@@ -2089,5 +2373,11 @@
         LOGO_CANDIDATE_MAX_HEIGHT: LOGO_CANDIDATE_MAX_HEIGHT,
         shouldClearShellBackground: shouldClearShellBackground,
         shouldClearLayoutGradient: shouldClearLayoutGradient,
+        classifyMutationBatchInfo: classifyMutationBatchInfo,
+        findCommonMutationAncestor: findCommonMutationAncestor,
+        MUTATION_BATCH_SMALL_MAX_RECORDS: MUTATION_BATCH_SMALL_MAX_RECORDS,
+        MUTATION_BATCH_SMALL_MAX_NODES: MUTATION_BATCH_SMALL_MAX_NODES,
+        isLikelyInlineHighlightSpanInfo: isLikelyInlineHighlightSpanInfo,
+        isLikelySmallIconOnlyButtonInfo: isLikelySmallIconOnlyButtonInfo,
     };
 });
