@@ -1,92 +1,105 @@
 # Submission readiness — Aura
 
-Everything found during a full codebase scan (2026-08-25) that stands between this build and an App Store submission, ranked by priority. See [README.md](README.md) for the architecture context behind each item.
+Everything found during a full re-scan (2026-09-13, `HEAD` = `5670d1c` plus this session's flat-background-token and dead-code-cleanup changes) that stands between this build and an App Store submission, ranked by priority. See [README.md](README.md) for the architecture context behind each item.
+
+This replaces an earlier version of this document (2026-08-25, commit `cfcef1e`). Four real commits landed after that scan (`3cb8c0f`, `306f8c4`, `af12dbc`, `5670d1c` — ~5,000 lines changed across `content.js`/`themeHeuristics.js`), then a separate work session fully restored git to `5670d1c` and discarded a large amount of uncommitted experimentation. Every item below was individually re-verified against the current files rather than carried forward from the old narrative.
 
 ## Blockers — fix before submitting
 
-> **2026-08-26 — `content.js` was reverted to `fac4c5a` at user request, then §1a's curtain revert paths were re-applied the same day.** Items below that still describe undone `content.js` work: half of 1b's fix, item 4's `content.js` gate, item 6. `injected.js`, `background.js`, `themeHeuristics.js`, and the test file were *not* part of that full-file revert and may still carry their own uncommitted changes — see 1b for the remaining inconsistency.
+### 1. Ad iframe theming leak — confirmed still live
 
-### 1a. ✅ Fixed (code) — fox5sandiego.com curtain — awaiting device verify
+`all_frames: true` in the manifest means Aura's scripts run inside every same- and cross-origin `<iframe>` on a page, including ad-network creative frames. `isAdSafeFrameContext()` (`themeHeuristics.js`) detects a SafeFrame-rendered ad iframe (`window.$sf`/`window.inDapIF`) independent of hostname matching. `injected.js` checks it and removes its own early dark paint shield inside a detected ad frame — but `content.js`'s `init()`/`applyTheme()` path **never checks it at all**, confirmed by grep (`isAdSafeFrameContext`/`isConfirmedAdFrame` appear only in `themeHeuristics.js` and `injected.js`, nowhere in `content.js`). Net effect: the early flicker is suppressed, but the full `#aura-core-engine` stylesheet still gets injected into the ad creative moments later — the actual "theme painted into the ad" bug is unchanged.
 
-The first attempted fix (a CSS-level ad-token collision theory) was device-tested and confirmed wrong. A second pass diagnosed two independent bugs in the same class; both revert paths are **re-applied in `content.js`** (2026-08-26):
+**Fix direction:** add the same `isAdSafeFrameContext()` check to `content.js` at the point `applyTheme()` is called from `init()`, mirroring what `injected.js` already does, so both files agree and bail together.
 
-**Diagnosis 1 — sticky/top-chrome passes.** `visitStickyElement` and `reopaqueTopChrome`'s `paintChrome` both re-evaluate "is this safe to paint opaque?" on every pass, but neither had a way to undo a previous opaque paint once a later re-evaluation decided the element should now be skipped. A `position: sticky`/`fixed` element that's small (safe to paint) before layout settles or before more of it has scrolled into view, then grows into covering-sheet territory, stayed permanently painted with the theme's background color from its first "safe" evaluation — matching "briefly visible, then swallowed while scrolling." **Fix:** sticky skip now clears prior paints (`revertStickyPaint` + re-check of `stickyModified`); top chrome tracks outer bars in `chromeOuterModified` and reverts when no longer a safe top-chrome bar / covering sheet.
+**Honest limitation either way:** this only covers SafeFrame-rendered ads — a large share of programmatic display ads, but not all formats — and there's an inherent small window between `document_start` and the async check where a shield could still flash first.
 
-**Diagnosis 2 — the overlay/modal-card pass.** `visitOverlayModalWalk` (the heuristic detector for consent/curtain wrappers with no `role="dialog"` — the common case for plain-`<div>` CMP implementations on ad-heavy local-news sites) only acts while `isLikelyModalCard(el)` is true, painting a small `position:fixed` card opaque with `--aura-overlay`. `isLikelyModalCard` correctly excludes anything that's grown into covering-sheet/full-viewport size — but once a CMP wrapper expands past that threshold (exactly how these animate after first paint), the function stops running for it entirely and the earlier opaque fill is never reverted. Unlike ARIA-role dialogs (re-evaluated fresh every pass by `reopaqueOverlays`, self-correcting), a non-ARIA curtain `<div>` is *only* ever touched by this one heuristic path, so it gets permanently stuck opaque once it outgrows "card" size. **Fix:** `modalCardOpaqueModified` + `revertGrownModalCards` each safety pass (mirrors sticky-pass revert).
+### 2. fox5sandiego.com curtain — code present, needs device verification
 
-**Current state:** sticky/chrome + modal-card revert paths are in `content.js`, plus a follow-up harden (2026-08-26): sticky re-opaque is chrome-only (height ≤ top-chrome max, z-index < 1000), skips ad surfaces / modal cards, and fox5sandiego.com has a SITE_FIX forcing known overlay shells transparent. Device-check fox5sandiego.com (dark theme + scroll) before treating as shipping-ready.
+Not an open code gap. `revertStickyPaint`, `chromeOuterModified`, `modalCardOpaqueModified`, `revertGrownModalCards`, and a `SITE_FIXES` entry for `fox5sandiego.com` are all extensively present in current `content.js` (landed in one of the four commits after the last scan). The mechanism: `visitStickyElement`/`reopaqueTopChrome` and the overlay pass now track their own prior opaque paints and revert them once a later pass decides the element (or a formerly-small consent/CMP wrapper) has grown into covering-sheet/curtain territory, rather than staying stuck opaque forever.
 
-### 1b. ⚠️ Ad "white box" issue — now in a split, inconsistent state (worse than fully reverted)
-
-Widening `AD_NETWORK_HOST_SUFFIXES` and adding iframe-ancestor marking made no visible difference on device — those only affect the parent page, not Aura's own script running *inside* an ad's cross-origin iframe (`all_frames: true`). The follow-up fix added a host-agnostic signal, `isAdSafeFrameContext()` (`themeHeuristics.js`, unreverted — checks `window.$sf` / `window.inDapIF`), checked from **two** places: `injected.js` (removes the early dark shield and stops) and `content.js`'s `init()` (set `isConfirmedAdFrame`, checked at the `applyTheme` choke point so no code path re-themes the frame).
-
-**The `content.js` revert above broke this fix's symmetry, not just undone it.** `injected.js` still checks `isAdSafeFrameContext()` and removes its early shield inside a detected ad iframe — but `content.js` no longer checks it at all, so moments later `content.js` will still build and inject the full `#aura-core-engine` stylesheet into that same iframe. Net effect: the dark shield is now suppressed (good) but the actual theme still gets painted into the ad creative anyway (the original bug) — the early-paint flicker is gone but the "white/black box" outcome is unchanged, and the two files are now inconsistent with each other for no benefit. **Pick one:** revert `injected.js`'s `isAdSafeFrameContext()` check too (for a clean, fully-reverted state), or re-apply the `content.js`-side `isConfirmedAdFrame` check (to restore the intended fix). Leaving it split is strictly worse than either.
-
-**Honest limitation** (applies whichever way this is resolved): this only closes the gap for ads using SafeFrame rendering — the majority of programmatic display ads, not all formats — and there's an inherent small window between `document_start` and the async recheck where an ad iframe could still flash the dark shield first.
-
-### 2. ✅ Fixed — Safari extension showed the wrong name in iOS Settings
-
-`ios/TintExtension Extension/Resources/_locales/en/messages.json` had unedited Xcode template strings ("TintExtension Extension" / generic filler text). Updated to `"Aura"` and a real one-sentence description. `manifest.json` already referenced these correctly via `__MSG_extension_name__`/`__MSG_extension_description__` — no manifest change needed.
-
-**Still needed:** device check — Settings → Safari → Extensions should now show "Aura."
+**Still needed:** this has never been device-tested against the *current* build specifically. Verify on fox5sandiego.com (dark theme, scroll) before treating as shipping-ready — see test pass below.
 
 ## Should fix before submitting
 
-### 3. Legacy `TintExtension` host target rides along with every `TintApp` archive — manual step, not yet done
+### 3. Legacy `TintExtension` host target still archives with every build
 
-`TintApp.xcscheme` includes the legacy `TintExtension` host app as a `BuildActionEntry` with `buildForArchiving = YES`. It isn't embedded in the shipped `.ipa` (confirmed — `TintApp`'s "Embed App Extensions" phase only copies `TintExtension Extension.appex` and `ContentBlockerExtension.appex`), so it's not a review risk, but archiving `TintApp` still compiles this target every time. This is a one-checkbox fix best done by hand in Xcode rather than a scripted file edit (hand-editing `.xcscheme` XML risks Xcode silently reformatting it on next save, for a change with no functional benefit beyond build time): **Product → Scheme → Edit Scheme… → Archive tab → uncheck `TintExtension`.** Leave the Test/Run/Profile/Analyze tabs untouched.
+`TintApp.xcscheme` still has `buildForArchiving = "YES"` for the `TintExtension.app` `BuildableName` (confirmed). It isn't embedded in the shipped `.ipa` — `TintApp`'s "Embed App Extensions" phase only copies `TintExtension Extension.appex` and `ContentBlockerExtension.appex` — so it's not a review risk, but archiving `TintApp` still compiles it every time. One-checkbox fix, best done by hand in Xcode rather than a scripted `.xcscheme` edit (risks Xcode silently reformatting the file on next save for a change with no functional benefit): **Product → Scheme → Edit Scheme… → Archive tab → uncheck `TintExtension`.** Leave Test/Run/Profile/Analyze untouched.
 
-### 4. Half-fixed — `background.js`/`content.js` debug logging
+### 4. `content.js` has no debug-logging gate
 
-`background.js`'s ~25 `console.log` calls (5-second poll tracing) are gated behind a module-scoped `AURA_DEBUG_LOGGING = false` flag, following the same pattern as `LIVE_SPLIT_ENABLED` in `splitTheme.js`. **`content.js`'s matching gate was undone by the `content.js` revert above** — its sync-tracing `console.log` calls are back to always-on. Genuine `console.error`/`console.warn` on real failure paths are intentionally left ungated in both files. Re-add the same flag to `content.js` if/when its other reverted changes are re-applied — no reason to do it in isolation first.
+`background.js` has a module-scoped `AURA_DEBUG_LOGGING = false` flag gating its ~25 tracing `console.log` calls (confirmed present, off by default). `content.js` has no equivalent — confirmed by grep, zero matches for `AURA_DEBUG_LOGGING` in the file. Any tracing `console.log` calls in `content.js` are unconditionally on. Add the same flag/pattern for consistency and a quieter Safari console for anyone (reviewer or user) who opens dev tools.
 
-### 5. ✅ Fixed — dead-code routing bug in unreachable Focus Mode screens
+### 5. Google "Ask anything" trigger button unthemed
 
-`FocusModeScreen.tsx` called `navigation.navigate('FocusModePresetSelection', …)` — a route name that was never registered anywhere, while the actual screen component is named `FocusModeThemeSelectionScreen`. Both call sites now correctly reference `'FocusModeThemeSelection'`, matching this codebase's route-naming convention (component name minus `Screen`). This is hygiene only — Focus Mode remains deliberately unreachable from the shipping 3-tab MVP navigator (no route was registered in `App.tsx`, nothing was wired in). If Focus Mode ships in a future release, wiring in a `<Stack.Screen name="FocusModeThemeSelection" .../>` (and re-embedding the native `FocusFilterExtension`, per the README) is now a matter of registering it, not also debugging a broken navigation reference.
+`<button>` tags are unconditionally excluded from every background/color-touching pass in the engine (avoids breaking arbitrary sites' branded CTAs), and the Google-scoped "Ask anything" composer logic (`rethemeAskAnythingComposer`) only matches text-input-shaped elements (`textarea`, `input`, `[contenteditable="true"]`, `[role="textbox"]`) — never the *collapsed trigger pill* itself, which renders as a white/unthemed box. Confirmed still unfixed — no `isAskAnythingTrigger`/`paintAskAnythingTriggerText` anywhere in the code. Not attempted yet.
 
-### 6. Not fixed — Google "Ask anything" trigger button unthemed
+### 6. Google search — typing lag and visual glitches (unresolved, nothing currently in code)
 
-`<button>` tags are unconditionally excluded from every background/color-touching pass in the engine, by design (avoids breaking arbitrary sites' branded CTAs), and the Google-scoped "Ask anything" composer logic only matches text-input-shaped elements (`textarea`, `input`, `[contenteditable="true"]`, `[role="textbox"]`) — never the collapsed trigger pill itself, which renders as a white/unthemed box. A fix for this (`isAskAnythingTrigger`/`paintAskAnythingTriggerText` in `content.js`, plus a shared text-matching predicate) was written and then undone by the `content.js` revert above — it never got on-device verification either way. Still open, unfixed, starting from scratch if revisited.
+Four related issues on google.com, all Google-specific (not reproduced on other sites):
 
-### 7. Still open — Google search initial theme-load lag
+- **Lag while typing in the main search bar.**
+- **Lag while typing in the AI Mode / "Ask anything" composer.**
+- **The search-suggestions dropdown visibly flashes** between its normal opaque state and transparent while it's open or updating.
+- **Text color flashing.** On a search results knowledge-panel/sports widget (e.g. a live-score card), white text — tab labels like "MEN'S SINGLES"/"WOMEN'S SINGLES", the day-of-week date tabs, a "Video highlights" caption — flashes back and forth between plain white and the active theme's color (green, in the reported case) roughly every 1-2 seconds. Same flicker cadence as the suggestions-dropdown flash above, but on `color` rather than `background-color`/opacity — likely the same underlying repeated re-theme/un-theme cycle rather than a separate bug, though unconfirmed. Newly reported, not yet investigated at all — no prior fix attempt exists for this one, unlike the other three.
 
-A few seconds of visibly wrong colors while Google's AI Overview streams in, before the engine's normal debounced pass catches up. A speculative fix (`runFastPathForMutations`, an un-debounced pass on every mutation) was tried, suspected of causing the fox5sandiego.com regression (item 1a) by adding synchronous work on every mutation on every site, and was reverted before ever being device-confirmed either way — and is now moot regardless, since the full `content.js` revert above means it isn't in the code either way. Don't re-attempt this in the same pass as item 1a — that combination is what produced an unconfirmed, likely-wrong fix last time.
+History for the first three, for whoever picks this back up: the AI composer had a verified-working on-device fix (`paintAskAnythingChipOpaque` plus a stable `[data-xid="aim-mars-input-plate"]` selector, confirmed real via Safari Web Inspector's Sources search of Google's own minified JS) before it was discarded. The main-search-bar transparency issue went through one regressive attempt (a single-gate `position:fixed` + full-viewport check matched `document.body`/`document.documentElement` themselves via Google's `.qb0KL` body-lock class, blacking out the entire search screen — reverted) and one untested redesign (three independent gates: html/body exclusion, `role="search"`/`searchbox` descendant requirement, `document.elementFromPoint()` topmost-visibility confirmation) that never got on-device verification. The suggestions-dropdown flashing never got a confirmed root cause; suspicion pointed at an interaction with the universal transparency rule. Treat all four as open/unstarted, not "in progress" — nothing survives to build on.
+
+### 7. Google search — initial theme-load lag
+
+A few seconds of visibly wrong colors while Google's AI Overview streams in, before the engine's normal debounced pass catches up. Confirmed still unattempted in current code (no `runFastPathForMutations`). A speculative un-debounced-pass-on-every-mutation approach was tried once, suspected of being expensive enough on every site to cause unrelated regressions, and abandoned before device confirmation either way. Don't re-attempt this in the same pass as item 2 (fox5sandiego) — a prior combination of "chrome/lag fix" changes is what produced an unconfirmed, likely-wrong result last time.
+
+### 8. iOS deployment-target documentation mismatch
+
+README previously claimed "iOS 15.0+." Actual `IPHONEOS_DEPLOYMENT_TARGET` in `project.pbxproj`: `TintApp` (main app, tests) = **17.0**, `TintExtension Extension` (Safari extension host) = 16.6, `FocusFilterExtension` = 16.0, `ContentBlockerExtension` = 15.1. App Store Connect will show the real effective minimum for the umbrella app (17.0, since the main app target gates the whole submission), not 15.0. README has been corrected to state this. **Open decision for Alexander:** is 17.0 intentional, or should `TintApp`'s deployment target be lowered to match the extensions (and if so, is anything in the app actually iOS-17-only, or was this drift accidental)?
+
+### 9. Stray empty iconset in the legacy `TintExtension` host target
+
+`ios/TintExtension/Assets.xcassets/AppIcon.appiconset/Contents.json` references icon filenames that don't exist on disk anywhere in that directory (confirmed — only `Contents.json` is present, zero PNGs). This target isn't embedded in the shipped `.ipa` (see item 3), so likely benign — extensions commonly inherit the host app's icon — but worth a quick confirmation rather than assuming, since it sits right next to item 3's other legacy-target loose end.
+
+### 10. Stray `console.log` in shipped/reachable RN code
+
+`App.tsx:100` is in a live path that ships. `FocusModeService.ts:47,54,61` are lower priority since that service is only called from the two unregistered Focus Mode screens (see item 11) — unreachable from any live UI path today.
+
+### 11. Dead-code hygiene: Focus Mode screens fully unreachable
+
+`FocusModeScreen.tsx` and `FocusModePresetSelectionScreen.tsx` exist, are fully wired to storage (`focusModeSettings` in `src/storage.js`), but are not imported or registered anywhere in `App.tsx` — confirmed by a fresh navigation-structure survey. Not a submission blocker on its own (dead code isn't a rejection risk), but means Focus Mode is entirely unreachable from the shipping 3-tab UI. If it ships in a future release, this is a matter of registering a route and re-embedding the native `FocusFilterExtension` (excluded from `TintApp`'s "Embed App Extensions" phase, per README), not debugging anything broken.
 
 ## Test pass before submitting
 
-Re-run the full manual device regression (dark theme + light theme on each), now specifically including ad-heavy pages and the fox5sandiego.com regression check given item 1 above:
+Re-run the full manual device regression (dark theme + light theme on each):
 
-- [ ] **fox5sandiego.com** — §1a revert paths re-applied in `content.js`; device-verify no solid curtain and scroll does not re-swallow content
+- [ ] **fox5sandiego.com** — item 2: code present, device-verify no solid curtain and scroll does not re-swallow content
 - [ ] Google (web, Images, Shopping — carousel tiles aren't painted as modal sheets)
-- [ ] Google AI Overview — "Ask anything" button/pill (item 6, unfixed — expect it to still show as a white box) and streaming-content settle lag (item 7, unfixed)
+- [ ] Google search — main search bar typing (item 6, unfixed — expect lag), AI Mode composer typing (item 6, unfixed — expect lag), suggestions dropdown (item 6, unfixed — expect flashing), a knowledge-panel/sports widget with white text on a themed background (item 6, unfixed — expect text color flashing between white and theme color), "Ask anything" trigger pill (item 5, unfixed — expect white box), initial AI Overview streaming settle (item 7, unfixed — expect brief wrong colors)
 - [ ] Wikipedia (infobox/tables readable)
 - [ ] Amazon search
 - [ ] YouTube, Reddit, X
-- [ ] **A news site with programmatic display ads** — confirm ad creatives are untouched, not painted or whited/blacked-out (item 1b — currently in a split, worse-than-before state; see item 1b before testing this)
+- [ ] **A news site with programmatic display ads** — confirm ad creatives are untouched, not painted (item 1, currently a confirmed live bug — expect this to fail until item 1's fix lands)
 - [ ] One cookie/sign-in sheet (scrim stays transparent, inner card opaque)
 - [ ] Maps (must not get a solid theme curtain)
 - [ ] Content blocker categories reload correctly after toggling
-- [ ] Fresh install → onboarding → enable extension flow, exactly as a reviewer would follow it — **verify the extension now shows as "Aura"** once item 2 is fixed
+- [ ] Fresh install → onboarding → enable extension flow, exactly as a reviewer would follow it — extension should show as "Aura" (confirmed fixed, verify on-device)
 - [ ] No crash on launch, background, or theme switch
 
 If a site fails, add a `SITE_FIXES` entry with a stable selector rather than loosening a general heuristic — the engine's existing convention (see `content.js` `SITE_FIXES` and README's "Layer 1" section).
 
 ## Optional cleanup (binary hygiene, not a rejection risk)
 
-None of these block submission — Apple won't reject for unused code — but they're worth a pass since you're already in here:
+None of these block submission — Apple won't reject for unused code — but they're worth a pass since you're already in here. All independently re-confirmed present in this scan:
 
 - **Unused RN components**: `ColorPickerDropdown.tsx`, `ColorPickerModal.tsx`, `SimpleColorPickerModal.tsx`, `ThemeModePicker.tsx`, `GearIcon.tsx`, `SmileyIcon.tsx` are never imported anywhere.
 - **Unused npm dependencies**: `react-native-color-picker`, `reanimated-color-picker`, `react-native-wheel-color-picker` — the app uses a hand-rolled `ModernColorPickerModal` instead. Safe to remove from `package.json`.
-- **Dead/uncompiled Swift scripts**: `ios/TintApp/GenerateAppIcon.swift` and `AppIconGenerator.swift` aren't in TintApp's Sources build phase (confirmed not referenced in `project.pbxproj`) and import `AppKit`, which wouldn't compile for iOS anyway. Icons are already fully generated and correct (all 9 required sizes present, correct dimensions, RGB no-alpha) — these scripts served their purpose and can be deleted.
+- **Dead/uncompiled Swift scripts**: `ios/TintApp/GenerateAppIcon.swift` and `AppIconGenerator.swift` aren't in `TintApp`'s Sources build phase and import `AppKit`, which wouldn't compile for iOS anyway. Icons are already fully generated and correct (all 9 required sizes present, correct dimensions, RGB no-alpha) — these scripts served their purpose and can be deleted.
 - **Empty `ios/KeyboardExtension/` directory** — not a real Xcode target, zero files, zero references. Delete or leave; either way it ships nothing.
 - **Duplicate hardcoded support email**: `WebsiteSettingsScreen.tsx` hardcodes `alexmartens1111@gmail.com` in a `mailto:` link instead of importing `SUPPORT_EMAIL` from `AppConfig.ts` (same value today, but two places to update if it ever changes). Also worth a conscious decision on whether a personal Gmail address should be the user-facing support contact at all, versus a dedicated address.
 - **Vestigial storage fields**: `recentlyUsedThemes` is written on every theme selection but never read back by any screen; `appThemeColor`/`appThemeMode` are persisted but their setters are no-ops (`AppThemeContext.tsx` hardcodes in-app appearance for this release). Either wire them up or stop persisting them.
 - **`SunsetSunriseService.getCurrentLocation()` is a stub** that always returns `null` (real geolocation was never implemented; the dead Focus Mode screen falls back to manual lat/lon entry). Only matters if Focus Mode / location-based day-night ships.
-- **No RN screen/component/integration tests exist** — `App.test.tsx` is a render-only smoke test. Not a submission requirement, but the `FocusModePresetSelection` routing bug (item 5) is exactly the class of bug a basic navigation test would have caught for free.
+- **No RN screen/component/integration tests exist** — `App.test.tsx` is a render-only smoke test. Not a submission requirement.
 
 ## App Store Connect — paste-ready content
 
-Preserved from the docs that were consolidated into this file.
+Re-verified against current `Info.plist`/`project.pbxproj`/privacy-manifest/privacy-policy state this scan — no changes needed to the content itself.
 
 ### Listing
 
@@ -119,7 +132,7 @@ Preserved from the docs that were consolidated into this file.
 
 ### App Privacy nutrition labels
 
-Every category — Contact Info, Health & Fitness, Financial, Location, Sensitive Info, Contacts, User Content, Browsing History, Identifiers, Purchases, Usage Data, Diagnostics — is **No**, confirmed by this scan (no analytics/tracking SDK of any kind found in dependencies or source). **Data linked to user: None. Data used to track: No.**
+Every category — Contact Info, Health & Fitness, Financial, Location, Sensitive Info, Contacts, User Content, Browsing History, Identifiers, Purchases, Usage Data, Diagnostics — is **No**, re-confirmed this scan (no analytics/tracking SDK of any kind found in dependencies or source; privacy manifests present for every relevant target). **Data linked to user: None. Data used to track: No.**
 
 ### App Review notes (paste into App Review Information → Notes)
 
@@ -139,15 +152,17 @@ Every category — Contact Info, Health & Fitness, Financial, Location, Sensitiv
 >
 > **Test account**: none — no login.
 
-⚠️ Don't paste the "enable Aura" instruction until item 2 above is fixed — right now the toggle in Settings shows "TintExtension Extension," not "Aura," and a reviewer following these exact steps will be confused.
+The extension now correctly shows as "Aura" in Settings → Safari → Extensions (confirmed fixed in `_locales/en/messages.json`), so the "enable Aura" instruction above matches what a reviewer will actually see.
 
 ### Signing & capabilities checklist
 
-- Identifiers (developer.apple.com): `com.alexmartens.aura` (App), `com.alexmartens.aura.SafariExtension` (Extension), `com.alexmartens.aura.ContentBlockerExtension` (Extension), `group.com.alexmartens.tint` (App Group) — enable the App Group on all three IDs. Confirmed all five entitlements files on disk already declare this group identically, so once the identifiers exist server-side this is just a signing/provisioning step, not a code change.
-- Xcode → `TintApp` scheme → Signing & Capabilities → your paid team, automatic signing.
+- Identifiers (developer.apple.com): `com.alexmartens.aura` (App), `com.alexmartens.aura.SafariExtension` (Extension), `com.alexmartens.aura.ContentBlockerExtension` (Extension), `group.com.alexmartens.tint` (App Group) — enable the App Group on all three IDs. All entitlements files on disk declare this group identically, so once the identifiers exist server-side this is just a signing/provisioning step, not a code change.
+- Xcode → `TintApp` scheme → Signing & Capabilities → paid team `4JV5Y33KJB` (confirmed set), automatic signing (confirmed).
 - Export compliance: `ITSAppUsesNonExemptEncryption = false` is already set in `Info.plist` — confirmed correct (standard HTTPS only).
+- Privacy manifests (`PrivacyInfo.xcprivacy`) confirmed present for `TintApp`, `TintExtension Extension`, `ContentBlockerExtension`, and `FocusFilterExtension`.
+- No usage-description keys (`NS*UsageDescription`) exist anywhere in the project — confirmed consistent with current functionality (no live Camera/PhotoLibrary/Geolocation API calls; `SunsetSunriseService`'s geolocation is a stub, see cleanup list).
 - Archive the **TintApp** scheme (see item 3 above for the legacy-target caveat).
 
 ### Screenshots
 
-Still need to be captured on a physical iPhone (6.7" and/or 6.1"): Themes tab with a theme selected, Browse Themes list, custom theme editor, a themed page in Safari (after enabling the extension), Protection/content-blocker screen, Settings. Match exactly what the shipping 3-tab UI shows — no Focus/Rules tab, no purchase screen (there isn't one in this codebase).
+Still need to be captured on a physical iPhone (6.7" and/or 6.1"): Themes tab with a theme selected, Browse Themes list, custom theme editor, a themed page in Safari (after enabling the extension), Protection/content-blocker screen, Settings. Match exactly what the shipping 3-tab UI shows — no Focus/Rules tab, no purchase screen (there isn't one in this codebase — confirmed no IAP/StoreKit code anywhere).

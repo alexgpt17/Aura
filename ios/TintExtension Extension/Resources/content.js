@@ -20,7 +20,7 @@
     // Elements we forced opaque because they are position:fixed/sticky.
     // Tracked so removeTheme() can cleanly revert them.
     const stickyModified = new Set();
-    // Near-white / light-gray opaque surfaces cleared by rethemeBrightSurfaces().
+    // Near-white / light-gray opaque surfaces cleared by visitBrightElement().
     const brightModified = new Set();
     const contrastModified = new Set();
     // Visible dialogs / modal cards we forced opaque with --aura-overlay.
@@ -703,12 +703,6 @@
                 ? Split.liveSplitLayerCss(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START)
                 : '';
 
-        const surface = isSplit
-            ? 'rgba(128, 128, 128, 0.22)'
-            : 'rgba(255, 255, 255, 0.08)';
-        const elevated = isSplit
-            ? 'rgba(128, 128, 128, 0.32)'
-            : 'rgba(255, 255, 255, 0.14)';
         const border = isSplit
             ? 'rgba(128, 128, 128, 0.35)'
             : 'rgba(255, 255, 255, 0.15)';
@@ -749,11 +743,20 @@
                 --aura-bg: ${bgColor};
                 --aura-text: ${resolvedText};
                 --aura-link: ${resolvedLink};
-                --aura-surface: ${surface};
-                --aura-elevated: ${elevated};
+                /* Collapsed to flat --aura-bg (no elevation/depth tint): any
+                   white/black blend produces a visibly different shade for
+                   a colored theme, which reads as inconsistent rather than
+                   as intentional depth. Keeping these as distinct tokens
+                   (rather than deleting them and rewriting every call site)
+                   means every dialog/chrome-bar/composer-pill/authored-
+                   surface pass that already reads --aura-surface/-elevated/
+                   -overlay now renders perfectly flat, with zero risk of
+                   missing a usage site. */
+                --aura-surface: var(--aura-bg);
+                --aura-elevated: var(--aura-bg);
                 --aura-muted: color-mix(in srgb, var(--aura-text) 65%, transparent);
                 --aura-border: ${border};
-                --aura-overlay: color-mix(in srgb, var(--aura-bg) 82%, #000000);
+                --aura-overlay: var(--aura-bg);
                 /* Semantic / design-system tokens (Wikipedia Codex, etc.).
                    !important on all of these: they deliberately collide with
                    real sites' own variable names to hijack their theming —
@@ -1288,16 +1291,6 @@
 
         el.style.setProperty('background-color', 'transparent', 'important');
         brightModified.add(el);
-    }
-
-    function rethemeBrightSurfaces(root) {
-        if (!root || !currentTheme || !H) return;
-        const { vh, vw } = passViewport();
-        const elements = collectElements(root);
-        const limit = Math.min(elements.length, WALK_SLICE);
-        for (let i = 0; i < limit; i++) {
-            visitBrightElement(elements[i], vh, vw);
-        }
     }
 
     // 3c. OVERLAY / POPUP SAFETY NET
@@ -2912,16 +2905,6 @@
         contrastModified.add(el);
     }
 
-    function rethemePoorContrast(root) {
-        if (!root || !currentTheme || !H || !H.hasPoorContrast) return;
-        if (isActiveSplitTheme(currentTheme)) return;
-        const elements = collectElements(root);
-        const limit = Math.min(elements.length, WALK_SLICE);
-        for (let i = 0; i < limit; i++) {
-            visitContrastElement(elements[i]);
-        }
-    }
-
     // 3e. SPA SHELL / GRADIENT SAFETY NET
     // Sites like Discord paint #app with a gradient or ID+!important fill after
     // first paint. Inline !important beats those rules; never clear photos.
@@ -2964,20 +2947,9 @@
         shellModified.add(el);
     }
 
-    function rethemeKnownShells(root) {
-        if (!root || !currentTheme || !H) return;
-        const { vh, vw } = passViewport();
-        const scope = root.nodeType === 1 ? root : document.documentElement;
-        try {
-            const listed = scope.querySelectorAll('#app, #app-mount, #root, #__next, #__nuxt');
-            listed.forEach(el => visitShellElement(el, vh, vw));
-        } catch (e) {}
-    }
-
     function rethemeOpaqueShells(root, precollected) {
         if (!root || !currentTheme || !H || !H.shouldClearShellBackground) return;
         const { vh, vw } = passViewport();
-        rethemeKnownShells(root);
         const elements = precollected || collectElements(root);
         const limit = Math.min(elements.length, WALK_SLICE);
         for (let i = 0; i < limit; i++) {
@@ -3476,10 +3448,11 @@
         // (getFullStyleSheet's layoutTags list) can never match by name.
         // rethemeOpaqueShells extends the same "clear large opaque shells"
         // treatment to any large custom element via shouldClearShellBackground
-        // / isCustomLayoutElement, not just the #app/#root SPA-shell ids that
-        // rethemeKnownShells alone covers — without it, a site's own opaque
-        // (often white) fill on one of these wrappers sits on top of the
-        // correctly-themed html/body and reads as "the whole page is white".
+        // / isCustomLayoutElement (SPA roots like #app/#root/#__next included,
+        // since they're just elements in this same walk) — without it, a
+        // site's own opaque (often white) fill on one of these wrappers sits
+        // on top of the correctly-themed html/body and reads as "the whole
+        // page is white".
         safePass(() => rethemeOpaqueShells(root, elements));
         safePass(() => clearFullBleedPseudoBackgrounds(root, elements));
         safePass(() => clearLoaderBackgroundImages(root, elements));
