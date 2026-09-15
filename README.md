@@ -185,7 +185,7 @@ Three-tab MVP (`App.tsx`): **Themes** (`SafariScreen`) → **Protection** (`Cont
 
 ## Development setup
 
-- iOS 17.0+ (`TintApp`'s actual `IPHONEOS_DEPLOYMENT_TARGET`; other targets range 15.1–17.0 — see [SUBMISSION_READINESS.md](SUBMISSION_READINESS.md) if a lower shared minimum is intended), Xcode 13+, React Native 0.81.4, Node.js ≥ 20, Ruby (CocoaPods).
+- iOS 16.6+ (`TintApp`'s actual `IPHONEOS_DEPLOYMENT_TARGET`, matching the highest of its embedded extension targets; other targets range 15.1–17.0 — see [SUBMISSION_READINESS.md](SUBMISSION_READINESS.md)), Xcode 13+, React Native 0.81.4, Node.js ≥ 20, Ruby (CocoaPods).
 - `npm install && bundle install && cd ios && bundle exec pod install && cd ..`
 - Open `ios/TintApp.xcworkspace` (not the `.xcodeproj`) and build the `TintApp` scheme — this also compiles (but does not embed) the legacy `TintExtension` host target, since it's part of the same scheme's archive action.
 - `npm run ios` for the RN app in the simulator; the Safari extension only runs against a device/simulator with the extension enabled under Settings → Safari → Extensions (background scripts and the native handler don't run standalone).

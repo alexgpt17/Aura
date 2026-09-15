@@ -15,6 +15,7 @@ import { useAppTheme } from '../contexts/AppThemeContext';
 import { PRESET_THEMES } from './BrowseThemesScreen';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { ThemeColorDots } from '../components/ThemeSwatch';
+import { SUPPORT_EMAIL } from '../constants/AppConfig';
 
 interface WebsiteSettingsScreenProps {
   navigation: any;
@@ -193,7 +194,7 @@ const WebsiteSettingsScreen: React.FC<WebsiteSettingsScreenProps> = ({ navigatio
         {
           text: 'Contact Support',
           onPress: () => {
-            Linking.openURL('mailto:alexmartens1111@gmail.com?subject=Website Issue Report').catch(() => {
+            Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=Website Issue Report`).catch(() => {
               Alert.alert('Error', 'Could not open email client.');
             });
           },

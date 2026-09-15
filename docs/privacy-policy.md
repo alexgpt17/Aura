@@ -37,7 +37,7 @@ Aura does not knowingly collect data from children. The App does not create acco
 
 ## Contact
 
-Questions about this policy: [alexmartens1111@gmail.com](mailto:alexmartens1111@gmail.com)
+Questions about this policy: [alxndr.martens@gmail.com](mailto:alxndr.martens@gmail.com)
 
 ## Changes
 

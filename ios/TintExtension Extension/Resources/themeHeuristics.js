@@ -848,6 +848,15 @@
         if (!styleFn) return false;
         var style;
         try { style = styleFn(el); } catch (e) { return false; }
+        // Cheap gate before the expensive textContent/querySelector work in
+        // modalCardInfoFromElement below: isLikelyModalCardInfo can only
+        // ever return true when position === 'fixed' (see its own doc
+        // comment), so bailing here first changes no outcome — it only
+        // skips that work for the overwhelming majority of elements, which
+        // aren't position:fixed. Safe to do here (not inside
+        // modalCardInfoFromElement itself) since that function's other
+        // caller, isInnerModalCardInfo, allows any position.
+        if (style.position !== 'fixed') return false;
         var rect;
         try { rect = el.getBoundingClientRect(); } catch (e2) { return false; }
         return isLikelyModalCardInfo(modalCardInfoFromElement(el, style, rect, viewport));
@@ -1720,6 +1729,13 @@
         if (!styleFn) return false;
         var style;
         try { style = styleFn(el); } catch (e) { return false; }
+        // Cheap gates before the expensive rect/textContent work below —
+        // mirrors isLikelyFloatingIconControlInfo's own first two checks,
+        // so bailing here first changes no outcome, only skips
+        // getBoundingClientRect/textContent for elements that were always
+        // going to fail anyway (nearly everything not fixed/absolute).
+        if (style.visibility === 'hidden' || style.opacity === '0') return false;
+        if (style.position !== 'fixed' && style.position !== 'absolute') return false;
         var rect;
         try { rect = el.getBoundingClientRect(); } catch (e2) { return false; }
         var text = '';

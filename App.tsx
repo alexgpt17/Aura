@@ -16,6 +16,8 @@ import ThemeSelectionScreen from './src/screens/ThemeSelectionScreen';
 import ContentBlockerScreen from './src/screens/ContentBlockerScreen';
 import OnboardingScreen from './src/screens/OnboardingScreen';
 import PrivacyPolicyScreen from './src/screens/PrivacyPolicyScreen';
+import FocusModeScreen from './src/screens/FocusModeScreen';
+import FocusModeThemeSelectionScreen from './src/screens/FocusModeThemeSelectionScreen';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const Stack = createNativeStackNavigator();
@@ -97,7 +99,6 @@ const App = () => {
   const checkOnboardingStatus = async () => {
     try {
       const completed = await hasCompletedOnboarding();
-      console.log('Onboarding check result:', completed);
       setShowOnboarding(!completed);
     } catch (e) {
       console.error('Error checking onboarding status:', e);
@@ -151,6 +152,8 @@ const App = () => {
             <Stack.Screen name="WebsiteSettings" component={WebsiteSettingsScreen} />
             <Stack.Screen name="ThemeSelection" component={ThemeSelectionScreen} />
             <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} />
+            <Stack.Screen name="FocusMode" component={FocusModeScreen} />
+            <Stack.Screen name="FocusModeThemeSelection" component={FocusModeThemeSelectionScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>

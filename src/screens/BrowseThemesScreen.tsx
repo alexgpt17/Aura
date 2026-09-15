@@ -519,7 +519,6 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
         await saveThemes(newThemeData);
         setSelectedThemeId(theme.id);
         setPreviewTheme(theme);
-        trackRecentlyUsed(theme, 'safari');
         setSnackbarMessage(`Applied ${theme.name} — Undo`);
         setSnackbarVisible(true);
       }
@@ -571,26 +570,6 @@ const BrowseThemesScreen: React.FC<BrowseThemesScreenProps> = ({ navigation, rou
       setFavoriteThemes(newFavorites);
     } catch (error) {
       console.error('Error toggling favorite:', error);
-    }
-  };
-
-  const trackRecentlyUsed = async (theme: Theme, type: 'safari') => {
-    try {
-      const currentData = await getThemes();
-      const recent = currentData?.recentlyUsedThemes || [];
-      const filtered = recent.filter((item: any) => item.themeId !== theme.id);
-      const newRecent = [
-        { themeId: theme.id, timestamp: Date.now(), type },
-        ...filtered,
-      ].slice(0, 20);
-      
-      const newThemeData = {
-        ...currentData,
-        recentlyUsedThemes: newRecent,
-      };
-      await saveThemes(newThemeData);
-    } catch (error) {
-      console.error('Error tracking recently used:', error);
     }
   };
 

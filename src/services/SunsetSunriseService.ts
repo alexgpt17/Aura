@@ -73,13 +73,3 @@ export const formatTime = (date: Date): string => {
   const minutes = date.getMinutes().toString().padStart(2, '0');
   return `${hours}:${minutes}`;
 };
-
-/**
- * Get current location (simplified - in production, use Geolocation API)
- * For now, returns null - user will need to set location manually or we'll use device location
- */
-export const getCurrentLocation = async (): Promise<Location | null> => {
-  // TODO: Implement actual geolocation using React Native Geolocation
-  // For now, return null and let user set manually
-  return null;
-};

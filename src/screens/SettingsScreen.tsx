@@ -125,6 +125,26 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation }) => {
         </View>
 
         <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Focus Mode</Text>
+          <TouchableOpacity
+            style={[styles.settingRow, { backgroundColor: sectionBgColor, borderColor }]}
+            onPress={() => navigation.navigate('FocusMode')}
+            accessibilityRole="button"
+            accessibilityLabel="Focus Mode settings"
+          >
+            <View style={styles.settingContent}>
+              <Text style={[styles.settingLabel, { color: appThemeColor }]}>
+                Automatic Themes
+              </Text>
+              <Text style={[styles.settingDescription, { color: textColor }]}>
+                Map themes to Focus modes, or switch by time of day.
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={appThemeColor} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: textColor }]}>About</Text>
           <View style={[styles.aboutContent, { backgroundColor: sectionBgColor, borderBottomColor: borderColor }]}>
             <Text style={[styles.aboutLabel, { color: textColor }]}>Version</Text>

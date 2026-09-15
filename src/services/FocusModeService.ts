@@ -44,21 +44,18 @@ class FocusModeService {
     try {
       // Focus Filters are only available on iOS
       if (Platform.OS !== 'ios') {
-        console.log('FocusModeService: Not iOS, returning false');
         return false;
       }
 
       // Check iOS version directly as a fallback
       const iosVersion = parseInt(Platform.Version as string, 10);
       if (iosVersion < 16) {
-        console.log('FocusModeService: iOS version < 16, returning false');
         return false;
       }
 
       if (!FocusModeManager) {
         // Native module not loaded — but if we're on iOS 16+, Focus Filters should work
         // The FocusFilterExtension runs independently of this module
-        console.log('FocusModeService: NativeModule is null, but iOS 16+ detected — returning true');
         return true;
       }
 

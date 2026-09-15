@@ -92,7 +92,7 @@ None of these block submission — Apple won't reject for unused code — but th
 - **Unused npm dependencies**: `react-native-color-picker`, `reanimated-color-picker`, `react-native-wheel-color-picker` — the app uses a hand-rolled `ModernColorPickerModal` instead. Safe to remove from `package.json`.
 - **Dead/uncompiled Swift scripts**: `ios/TintApp/GenerateAppIcon.swift` and `AppIconGenerator.swift` aren't in `TintApp`'s Sources build phase and import `AppKit`, which wouldn't compile for iOS anyway. Icons are already fully generated and correct (all 9 required sizes present, correct dimensions, RGB no-alpha) — these scripts served their purpose and can be deleted.
 - **Empty `ios/KeyboardExtension/` directory** — not a real Xcode target, zero files, zero references. Delete or leave; either way it ships nothing.
-- **Duplicate hardcoded support email**: `WebsiteSettingsScreen.tsx` hardcodes `alexmartens1111@gmail.com` in a `mailto:` link instead of importing `SUPPORT_EMAIL` from `AppConfig.ts` (same value today, but two places to update if it ever changes). Also worth a conscious decision on whether a personal Gmail address should be the user-facing support contact at all, versus a dedicated address.
+- **Duplicate hardcoded support email — fixed**: `WebsiteSettingsScreen.tsx` now imports `SUPPORT_EMAIL` from `AppConfig.ts` instead of hardcoding it. The support address itself was also changed to `alxndr.martens@gmail.com` (was `alexmartens1111@gmail.com`) across code, the privacy policy, and this document's App Store listing draft.
 - **Vestigial storage fields**: `recentlyUsedThemes` is written on every theme selection but never read back by any screen; `appThemeColor`/`appThemeMode` are persisted but their setters are no-ops (`AppThemeContext.tsx` hardcodes in-app appearance for this release). Either wire them up or stop persisting them.
 - **`SunsetSunriseService.getCurrentLocation()` is a stub** that always returns `null` (real geolocation was never implemented; the dead Focus Mode screen falls back to manual lat/lon entry). Only matters if Focus Mode / location-based day-night ships.
 - **No RN screen/component/integration tests exist** — `App.test.tsx` is a render-only smoke test. Not a submission requirement.
@@ -112,7 +112,7 @@ Re-verified against current `Info.plist`/`project.pbxproj`/privacy-manifest/priv
 | Bundle ID | `com.alexmartens.aura` |
 | Copyright | 2026 Alex Martens |
 | Privacy Policy URL | https://alexgpt17.github.io/Aura/privacy/ |
-| Support URL | `mailto:alexmartens1111@gmail.com`, or a hosted support page |
+| Support URL | `mailto:alxndr.martens@gmail.com`, or a hosted support page |
 
 **Promotional text**: Recolor Safari with beautiful themes, custom colours, and per-site overrides — all on your device.
 

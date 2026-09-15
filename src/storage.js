@@ -52,10 +52,7 @@ export const getDefaultThemeData = () => {
         annoyances: true,
       }
     },
-    appThemeColor: "#228B22", // Default forest green
-    appThemeMode: "dark", // Default dark mode
     favoriteThemes: [], // Array of theme IDs (preset or custom)
-    recentlyUsedThemes: [], // Array of { themeId, timestamp, type: 'preset' | 'custom' | 'safari' }
     hasCompletedOnboarding: false, // Track if user has completed onboarding
     hasCompletedSafariSetup: false, // True after Safari extension has run once
   };
@@ -82,7 +79,7 @@ export const validateThemeData = (themeData) => {
   }
   
   // Check for required structure: must have at least one theme type
-  if (propertyCount > 0 && !themeData.globalTheme && !themeData.siteThemes && !themeData.customThemes && !themeData.appThemeColor) {
+  if (propertyCount > 0 && !themeData.globalTheme && !themeData.siteThemes && !themeData.customThemes) {
     console.error('Theme data missing required structure:', Object.keys(themeData));
     return false;
   }

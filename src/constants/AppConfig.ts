@@ -4,7 +4,7 @@
  */
 export const PRIVACY_POLICY_URL = 'https://alexgpt17.github.io/Aura/privacy/';
 
-export const SUPPORT_EMAIL = 'alexmartens1111@gmail.com';
+export const SUPPORT_EMAIL = 'alxndr.martens@gmail.com';
 
 /** Safari theming extension bundle id (must match Xcode PRODUCT_BUNDLE_IDENTIFIER). */
 export const SAFARI_EXTENSION_BUNDLE_ID = 'com.alexmartens.aura.SafariExtension';

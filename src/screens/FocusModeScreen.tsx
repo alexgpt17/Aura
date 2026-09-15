@@ -617,7 +617,7 @@ const FocusModeScreen: React.FC<FocusModeScreenProps> = ({ navigation }) => {
                                     { text: 'Cancel', style: 'cancel' },
                                     {
                                       text: 'OK',
-                                      onPress: async (time) => {
+                                      onPress: async (time?: string) => {
                                         if (time && /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(time)) {
                                           setTimeBasedDayStart(time);
                                           await saveTimeBasedRule({ dayStartTime: time });
@@ -651,7 +651,7 @@ const FocusModeScreen: React.FC<FocusModeScreenProps> = ({ navigation }) => {
                                     { text: 'Cancel', style: 'cancel' },
                                     {
                                       text: 'OK',
-                                      onPress: async (time) => {
+                                      onPress: async (time?: string) => {
                                         if (time && /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(time)) {
                                           setTimeBasedNightStart(time);
                                           await saveTimeBasedRule({ nightStartTime: time });
@@ -695,7 +695,7 @@ const FocusModeScreen: React.FC<FocusModeScreenProps> = ({ navigation }) => {
                                     { text: 'Cancel', style: 'cancel' },
                                     {
                                       text: 'OK',
-                                      onPress: async (latStr) => {
+                                      onPress: async (latStr?: string) => {
                                         const lat = parseFloat(latStr || '0');
                                         if (!isNaN(lat) && lat >= -90 && lat <= 90) {
                                           setTimeBasedLocationLat(lat);
@@ -730,7 +730,7 @@ const FocusModeScreen: React.FC<FocusModeScreenProps> = ({ navigation }) => {
                                     { text: 'Cancel', style: 'cancel' },
                                     {
                                       text: 'OK',
-                                      onPress: async (lonStr) => {
+                                      onPress: async (lonStr?: string) => {
                                         const lon = parseFloat(lonStr || '0');
                                         if (!isNaN(lon) && lon >= -180 && lon <= 180) {
                                           setTimeBasedLocationLon(lon);
@@ -1033,16 +1033,6 @@ const styles = StyleSheet.create({
   },
   infoText: {
     fontSize: 14,
-    lineHeight: 20,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  sectionDescription: {
-    fontSize: 14,
-    marginBottom: 16,
     lineHeight: 20,
   },
   siteRow: {

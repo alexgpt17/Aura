@@ -3,6 +3,10 @@
  */
 
 (function() {
+    // Verbose tracing only — flip to true when diagnosing a sync issue.
+    // Genuine console.error/console.warn calls on unexpected-failure paths
+    // stay on regardless (mirrors background.js's AURA_DEBUG_LOGGING).
+    const AURA_DEBUG_LOGGING = false;
     let currentTheme = null;
     const processedShadowRoots = new WeakSet();
     // <iframe> elements whose same-origin contentDocument we've injected a
@@ -185,7 +189,17 @@
     const AUTHORED_OPAQUE_MAX_SELECTORS = 300;
     let walkGeneration = 0;
     let walkSliceRaf = 0;
-    const WALK_SLICE = 4000;
+    const WALK_SLICE = 4000; // cap for the single-pass loops that don't use forEachSliced (unrelated to yielding — see FRAME_SLICE)
+    // Per-frame chunk size for forEachSliced, deliberately much smaller than
+    // WALK_SLICE: WALK_SLICE (4000) exceeds most real pages' element count,
+    // so using it as the chunk size meant forEachSliced completed in one
+    // synchronous call for the large majority of pages — the "chunking"
+    // provided no actual yielding to the browser at realistic page sizes.
+    // FRAME_SLICE is small enough to genuinely engage the
+    // requestAnimationFrame continuation below on ordinary pages, not just
+    // huge ones. Starting estimate — tune based on device feel, not
+    // measured yet.
+    const FRAME_SLICE = 300;
 
     function isActiveSplitTheme(theme) {
         if (!theme || !Split || !Split.isSplitTheme(theme)) return false;
@@ -274,7 +288,7 @@
         let i = 0;
         function step() {
             if (gen !== walkGeneration) return;
-            const end = Math.min(i + WALK_SLICE, elements.length);
+            const end = Math.min(i + FRAME_SLICE, elements.length);
             for (; i < end; i++) {
                 const el = elements[i];
                 if (el && el.nodeType === 1) safeVisit(visit, el);
@@ -380,14 +394,23 @@
                     color: var(--aura-text) !important;
                 }
 
-                /* Ask-anything field text only — outer chip cleared in JS
-                   (rethemeAskAnythingComposer). Do not paint --aura-bg. */
+                /* Ask-anything field only — outer chip/icon buttons still
+                   cleared in JS (rethemeAskAnythingComposer), since they're
+                   found by a runtime geometry check CSS can't express. Do
+                   not paint --aura-bg. background-color here is mostly
+                   redundant with the universal input/div-transparency rules
+                   elsewhere in this stylesheet, but stated explicitly so
+                   this rule fully states its own contract. The broad "Ask"
+                   match uses ~= (whitespace-token) rather than *= to better
+                   approximate isAskAnythingField's \bask\b word-boundary
+                   check — avoids matching unrelated words like "Mask". */
                 :is(textarea, input, [contenteditable="true"], [role="textbox"]):is(
-                    [placeholder*="Ask anything" i],
-                    [aria-label*="Ask anything" i],
-                    [placeholder*="Ask" i],
-                    [aria-label*="Ask" i]
-                ):not(.gLFyf):not([aria-label*="Search" i]) {
+                    [placeholder*="ask anything" i],
+                    [aria-label*="ask anything" i],
+                    [placeholder~="ask" i],
+                    [aria-label~="ask" i]
+                ):not(.gLFyf):not([aria-label*="search" i]):not([placeholder*="search" i]) {
+                    background-color: transparent !important;
                     background-image: none !important;
                     color: var(--aura-text) !important;
                 }
@@ -1210,7 +1233,7 @@
         }
     }
 
-    function visitBrightElement(el, vh, vw) {
+    function visitBrightElement(el, vh, vw, modalCardCache) {
         if (!el || el.nodeType !== 1 || !H || overlayModified.has(el)) return;
         if (el === document.documentElement || el === document.body) return;
         if (el.id === 'aura-core-engine') return;
@@ -1224,7 +1247,7 @@
         const mask = style.webkitMaskImage || style.maskImage;
         const overlayRoot = H.isOverlayRoot(el);
         const floatingBannerRoot = H.isFloatingBannerRoot(el, getComputedStyle, { vh, vw });
-        const modalCard = !!(H.isLikelyModalCard && H.isLikelyModalCard(el, getComputedStyle, { vh, vw }));
+        const modalCard = isLikelyModalCardCached(el, modalCardCache, vh, vw);
         const isControl = !!(H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[el.tagName]);
         const hasSearchField = !!(H.elementHasSearchField && H.elementHasSearchField(el));
         const collapseFade = isAiOverviewCollapseFade(el);
@@ -1362,13 +1385,33 @@
         }
     }
 
+    // isLikelyModalCard is independently recomputed up to 4x per element per
+    // runSafetyPasses invocation (here, plus visitOverlayModalWalk,
+    // visitBrightElement, visitStickyElement) — each call redoes
+    // modalCardInfoFromElement's el.textContent subtree serialization plus
+    // 2 querySelector subtree scans, the single most expensive per-element
+    // check in the engine. Nothing mutates `el` between these calls within
+    // one invocation, so the result is safe to memoize per element for the
+    // lifetime of one cache (created fresh each runSafetyPasses call, same
+    // pattern as effectiveBgCache). `cache` is optional — falls back to
+    // uncached behavior for call sites that don't have one (handleShadowDOM's
+    // shadow-root sweep, reopaqueStickyFixed's scroll-triggered walk).
+    function isLikelyModalCardCached(el, cache, vh, vw) {
+        if (!H || !H.isLikelyModalCard) return false;
+        if (!cache) return !!H.isLikelyModalCard(el, getComputedStyle, { vh, vw });
+        if (cache.has(el)) return cache.get(el);
+        const result = !!H.isLikelyModalCard(el, getComputedStyle, { vh, vw });
+        cache.set(el, result);
+        return result;
+    }
+
     /**
      * CMP wrappers often start card-sized (opaque paint), then expand to a
      * covering sheet. isLikelyModalCard then becomes false, so the walk stops
      * touching them — without this pass the earlier --aura-overlay fill stays
      * forever (fox5sandiego.com curtain).
      */
-    function revertGrownModalCards(vh, vw) {
+    function revertGrownModalCards(vh, vw, modalCardCache) {
         if (!H) return;
         Array.from(modalCardOpaqueModified).forEach(el => {
             if (!el || !el.isConnected) {
@@ -1383,8 +1426,7 @@
             const covering = isOverlayCoveringSheet(rect, vh, vw);
             let stillCard = false;
             try {
-                stillCard = !!(H.isLikelyModalCard
-                    && H.isLikelyModalCard(el, getComputedStyle, { vh, vw }));
+                stillCard = isLikelyModalCardCached(el, modalCardCache, vh, vw);
             } catch (e2) {
                 stillCard = false;
             }
@@ -1459,7 +1501,7 @@
         candidates.forEach(consider);
     }
 
-    function visitOverlayModalWalk(el, vh, vw, seen) {
+    function visitOverlayModalWalk(el, vh, vw, seen, modalCardCache) {
         if (!el || el.nodeType !== 1 || !H || seen.has(el)) return;
         if (isAdThemingSkipped(el)) return;
         if (H.isAmpOverlayChrome && H.isAmpOverlayChrome(el)) {
@@ -1507,7 +1549,7 @@
             // 'ambiguous' or null (not a candidate): leave history untouched
             // and fall through to the checks below, same as before.
         }
-        if (H.isLikelyModalCard && H.isLikelyModalCard(el, getComputedStyle, { vh, vw })) {
+        if (isLikelyModalCardCached(el, modalCardCache, vh, vw)) {
             seen.add(el);
             if (H.isSearchChrome && H.isSearchChrome(el)) return;
             let style;
@@ -1786,7 +1828,7 @@
         return false;
     }
 
-    function visitStickyElement(el, vh, vw) {
+    function visitStickyElement(el, vh, vw, modalCardCache) {
         if (!el || el.nodeType !== 1 || !H) return;
         if (isAdThemingSkipped(el) || isChromePaintHostSkipped(el)) {
             if (stickyModified.has(el)) revertStickyPaint(el);
@@ -1798,7 +1840,7 @@
         }
         // Modal cards / promos are the overlay pass's job — never paint them
         // as chrome with --aura-bg (OneSignal, cookie cards, etc.).
-        if (H.isLikelyModalCard && H.isLikelyModalCard(el, getComputedStyle, { vh, vw })) {
+        if (isLikelyModalCardCached(el, modalCardCache, vh, vw)) {
             if (stickyModified.has(el)) revertStickyPaint(el);
             return;
         }
@@ -1824,6 +1866,17 @@
                 paintOverlayScrimAsTransparent(el, vh, vw);
                 return;
             }
+        }
+        // Cheap gate before the expensive child-unwrap/coverage-fraction and
+        // hasTablistRole computation below: shouldSkipStickyElement's own
+        // first check unconditionally skips anything that isn't
+        // position:fixed/sticky, so bailing here first changes no outcome —
+        // it only skips that work (confirmed via git history to have been
+        // running unconditionally on every element on every page's first
+        // paint) for the overwhelming majority of elements.
+        if (style.position !== 'fixed' && style.position !== 'sticky') {
+            if (stickyModified.has(el)) revertStickyPaint(el);
+            return;
         }
         // Layout geometry (unlike background-color, which the universal
         // transparency rule already forces !important before any JS pass
@@ -1973,12 +2026,109 @@
         }
     }
 
+    // Google-only, narrowly-scoped low-latency repaint for two elements
+    // found by runtime geometry/text-content scanning (the Ask-anything
+    // chip ancestor, the AI-answer-card container) rather than a stable CSS
+    // selector — so unlike everything painted via getFullStyleSheet/
+    // SITE_FIXES, a static CSS rule can't reach them, and they only get
+    // repainted when the shared, document-wide mutationObserver's 150ms
+    // debounce (dispatchSafetyPasses) fires. If Google's own re-render
+    // resets these elements at or faster than that cadence, the override
+    // loses the race every time, producing a continuous flicker. This
+    // attaches a SECOND MutationObserver directly to one already-identified
+    // element (not document-wide) so it reacts within one microtask of
+    // Google's own write instead. Do NOT generalize this to other elements
+    // or sites — a prior attempt to shorten/remove the shared debounce for
+    // the whole document was abandoned as too expensive to risk repeating;
+    // this stays cheap specifically by being confined to two call sites.
+    //
+    // Element -> its dedicated observer. A plain Map, not a WeakMap:
+    // revert*() must synchronously .disconnect() every live instance so a
+    // disabled theme stops repainting immediately, not whenever GC gets to
+    // it; the Map is also the "already has one attached" check.
+    const googleDedicatedRepaintObservers = new Map();
+
+    function attachDedicatedGoogleRepaintObserver(target, repaintFn) {
+        if (!target || target.nodeType !== 1) return;
+        if (googleDedicatedRepaintObservers.has(target)) return; // one per element, across passes
+        let writing = false; // mirrors ignoreMutations's shape, scoped to this instance
+        const observer = new MutationObserver(() => {
+            if (writing) return; // defensive; takeRecords() below should make this unreachable
+            if (!target.isConnected) {
+                observer.disconnect();
+                googleDedicatedRepaintObservers.delete(target);
+                return;
+            }
+            writing = true;
+            try { repaintFn(target); } catch (e) {}
+            // Drain the records repaintFn's own writes just queued,
+            // synchronously, before returning — this runs in the same task,
+            // so no microtask checkpoint can have fired this callback again
+            // yet. Without this, our own write would schedule another
+            // callback invocation on the next microtask checkpoint with no
+            // way to tell it apart from a real Google-driven change,
+            // looping forever.
+            observer.takeRecords();
+            writing = false;
+        });
+        try {
+            observer.observe(target, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['style', 'class'],
+            });
+        } catch (e) {
+            return;
+        }
+        googleDedicatedRepaintObservers.set(target, observer);
+    }
+
+    function disconnectGoogleDedicatedRepaintObserver(target) {
+        const observer = googleDedicatedRepaintObservers.get(target);
+        if (!observer) return; // no-op for elements that never had one (field/siblings/shapes)
+        try { observer.disconnect(); } catch (e) {}
+        googleDedicatedRepaintObservers.delete(target);
+    }
+
+    // Prunes observers whose target was removed from the DOM without ever
+    // firing a mutation ON the target itself again (a node's own removal is
+    // a childList record on its PARENT, which this mechanism does not watch
+    // — so a detached target's dedicated observer just goes quiet rather
+    // than self-disconnecting via the isConnected check inside its
+    // callback). Without this, googleDedicatedRepaintObservers keeps a
+    // strong reference to detached subtrees indefinitely on SPA-style pages
+    // where Google creates/destroys the chip or answer card repeatedly
+    // without a full page reload. Cheap (map is bounded to a handful of
+    // entries) — safe to call every pass from both call sites.
+    function pruneDisconnectedGoogleRepaintObservers() {
+        googleDedicatedRepaintObservers.forEach((observer, el) => {
+            if (!el || !el.isConnected) {
+                try { observer.disconnect(); } catch (e) {}
+                googleDedicatedRepaintObservers.delete(el);
+            }
+        });
+    }
+
     // Google-only: clear dark Ask-anything pill shells that CSS :has misses.
     // Walk ancestors of the Ask field and empty previous siblings with an
     // opaque fill (decorative chip layers). Never paint --aura-bg / surface.
     function clearAskAnythingFill(el) {
         if (!el || el.nodeType !== 1) return;
-        el.style.setProperty('background-color', 'transparent', 'important');
+        let position = '';
+        try { position = getComputedStyle(el).position; } catch (e) {}
+        if (position === 'fixed' || position === 'sticky') {
+            // A fixed/sticky composer bar renders in its own layer over
+            // independently-scrolling content — transparent here reveals
+            // whatever's genuinely rendered underneath (confirmed via
+            // device screenshot: sharp AI Overview text visible through the
+            // pill, not blurred — a floating-layer reveal, not a residual
+            // timing gap). Give it its own opaque surface instead, matching
+            // how paintChrome already treats fixed/sticky chrome elsewhere.
+            el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
+        } else {
+            el.style.setProperty('background-color', 'transparent', 'important');
+        }
         el.style.setProperty('background-image', 'none', 'important');
         askAnythingModified.add(el);
     }
@@ -2025,6 +2175,52 @@
     // gets a transparent background + themed icon color" is both safer (the
     // container is already reliably located via the Ask-anything field) and
     // more robust to markup Aura hasn't seen a live sample of.
+    // True if a button's SVG shapes carry >=2 distinct explicit fill colors
+    // — a multi-color logo/brand mark, not a single-color icon glyph.
+    // Mirrors isNearMonochromeColorStats's "never touch genuinely
+    // multi-color content" philosophy (rethemeLogoContrast), applied to
+    // explicit fill attributes instead of sampled pixels: confirmed cause
+    // of the AI Mode header Google logo rendering as a flat single-color
+    // blob — this loop force-painted every path's fill to one theme color
+    // with no color-count check, and it's reachable whenever a brand
+    // logo's clickable wrapper falls inside the composer's ancestor sweep.
+    function svgShapesLookMultiColor(shapes) {
+        const seen = new Set();
+        for (let i = 0; i < shapes.length; i++) {
+            let fill = '';
+            try { fill = shapes[i].getAttribute('fill') || ''; } catch (e) {}
+            fill = fill.trim().toLowerCase();
+            if (!fill || fill === 'none' || fill === 'currentcolor' || fill === 'transparent') continue;
+            seen.add(fill);
+            if (seen.size > 1) return true;
+        }
+        return false;
+    }
+
+    // True if `shape` and every ancestor up to (excluding) `boundary` is
+    // currently visible. A common icon-button pattern keeps both an
+    // enabled- and disabled-state icon in the DOM at once, toggling
+    // visibility via class/attribute rather than swapping nodes — if those
+    // two variants use different explicit fill colors,
+    // svgShapesLookMultiColor would (incorrectly) see 2 colors and treat
+    // the button as a multi-color logo the moment the second variant
+    // appears, even though only one is ever visible at a time. Filtering to
+    // visible shapes first keeps the multi-color check (and the paint
+    // below) scoped to what's actually on screen.
+    function isShapeVisible(shape, boundary) {
+        try {
+            let node = shape;
+            while (node && node !== boundary) {
+                const style = getComputedStyle(node);
+                if (style.display === 'none' || style.visibility === 'hidden') return false;
+                node = node.parentElement;
+            }
+            return true;
+        } catch (e) {
+            return true; // unknown — default to visible rather than silently excluding
+        }
+    }
+
     function clearAskAnythingIconButton(btn) {
         if (!btn || btn.nodeType !== 1) return;
         let text = '';
@@ -2039,13 +2235,17 @@
         // explicit fill color onto the path/shape itself instead, which
         // `color` never reaches (confirmed as the likely cause of the send
         // button staying invisible after the background/color fix alone).
-        // Force every descendant shape directly so it's correct either way.
+        // Force every descendant shape directly so it's correct either way
+        // — but never for a multi-color mark (a brand logo), only a
+        // genuine single-color icon glyph, and only among currently-visible
+        // shapes (see isShapeVisible).
         let shapes;
         try { shapes = btn.querySelectorAll('svg, path, circle, rect, line, polygon, polyline, use'); } catch (e) { shapes = null; }
-        if (shapes) {
-            for (let i = 0; i < shapes.length; i++) {
-                shapes[i].style.setProperty('fill', 'var(--aura-text)', 'important');
-                askAnythingModified.add(shapes[i]);
+        const visibleShapes = shapes ? Array.from(shapes).filter(s => isShapeVisible(s, btn)) : [];
+        if (visibleShapes.length && !svgShapesLookMultiColor(visibleShapes)) {
+            for (let i = 0; i < visibleShapes.length; i++) {
+                visibleShapes[i].style.setProperty('fill', 'var(--aura-text)', 'important');
+                askAnythingModified.add(visibleShapes[i]);
             }
         }
     }
@@ -2059,6 +2259,7 @@
 
     function rethemeAskAnythingComposer(root) {
         if (!root || !currentTheme || !isGoogleHost()) return;
+        pruneDisconnectedGoogleRepaintObservers();
         const scope = root.nodeType === 1 ? root : document.documentElement;
         let fields;
         try {
@@ -2079,10 +2280,27 @@
                 }
                 let rect;
                 try { rect = parent.getBoundingClientRect(); } catch (e2) { break; }
-                if (rect.height > 180) break;
-                if (rect.height >= 36 && rect.width >= 160) {
+                // The height/width band below is only a proxy for "this
+                // looks like the composer row" — it says nothing about
+                // whether THIS ancestor is the actual floating layer.
+                // Checking position independently catches a floating shell
+                // that's taller than 180px (padding/safe-area/extra rows)
+                // or that doesn't itself fall in the 36-180/160 band while
+                // an inner, position:static row does — both would otherwise
+                // leave the true floating layer never painted opaque,
+                // reproducing "composer sees through to page content"
+                // regardless of Google's exact markup shape.
+                let position = '';
+                try { position = getComputedStyle(parent).position; } catch (ePos) {}
+                const isFloating = position === 'fixed' || position === 'sticky';
+                if (!isFloating && rect.height > 180) break;
+                if (isFloating || (rect.height >= 36 && rect.width >= 160)) {
                     clearAskAnythingFill(parent);
                     clearAskAnythingIconButtons(parent);
+                    attachDedicatedGoogleRepaintObserver(parent, el => {
+                        clearAskAnythingFill(el);
+                        clearAskAnythingIconButtons(el);
+                    });
                 }
                 // Decorative empty previous siblings behind the field / pill.
                 let sib = node.previousElementSibling;
@@ -2097,6 +2315,7 @@
 
     function revertAskAnythingComposer() {
         askAnythingModified.forEach(el => {
+            disconnectGoogleDedicatedRepaintObserver(el); // no-op for elements that never had one
             try {
                 el.style.removeProperty('background-color');
                 el.style.removeProperty('background-image');
@@ -2174,8 +2393,26 @@
         return Array.from(roots);
     }
 
+    // Factored out of rethemeGoogleAiChatSurface so the dedicated
+    // low-latency observer below (attached per-container) can re-run
+    // exactly this same repaint without going through the disclaimer-text
+    // rescan/cache logic that wraps it in the normal pass.
+    function repaintGoogleAiAnswerContainer(container) {
+        let blocks;
+        try { blocks = container.querySelectorAll('div, p, li, span'); } catch (e) { return; }
+        for (let i = 0; i < blocks.length; i++) {
+            const b = blocks[i];
+            if (b.closest && b.closest('button, [role="button"]')) continue;
+            b.style.setProperty('background-color', 'transparent', 'important');
+            b.style.setProperty('background-image', 'none', 'important');
+            googleAiChatModified.add(b);
+        }
+        clearAskAnythingIconButtons(container);
+    }
+
     function rethemeGoogleAiChatSurface(root) {
         if (!root || !currentTheme || !isGoogleHost()) return;
+        pruneDisconnectedGoogleRepaintObservers();
         // Re-check prior clears first — same pattern as every other
         // modified-Set pass — so a card outside this frame's scoped walk
         // (see Problem 1's mutation scoping) still gets revisited.
@@ -2186,8 +2423,15 @@
         });
         googleAiAnswerRootsCache = googleAiAnswerRootsCache.filter(el => el && el.isConnected);
         const now = Date.now();
-        if (googleAiAnswerRootsCache.length === 0
-            || now - googleAiAnswerRootsCacheAt > GOOGLE_AI_ANSWER_ROOT_RESCAN_MS) {
+        const auraPerfCacheMiss = googleAiAnswerRootsCache.length === 0
+            || now - googleAiAnswerRootsCacheAt > GOOGLE_AI_ANSWER_ROOT_RESCAN_MS;
+        if (AURA_DEBUG_LOGGING) {
+            // Temporary instrumentation for the Google lag/flash investigation
+            // (SUBMISSION_READINESS.md items 6/7) — see the matching note in
+            // dispatchSafetyPasses.
+            console.log('Aura perf: AI answer root cache', auraPerfCacheMiss ? 'miss (rescanning)' : 'hit');
+        }
+        if (auraPerfCacheMiss) {
             // Search from the document root, not just `scope` — a scoped,
             // typing-triggered pass's root is very likely inside the
             // composer, nowhere near the answer card the disclaimer lives
@@ -2197,20 +2441,13 @@
             googleAiAnswerRootsCacheAt = now;
         }
         googleAiAnswerRootsCache.forEach(container => {
-            let blocks;
-            try { blocks = container.querySelectorAll('div, p, li, span'); } catch (e) { return; }
-            for (let i = 0; i < blocks.length; i++) {
-                const b = blocks[i];
-                if (b.closest && b.closest('button, [role="button"]')) continue;
-                b.style.setProperty('background-color', 'transparent', 'important');
-                b.style.setProperty('background-image', 'none', 'important');
-                googleAiChatModified.add(b);
-            }
-            clearAskAnythingIconButtons(container);
+            repaintGoogleAiAnswerContainer(container);
+            attachDedicatedGoogleRepaintObserver(container, repaintGoogleAiAnswerContainer);
         });
     }
 
     function revertGoogleAiChatSurface() {
+        googleAiAnswerRootsCache.forEach(disconnectGoogleDedicatedRepaintObserver);
         googleAiChatModified.forEach(el => {
             try {
                 el.style.removeProperty('background-color');
@@ -2357,6 +2594,17 @@
                 if (++n > 250) break;
                 if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[inner.tagName]) continue;
                 if (inner.getAttribute('role') === 'button') continue;
+                // Overlay-role elements (menus, listboxes/autocomplete
+                // dropdowns, dialogs) are already correctly painted by the
+                // static OVERLAY_SELECTOR CSS rule the instant they appear.
+                // Every other paint pass in this file defers to that via
+                // isOverlayChrome — this loop was the one place that didn't,
+                // so an autocomplete suggestions list nested inside top
+                // chrome got its correct CSS paint clobbered by the
+                // unconditional transparent write below on every debounced
+                // mutation pass (i.e. every keystroke), producing a
+                // continuous correct-then-transparent flash.
+                if (H.isOverlayChrome && H.isOverlayChrome(inner)) continue;
                 if (isUniversalTransparencyHostExcluded(inner)) continue;
                 // A fixed/sticky descendant renders in its own layer,
                 // detached from this element's box (e.g. a <header> that
@@ -3440,6 +3688,11 @@
         // snapshot is taken and never touch elements any pass below cares
         // about.
         const elements = collectElements(root);
+        // Shared across every isLikelyModalCard call this invocation makes
+        // (revertGrownModalCards below, plus visitOverlayModalWalk/
+        // visitBrightElement/visitStickyElement in the forEachSliced walk)
+        // — see isLikelyModalCardCached's doc comment.
+        const modalCardCache = new WeakMap();
 
         const { vh, vw } = passViewport();
         // AMP (and other custom-element-heavy) pages route real content
@@ -3459,7 +3712,7 @@
         safePass(() => rethemeLogoContrast(root, elements));
         safePass(() => rethemeInlineHighlights(root, elements));
         safePass(() => reopaqueOverlays(root));
-        safePass(() => revertGrownModalCards(vh, vw));
+        safePass(() => revertGrownModalCards(vh, vw, modalCardCache));
         safePass(() => paintGoogleImagesViewer(root));
         safePass(() => reopaqueTopChrome(root));
         safePass(() => restoreAuthoredChromeOpacity(root));
@@ -3495,9 +3748,9 @@
         ignoreMutations = true;
         forEachSliced(elements, function (el) {
             visitShellElement(el, vh, vw);
-            visitOverlayModalWalk(el, vh, vw, overlaySeen);
-            visitBrightElement(el, vh, vw);
-            visitStickyElement(el, vh, vw);
+            visitOverlayModalWalk(el, vh, vw, overlaySeen, modalCardCache);
+            visitBrightElement(el, vh, vw, modalCardCache);
+            visitStickyElement(el, vh, vw, modalCardCache);
             visitFloatingIconControlElement(el, vh, vw);
         }, function () {
             if (gen !== walkGeneration) return;
@@ -3649,6 +3902,9 @@
             const host = String(window.location.hostname || '');
             if (H && H.isAdNetworkHost && H.isAdNetworkHost(host)) return;
         } catch (eHost) {}
+        try {
+            if (H && H.isAdSafeFrameContext && H.isAdSafeFrameContext()) return;
+        } catch (eSafeFrame) {}
         if (!theme || theme.enabled === false) {
             lastAppliedThemeKey = '';
             return removeTheme();
@@ -3992,14 +4248,14 @@
     // REQUEST THEME UPDATE: Ask background script to sync from App Group
     async function requestThemeUpdate() {
         try {
-            console.log("Aura Content: Requesting theme update");
+            if (AURA_DEBUG_LOGGING) console.log("Aura Content: Requesting theme update");
             
             // Ask background script to sync from App Group
             if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
                 try {
-                    console.log("Aura Content: Sending checkThemeUpdate to background script");
+                    if (AURA_DEBUG_LOGGING) console.log("Aura Content: Sending checkThemeUpdate to background script");
                     const response = await browser.runtime.sendMessage({ type: "checkThemeUpdate" });
-                    console.log("Aura Content: Background script response:", response);
+                    if (AURA_DEBUG_LOGGING) console.log("Aura Content: Background script response:", response);
                     return true;
                 } catch (e) {
                     console.error("Aura Content: Error sending message to background:", e);
@@ -4026,7 +4282,7 @@
 
     // 6. MESSAGE LISTENER (fallback only)
     browser.runtime.onMessage.addListener((message) => {
-        console.log("Aura Content: Message received", message);
+        if (AURA_DEBUG_LOGGING) console.log("Aura Content: Message received", message);
         if (message.type === 'UPDATE_THEME' || message.type === 'THEME_UPDATED') {
             // Prefer full themeData (so we can resolve site/time-based); fall
             // back to the pre-resolved theme the background script sent.
@@ -4051,7 +4307,7 @@
             const newThemeData = changes.tintThemeData.newValue;
             const newTheme = resolveTheme(newThemeData);
             if (!newTheme) return;
-            console.log("Aura Content: Storage changed, applying new theme");
+            if (AURA_DEBUG_LOGGING) console.log("Aura Content: Storage changed, applying new theme");
             
             // Update coordination variables immediately
             window.__TINT_THEME_DATA__ = newThemeData;
@@ -4069,7 +4325,7 @@
         
         window.addEventListener('aura-theme-updated', (event) => {
             if (event.detail?.themeData) {
-                console.log("Aura Content: Custom event received, applying theme");
+                if (AURA_DEBUG_LOGGING) console.log("Aura Content: Custom event received, applying theme");
                 const newThemeData = event.detail.themeData;
                 const newTheme = resolveTheme(newThemeData);
                 if (!newTheme) return;
@@ -4090,7 +4346,7 @@
         try {
             if (!browser.runtime?.sendNativeMessage) return null;
             
-            console.log("Aura Content: Trying direct native messaging");
+            if (AURA_DEBUG_LOGGING) console.log("Aura Content: Trying direct native messaging");
             
             const response = await new Promise((resolve, reject) => {
                 let completed = false;
@@ -4115,7 +4371,7 @@
                                 console.warn("Aura Content: Direct native message error:", browser.runtime.lastError.message);
                                 resolve(null);
                             } else {
-                                console.log("Aura Content: Direct native message SUCCESS");
+                                if (AURA_DEBUG_LOGGING) console.log("Aura Content: Direct native message SUCCESS");
                                 resolve(response);
                             }
                         }
@@ -4124,7 +4380,7 @@
             });
             
             if (response?.themeData?.globalTheme) {
-                console.log("Aura Content: Got theme via direct native messaging");
+                if (AURA_DEBUG_LOGGING) console.log("Aura Content: Got theme via direct native messaging");
                 return response.themeData;
             }
         } catch (error) {
@@ -4172,6 +4428,20 @@
             const classification = H && H.classifyMutationBatchInfo
                 ? H.classifyMutationBatchInfo({ recordCount: records.length, addedNodeCount, removedNodeCount })
                 : 'full';
+            if (AURA_DEBUG_LOGGING) {
+                // Temporary instrumentation for the Google lag/flash investigation
+                // (SUBMISSION_READINESS.md items 6/7) — measures real mutation-batch
+                // shapes so classifyMutationBatchInfo's thresholds can be tuned from
+                // data instead of guessed. Safe to leave in behind the flag; remove
+                // once that investigation concludes.
+                console.log('Aura perf: mutation batch', {
+                    recordCount: records.length,
+                    addedNodeCount,
+                    removedNodeCount,
+                    classification,
+                    host: String(window.location.hostname || ''),
+                });
+            }
             if (classification === 'scoped' && H && H.findCommonMutationAncestor) {
                 const ancestor = H.findCommonMutationAncestor(
                     dedupeMutationTargets(records),
