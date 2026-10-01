@@ -8,7 +8,6 @@
     // stay on regardless (mirrors background.js's AURA_DEBUG_LOGGING).
     const AURA_DEBUG_LOGGING = false;
     let currentTheme = null;
-    const processedShadowRoots = new WeakSet();
     // <iframe> elements whose same-origin contentDocument we've injected a
     // themed <style data-aura-iframe> into (see handleShadowDOM /
     // visitSameOriginIframe) — tracked only for removeTheme() cleanup.
@@ -67,6 +66,17 @@
     // WeakMap: entries need no manual disconnect cleanup, unlike the Sets
     // above, since they vanish along with the element itself.
     let navDrawerStateHistory = new WeakMap();
+    // A single live 'collapsed' reading is NOT enough to overwrite an
+    // already-confirmed 'expanded' entry above — a brief reflow while
+    // unrelated content mutates nearby (confirmed on Wikipedia's mobile nav
+    // menu: it went fully transparent right as the donate banner finished
+    // rendering next to it in the DOM) can make the menu's measured rect
+    // transiently look collapsed for exactly one pass. The OPEN direction
+    // already has this same protection (isOpenTransition requires a prior
+    // confirmed 'collapsed' sighting); this WeakMap extends it symmetrically
+    // to the CLOSE direction: a 'collapsed' reading only commits to
+    // navDrawerStateHistory once seen on two consecutive passes.
+    let navDrawerPendingCollapse = new WeakMap();
     // Same transition-gating idea as navDrawerStateHistory, for menus that
     // expand IN PLACE rather than as a position:fixed/sticky overlay (see
     // classifyNavMenuPanelState / reopaqueExpandedNavMenuPanels) — e.g. a
@@ -162,6 +172,17 @@
     // in applyTheme() / init() below.
 
     let lastAppliedThemeKey = '';
+    // Cache for getFullStyleSheet()'s ~400-line CSS build — keyed on
+    // lastAppliedThemeKey, which is already recomputed/assigned exactly when
+    // the active theme changes (applyTheme) and cleared exactly when it's
+    // removed (removeTheme), so it's always in sync with what a fresh build
+    // would produce. Without this, handleShadowDOM rebuilds the full sheet
+    // from scratch for EVERY shadow root it finds on EVERY dispatched pass —
+    // on a page like reddit.com with one shadow root per comment, that's a
+    // real, self-inflicted lag source of exactly the same class already
+    // fixed once for googleAiAnswerRootsCache (see below).
+    let styleSheetCacheKey = null;
+    let styleSheetCacheCss = '';
     let mutationDebounceTimer = null;
     // MutationRecords buffered across the debounce window AND across any
     // pass currently running (queue-and-coalesce, not drop-while-busy) — see
@@ -597,10 +618,28 @@
                     filter: invert(1) brightness(1.6) !important;
                 }
             `
+        },
+        {
+            // youtube.com and x.com/twitter.com were verified to need no
+            // override: the universal transparency + sticky/fixed pass
+            // themes them cleanly. reddit.com's subreddit-info bar (name /
+            // member count / "Open App") was reported still see-through on
+            // device, but its live markup hasn't been inspected — this is a
+            // best-guess selector list for Reddit's shreddit web-component
+            // subreddit header, not a confirmed one. Being hostname-scoped
+            // and selector-based, if these selectors don't match anything
+            // this is simply inert; it can't affect any other element or
+            // site. Replace with a precise selector once the real markup is
+            // available.
+            match: ['reddit.com'],
+            css: `
+                shreddit-subreddit-header,
+                [slot="subreddit-header"] {
+                    background-color: var(--aura-bg) !important;
+                    color: var(--aura-text) !important;
+                }
+            `
         }
-        // youtube.com, reddit.com and x.com/twitter.com were verified to need no
-        // override: the universal transparency + sticky/fixed pass themes them
-        // cleanly. Add entries here if device testing reveals site-specific issues.
     ];
 
     // Concatenate the CSS of every SITE_FIXES entry whose host matches.
@@ -899,6 +938,33 @@
                 background-clip: border-box !important;
                 -webkit-background-clip: border-box !important;
             }
+            /* Buttons (and their descendants) inside a dialog/sheet/menu
+               are exempted from the blanket descendant text-color force
+               above. visitBrightElement already leaves a button's own
+               background alone everywhere (BUTTON is skip-tagged) —
+               authored CTA buttons are out of scope for background
+               repainting — but the blanket rule above still force-recolors
+               their TEXT to the theme's light color regardless, which can
+               override a button's own well-contrasted authored color and
+               land light-on-light against its still-untouched light
+               background (confirmed on reddit.com's "Save" button in a
+               bottom sheet — general pattern, not site-specific). The CSS
+               'revert' keyword rolls the value back to whatever the site's
+               own CSS/inheritance would produce, rather than hardcoding a
+               color, so it can't itself introduce a new contrast problem.
+               visitContrastElement already special-cases BUTTON and
+               remains the safety net for any button whose real background
+               genuinely needs light text. */
+            dialog :is(button, [role="button"], button *, [role="button"] *),
+            [popover] :is(button, [role="button"], button *, [role="button"] *),
+            [role="dialog"] :is(button, [role="button"], button *, [role="button"] *),
+            [role="alertdialog"] :is(button, [role="button"], button *, [role="button"] *),
+            [role="menu"] :is(button, [role="button"], button *, [role="button"] *),
+            [role="listbox"] :is(button, [role="button"], button *, [role="button"] *),
+            [aria-modal="true"] :is(button, [role="button"], button *, [role="button"] *) {
+                color: revert !important;
+                -webkit-text-fill-color: revert !important;
+            }
             dialog::backdrop {
                 background-color: rgba(0, 0, 0, 0.45) !important;
             }
@@ -1037,7 +1103,14 @@
                 background: var(--aura-overlay) !important;
                 color: var(--aura-text) !important;
             }
-            :focus-visible {
+            /* Excludes text-entry surfaces: those already have their
+               background stripped by the input/textarea/select rule below,
+               so a forced link-color ring floats around an otherwise-empty
+               box with nothing to anchor it — confirmed on reddit.com's
+               reply composer as a stray "colored line" appearing exactly
+               while focused/typing. Everything else keeps the branded ring
+               this rule was written for. */
+            :focus-visible:not(input):not(textarea):not(select):not([contenteditable]) {
                 outline-color: var(--aura-link) !important;
             }
             /* !important on all three: sites very commonly define their own
@@ -1075,6 +1148,18 @@
 
             ${siteFix}
         `;
+    }
+
+    // Memoized wrapper around getFullStyleSheet() — see styleSheetCacheKey
+    // above. `key` must be the caller's current lastAppliedThemeKey (or the
+    // freshly-computed equivalent, e.g. applyTheme's local `themeKey` right
+    // before it's assigned to lastAppliedThemeKey) so a stale cache entry is
+    // never served across a real theme change.
+    function getFullStyleSheetCached(theme, key) {
+        if (key === styleSheetCacheKey) return styleSheetCacheCss;
+        styleSheetCacheCss = getFullStyleSheet(theme);
+        styleSheetCacheKey = key;
+        return styleSheetCacheCss;
     }
 
     // 2b. AMP — DEDICATED, ISOLATED PATH
@@ -1347,7 +1432,7 @@
         return !!(H.isCoveringSheetRect && H.isCoveringSheetRect(rect, vh, vw));
     }
 
-    function paintOverlayScrimAsTransparent(el, vh, vw) {
+    function paintOverlayScrimAsTransparent(el, vh, vw, allowAriaRootFallback) {
         // Google Images viewer is a full-screen second page, not a cookie
         // scrim. Leave it opaque so the mosaic cannot show through. Inline
         // !important is required: a stylesheet SITE_FIX loses to this pass's
@@ -1381,7 +1466,31 @@
         // confirmed ARIA overlay root, never an anonymous curtain wrapper.
         if (H.isOverlayRoot && H.isOverlayRoot(el) && H.findInnerDialogPanel) {
             const panel = H.findInnerDialogPanel(el, getComputedStyle, { vh, vw });
-            if (panel) paintOverlaySheet(panel);
+            if (panel) {
+                paintOverlaySheet(panel);
+                return;
+            }
+        }
+        // Last resort, opt-in only (see allowAriaRootFallback's one call
+        // site in reopaqueOverlays — never passed by revertGrownModalCards,
+        // whose entire job is reverting a modal card that grew into curtain
+        // size back to transparent, e.g. the fox5sandiego.com fix; this
+        // fallback must never fight that). Some genuine ARIA dialogs have
+        // real content that isn't concentrated in one "card" child at all —
+        // e.g. xdsoft's datetimepicker (confirmed on vagaro.com's date
+        // picker, aria-modal="true"): its clickable content is a grid of
+        // plain <td> day cells with no role and no button/a, so neither
+        // findInnerModalCard nor findInnerDialogPanel above can ever find a
+        // delegate. Leaving such a dialog permanently transparent (nothing
+        // to show through it, since it IS the content) is strictly worse
+        // than painting the confirmed ARIA root itself: unlike an anonymous
+        // curtain matched only by geometry, an element H.isOverlayRoot
+        // accepts here carries genuine page-authored modal semantics
+        // (role="dialog"/"alertdialog"/"menu"/"listbox", aria-modal="true",
+        // <dialog>, or [popover]) — a deliberate declaration that this is
+        // real, just-opened content, not decorative chrome.
+        if (allowAriaRootFallback && H.isOverlayRoot && H.isOverlayRoot(el)) {
+            paintOverlaySheet(el);
         }
     }
 
@@ -1433,12 +1542,25 @@
             // Nav drawers are expected to be covering-sheet sized while
             // open — that's not the curtain-growth signal it is for a plain
             // modal card. Only revert one if it's actually closed/hidden.
-            let isNavDrawer = false;
-            try {
-                isNavDrawer = !!(H.isLikelyNavDrawer
-                    && H.isLikelyNavDrawer(el, getComputedStyle, { vh, vw }));
-            } catch (eNav) {
-                isNavDrawer = false;
+            //
+            // Trust an already-confirmed open transition (navDrawerStateHistory,
+            // maintained by visitOverlayModalWalk) over a fresh, live
+            // isLikelyNavDrawer re-derivation: a transient reflow while
+            // unrelated content mutates nearby (confirmed on Wikipedia's
+            // mobile nav menu — it went fully transparent the moment the
+            // donate banner finished rendering inside it) can make a single
+            // live geometry sample momentarily disagree with the drawer's
+            // already-confirmed identity, which used to wipe the whole
+            // panel to transparent right here. Only fall back to the fresh
+            // heuristic when there's no history at all.
+            let isNavDrawer = navDrawerStateHistory.get(el) === 'expanded';
+            if (!isNavDrawer) {
+                try {
+                    isNavDrawer = !!(H.isLikelyNavDrawer
+                        && H.isLikelyNavDrawer(el, getComputedStyle, { vh, vw }));
+                } catch (eNav) {
+                    isNavDrawer = false;
+                }
             }
             // High z-index is the OneSignal/OneTrust/video-float curtain
             // tier — but nav drawers legitimately sit above everything else
@@ -1460,7 +1582,11 @@
 
         const { vh, vw } = passViewport();
         const seen = new Set();
-        const scope = root.nodeType === 1 ? root : document.documentElement;
+        // ShadowRoot (nodeType 11) implements the same ParentNode interface
+        // as Element, so scope.querySelectorAll(...) below works identically
+        // when scope is a shadow root — see the identical fix already made
+        // for reopaqueTopChrome's scope resolution.
+        const scope = (root.nodeType === 1 || root.nodeType === 11) ? root : document.documentElement;
         const candidates = [];
 
         try {
@@ -1491,7 +1617,12 @@
             if (rect.width < 1 || rect.height < 1) return;
 
             if (isOverlayCoveringSheet(rect, vh, vw)) {
-                paintOverlayScrimAsTransparent(el, vh, vw);
+                // true: every candidate here already passed H.isOverlayRoot
+                // or was matched by OVERLAY_SELECTOR, so the opt-in ARIA-root
+                // fallback inside paintOverlayScrimAsTransparent is safe to
+                // allow from this call site specifically — see its own doc
+                // comment for why revertGrownModalCards must never pass this.
+                paintOverlayScrimAsTransparent(el, vh, vw, true);
                 return;
             }
 
@@ -1526,6 +1657,7 @@
                 const isOpenTransition = !!(H.isNavDrawerOpenTransition
                     && H.isNavDrawerOpenTransition(prevNavState, navState));
                 navDrawerStateHistory.set(el, 'expanded');
+                navDrawerPendingCollapse.delete(el);
                 // Paint on a confirmed open transition, or keep repainting an
                 // already-confirmed drawer every pass (self-healing if the
                 // site's own script strips our inline style) — but never
@@ -1544,7 +1676,20 @@
                 return;
             }
             if (navState === 'collapsed') {
-                navDrawerStateHistory.set(el, 'collapsed');
+                if (navDrawerStateHistory.get(el) === 'expanded') {
+                    // Don't let a single live 'collapsed' reading overwrite
+                    // an already-confirmed open drawer — require the same
+                    // verdict on a second, later pass first (see
+                    // navDrawerPendingCollapse's doc comment above).
+                    if (navDrawerPendingCollapse.get(el)) {
+                        navDrawerStateHistory.set(el, 'collapsed');
+                        navDrawerPendingCollapse.delete(el);
+                    } else {
+                        navDrawerPendingCollapse.set(el, true);
+                    }
+                } else {
+                    navDrawerStateHistory.set(el, 'collapsed');
+                }
             }
             // 'ambiguous' or null (not a candidate): leave history untouched
             // and fall through to the checks below, same as before.
@@ -2224,7 +2369,16 @@
     function clearAskAnythingIconButton(btn) {
         if (!btn || btn.nodeType !== 1) return;
         let text = '';
-        try { text = String(btn.textContent || '').trim(); } catch (e) {}
+        // innerText (not textContent): a common accessible-icon-button
+        // pattern keeps a visually-hidden label (e.g. a screen-reader-only
+        // "Send" span) alongside the icon — textContent counts that as a
+        // visible label and skips the button entirely, leaving its icon
+        // untouched. Harmless while the pill was transparent (the icon
+        // still showed against real page content behind it), but once the
+        // pill is painted opaque an untouched icon can blend straight into
+        // it and disappear. innerText respects CSS visibility, so a
+        // hidden label no longer counts.
+        try { text = String(btn.innerText || '').trim(); } catch (e) {}
         if (text.length > 1) return; // has a visible label — leave it alone
         btn.style.setProperty('background-color', 'transparent', 'important');
         btn.style.setProperty('background-image', 'none', 'important');
@@ -2271,8 +2425,10 @@
         }
         fields.forEach(field => {
             if (!isAskAnythingField(field)) return;
-            clearAskAnythingFill(field);
             let node = field;
+            // Composer-row-shaped ancestors collected during the climb;
+            // painted below once the climb finishes (see the paint step).
+            const sizedAncestors = [];
             for (let depth = 0; depth < 8; depth++) {
                 const parent = node.parentElement;
                 if (!parent || parent === document.body || parent === document.documentElement) {
@@ -2295,12 +2451,7 @@
                 const isFloating = position === 'fixed' || position === 'sticky';
                 if (!isFloating && rect.height > 180) break;
                 if (isFloating || (rect.height >= 36 && rect.width >= 160)) {
-                    clearAskAnythingFill(parent);
-                    clearAskAnythingIconButtons(parent);
-                    attachDedicatedGoogleRepaintObserver(parent, el => {
-                        clearAskAnythingFill(el);
-                        clearAskAnythingIconButtons(el);
-                    });
+                    sizedAncestors.push(parent);
                 }
                 // Decorative empty previous siblings behind the field / pill.
                 let sib = node.previousElementSibling;
@@ -2310,6 +2461,42 @@
                 }
                 node = parent;
             }
+            // Paint step: always opaque, never transparent, regardless of
+            // whether any ancestor turned out to be floating. Three rounds
+            // of fixes here all previously branched on foundFloatingAncestor
+            // — but that's a live getComputedStyle(...).position read that
+            // can genuinely flip true mid-session (Google very plausibly
+            // pins the composer via a JS/IntersectionObserver class toggle
+            // only once the page scrolls, not an always-on CSS position).
+            // The moment it flipped to true, the old code ran
+            // clearAskAnythingFill on every sized ancestor, which paints
+            // TRANSPARENT on any of them that isn't itself fixed/sticky —
+            // reproducing exactly the on-device report: the box looked
+            // normal at first, then went transparent, then its +/send
+            // icons blended into whatever real page content was now
+            // showing through. Only ever paint the single INNERMOST sized
+            // ancestor (closest to the field — established in round 2 to
+            // be the actual rounded pill, not an outer square layout
+            // wrapper) plus the field itself, opaque, unconditionally, on
+            // every pass — no code path left that can ever set either back
+            // to transparent. clearAskAnythingFill is intentionally not
+            // used here anymore; it's still used elsewhere for genuinely
+            // decorative empty siblings, where transparent is correct.
+            if (sizedAncestors.length) {
+                const pill = sizedAncestors[0];
+                pill.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
+                pill.style.setProperty('background-image', 'none', 'important');
+                askAnythingModified.add(pill);
+                clearAskAnythingIconButtons(pill);
+                attachDedicatedGoogleRepaintObserver(pill, e => {
+                    e.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
+                    e.style.setProperty('background-image', 'none', 'important');
+                    clearAskAnythingIconButtons(e);
+                });
+            }
+            field.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
+            field.style.setProperty('background-image', 'none', 'important');
+            askAnythingModified.add(field);
         });
     }
 
@@ -2480,7 +2667,12 @@
         if (isChromeRepaintDisabledForHost()) return;
 
         const { vh, vw } = passViewport();
-        const scope = root.nodeType === 1 ? root : document.documentElement;
+        // ShadowRoot (nodeType 11) implements the same ParentNode interface
+        // as Element, so scope.querySelectorAll(...) below works identically
+        // when scope is a shadow root — it just can't cross a FURTHER shadow
+        // boundary from there, which is fine: nested shadow roots are
+        // handled by handleShadowDOM's own recursion, not by this function.
+        const scope = (root.nodeType === 1 || root.nodeType === 11) ? root : document.documentElement;
         const painted = new Set();
 
         // Undo outer bars that are no longer safe top chrome (grew into a
@@ -2943,23 +3135,38 @@
     // to transition FROM. A first-ever sighting is only trusted as "just
     // opened" when BOTH: (1) it happens well after the theme's initial
     // apply, so it can't be ordinary content the very first full walk simply
-    // hadn't reached yet, and (2) the element isn't one of several siblings
-    // sharing its class name — a repeated class is the standard shape of an
-    // infinite-scroll/list-append batch (e.g. more property-card tiles
-    // loading in), which is exactly the kind of "new but not a popup"
-    // insertion this must not paint as a near-black overlay.
+    // hadn't reached yet, and (2) the element isn't one of several
+    // currently-VISIBLE siblings sharing its class name — a repeated,
+    // visible class is the standard shape of an infinite-scroll/list-append
+    // batch (e.g. more property-card tiles loading in, all on-screen at
+    // once), which is exactly the kind of "new but not a popup" insertion
+    // this must not paint as a near-black overlay.
+    //
+    // A same-class sibling that is itself collapsed/hidden does NOT count —
+    // that's the normal resting state of the other, unopened panels in a
+    // group of sibling dropdowns/tabs that all share one CSS-module class
+    // (confirmed on depop.com's Category/Brand/Price/Size/Color/Condition
+    // filter bar: each filter's dropdown panel shares one class with the
+    // other five, and only one is ever expanded at a time). Counting mere
+    // DOM presence rather than visibility meant every one of those panels
+    // was permanently disqualified from ever being recognized as freshly
+    // opened, leaving them transparent forever.
     function isFreshlyMountedContentPanel(el, prevState) {
         if (prevState !== undefined) return false;
         if (!engineAppliedAt || (Date.now() - engineAppliedAt) < CONTENT_PANEL_SETTLE_MS) return false;
         const cls = typeof el.className === 'string' ? el.className : '';
         if (!cls || !el.parentElement) return true;
-        let siblingsWithSameClass = 0;
         const siblings = el.parentElement.children;
         for (let i = 0; i < siblings.length; i++) {
-            if (siblings[i] !== el && siblings[i].className === cls) {
-                siblingsWithSameClass++;
-                if (siblingsWithSameClass >= 1) return false;
-            }
+            const sib = siblings[i];
+            if (sib === el || sib.className !== cls) continue;
+            let sibStyle;
+            try { sibStyle = getComputedStyle(sib); } catch (e) { continue; }
+            if (sibStyle.display === 'none' || sibStyle.visibility === 'hidden' || sibStyle.opacity === '0') continue;
+            let sibRect;
+            try { sibRect = sib.getBoundingClientRect(); } catch (e2) { continue; }
+            if (sibRect.width < 1 || sibRect.height < 1) continue;
+            return false;
         }
         return true;
     }
@@ -3108,6 +3315,29 @@
         if (H.isStackedDuplicateLabel && H.isStackedDuplicateLabel(el)) return;
         let style;
         try { style = getComputedStyle(el); } catch (e) { return; }
+        // A button whose own visible surface comes from a background-image
+        // (a solid-color-simulating gradient — a common flat-button
+        // technique) rather than backgroundColor is invisible to
+        // effectiveBackground below: that helper only ever checks
+        // backgroundColor, so it walks straight past this element to
+        // whatever ancestor has a real backgroundColor next (often a
+        // dialog/sheet already repainted dark by an earlier pass) and
+        // judges contrast against THAT instead of the button's own actual
+        // surface — dark-ancestor-vs-light-text looks fine, so nothing gets
+        // fixed, leaving whatever color a previous pass forced standing
+        // (confirmed as the actual cause of a "Save" button rendering
+        // illegible light-on-light on reddit.com — general pattern, not
+        // site-specific). We can't safely know what color an arbitrary
+        // gradient actually renders without sampling, so the safe choice is
+        // to leave this element alone entirely rather than guess against
+        // the wrong background — matching this codebase's existing
+        // philosophy elsewhere of never fighting a site's own styling when
+        // a change can't be confirmed to help. Scoped to button-like
+        // elements only, matching the reported bug.
+        const isButtonLike = tag === 'BUTTON' || (el.getAttribute && el.getAttribute('role') === 'button');
+        if (isButtonLike && H.isGradientBackgroundImage && H.isGradientBackgroundImage(style.backgroundImage)) {
+            return;
+        }
         // A decorative shape whose visible fill IS its own `color` via
         // `background-color: currentColor` (a common technique for
         // monochrome icon bars — confirmed on github.com's mobile-menu
@@ -3959,7 +4189,7 @@
             return;
         }
 
-        styleEl.textContent = getFullStyleSheet(theme)
+        styleEl.textContent = getFullStyleSheetCached(theme, themeKey)
             + (IS_AMP_DOCUMENT ? getAmpDocumentOverrideCss() : '');
         (document.head || document.documentElement).appendChild(styleEl);
 
@@ -3997,6 +4227,7 @@
 
     function removeTheme() {
         lastAppliedThemeKey = '';
+        styleSheetCacheKey = null;
         engineAppliedAt = 0;
         revertNativeDarkMode();
         cancelWalkSlices();
@@ -4062,6 +4293,7 @@
         // fresh baseline (no paint) rather than reading 'expanded' as its
         // own prior state and never registering a transition.
         navDrawerStateHistory = new WeakMap();
+        navDrawerPendingCollapse = new WeakMap();
         navMenuPanelOpaqueModified.forEach(el => {
             try {
                 el.style.removeProperty('background-color');
@@ -4186,7 +4418,7 @@
                 style.setAttribute('data-aura-iframe', 'true');
                 target.appendChild(style);
             }
-            style.textContent = getFullStyleSheet(currentTheme);
+            style.textContent = getFullStyleSheetCached(currentTheme, lastAppliedThemeKey);
             sameOriginIframeModified.add(iframeEl);
         } catch (e) {
             // Cross-origin, or the iframe document isn't in a themeable
@@ -4199,16 +4431,21 @@
         if (!root) return;
 
         if (root.shadowRoot) {
+            const css = getFullStyleSheetCached(currentTheme, lastAppliedThemeKey);
             const existingStyle = root.shadowRoot.querySelector('style[data-aura-shadow]');
             if (existingStyle) {
-                existingStyle.textContent = getFullStyleSheet(currentTheme);
+                // Comparison is cheap (no layout); skip the write when
+                // unchanged so an unrelated pass doesn't force a style
+                // recalc in every shadow root on the page — the common
+                // case, since most passes are triggered by content
+                // mutations, not a theme change.
+                if (existingStyle.textContent !== css) existingStyle.textContent = css;
             } else {
                 const style = document.createElement('style');
                 style.setAttribute('data-aura-shadow', 'true');
-                style.textContent = getFullStyleSheet(currentTheme);
+                style.textContent = css;
                 root.shadowRoot.appendChild(style);
             }
-            processedShadowRoots.add(root.shadowRoot);
 
             // The universal stylesheet just injected strips background-color
             // from every layout tag inside this shadow root too — but none
@@ -4226,8 +4463,61 @@
             try {
                 const { vh, vw } = passViewport();
                 const shadowElements = root.shadowRoot.querySelectorAll('*');
+                // Shadow-scoped caches, cheap to allocate per shadow root
+                // (mirrors modalCardCache/overlaySeen in runSafetyPasses,
+                // just not shared across the whole page's shadow roots).
+                const shadowOverlaySeen = new Set();
+                const shadowModalCardCache = new WeakMap();
                 for (let i = 0; i < shadowElements.length; i++) {
-                    safeVisit(e => visitStickyElement(e, vh, vw), shadowElements[i]);
+                    const shadowEl = shadowElements[i];
+                    safeVisit(e => visitStickyElement(e, vh, vw), shadowEl);
+                    // Covers both the ARIA-role-based modal-card/nav-drawer
+                    // path and the position:fixed-based one — see
+                    // visitOverlayModalWalk's own doc comments. Without
+                    // this, a shadow-DOM-hosted dialog/CMP (e.g. a
+                    // Transcend/OneTrust consent manager rendered inside an
+                    // open shadow root) has its background stripped by the
+                    // universal transparency rule injected above with
+                    // nothing to ever repaint it opaque — confirmed on
+                    // depop.com's #transcend-consent-manager cookie banner.
+                    safeVisit(e => visitOverlayModalWalk(e, vh, vw, shadowOverlaySeen, shadowModalCardCache), shadowEl);
+                }
+                // ARIA-role overlay roots (dialog/menu/listbox/aria-modal)
+                // get their own direct pass too — visitOverlayModalWalk
+                // above only handles the position:fixed/nav-drawer shapes,
+                // while reopaqueOverlays is what actually paints a plain
+                // ARIA dialog/listbox opaque (or its scrim transparent).
+                safePass(() => reopaqueOverlays(root.shadowRoot));
+                // Position-agnostic counterpart for a shadow-DOM panel with
+                // no ARIA role and no position:fixed of its own — the same
+                // shape reopaqueExpandedContentPanels already handles in
+                // the light DOM (e.g. a plain expand-in-place dropdown).
+                safePass(() => reopaqueExpandedContentPanels(root.shadowRoot, shadowElements));
+
+                // visitStickyElement above only paints elements that are
+                // themselves position:fixed/sticky — it can't help a top bar
+                // that's simply the first thing in this shadow root's flow
+                // at the top of the page, with no pinning CSS at all.
+                // reopaqueTopChrome exists for exactly that shape in the
+                // light DOM but has never run on shadow content until now
+                // (see its widened scope check above). Gate behind a cheap,
+                // single getBoundingClientRect on the HOST element (not a
+                // subtree scan) so this doesn't reintroduce the same
+                // "unconditional per-shadow-root work" cost already fixed
+                // for the stylesheet build — only a host shaped like a top
+                // bar (near top of viewport, near full width) pays for the
+                // more expensive seed scan. Mirrors isTopChromeBarInfo's own
+                // geometry thresholds (themeHeuristics.js) minus its
+                // tag/role requirement, since a custom-element host's tag
+                // name is never literally "header"/"nav".
+                let hostRect = null;
+                try { hostRect = root.getBoundingClientRect(); } catch (eHostRect) {}
+                const looksLikeTopBarHost = !!hostRect
+                    && hostRect.width >= vw * 0.7
+                    && hostRect.height >= 40 && hostRect.height <= vh * 0.55
+                    && hostRect.top >= -20 && hostRect.top <= 80;
+                if (looksLikeTopBarHost) {
+                    safePass(() => reopaqueTopChrome(root.shadowRoot));
                 }
             } catch (e2) {}
         }

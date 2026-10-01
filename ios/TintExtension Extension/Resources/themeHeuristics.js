@@ -38,8 +38,21 @@
     // thresholds automatically and falls back to a full walk; ambiguous or
     // missing info also falls back to full, since a full walk is always
     // correct and a wrongly-scoped one is not.
-    var MUTATION_BATCH_SMALL_MAX_RECORDS = 40;
-    var MUTATION_BATCH_SMALL_MAX_NODES = 60;
+    //
+    // Raised from 40/60: a rich contenteditable composer (Google's "Ask
+    // anything", Reddit's comment editor) can easily produce 40+ mutation
+    // records in one 150ms debounce window from ordinary fast typing,
+    // tipping every such batch into a full-document walk under the old
+    // thresholds — a plausible source of reported typing lag on both.
+    // Raising the ceiling only changes how often a batch is treated as
+    // scoped vs full, which is a performance choice, not a correctness one
+    // (see doc comment above): a batch that's genuinely scattered across
+    // unrelated parts of the page still resolves to a large/full-equivalent
+    // common ancestor via findCommonMutationAncestor regardless of this
+    // threshold, so this can't under-scope a real page-wide change — it
+    // only helps batches that are numerous but localized, i.e. typing.
+    var MUTATION_BATCH_SMALL_MAX_RECORDS = 80;
+    var MUTATION_BATCH_SMALL_MAX_NODES = 120;
 
     /**
      * @param {{ recordCount?: number, addedNodeCount?: number, removedNodeCount?: number }} info
@@ -812,7 +825,19 @@
         if (!el || typeof el.querySelector !== 'function') return false;
         try {
             return !!el.querySelector(
-                'button, a, [role="button"], input[type="submit"], input[type="button"]'
+                // role="option"/"menuitem"/"tab"/"treeitem" are the standard
+                // ARIA APG roles for "the user can select/activate this" in a
+                // listbox/menu/tablist/tree — semantically equivalent to a
+                // button for "is this real interactive content" purposes,
+                // just not implemented as a native <button>. Without these,
+                // any custom dropdown/menu/tab built this way (Select2 is
+                // one of the most widely-used examples — confirmed on
+                // vagaro.com's service-picker panel, whose 117 rows are all
+                // role="option" divs with zero real button/a/role="button"
+                // anywhere) never registers as having real content, so it's
+                // never painted opaque and stays permanently transparent.
+                'button, a, [role="button"], input[type="submit"], input[type="button"],' +
+                ' [role="option"], [role="menuitem"], [role="tab"], [role="treeitem"]'
             );
         } catch (e) {
             return false;
