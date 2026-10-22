@@ -48,7 +48,8 @@
             var style = document.createElement('style');
             style.id = SHIELD_ID;
             style.textContent =
-                'html{background-color:#121212!important;color-scheme:dark!important;}';
+                'html{background-color:#121212!important;color-scheme:dark!important;}' +
+                'body{background-color:#121212!important;}';
             (document.documentElement || document.head).appendChild(style);
         } catch (e) {}
     }

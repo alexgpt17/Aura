@@ -355,11 +355,11 @@ describe('classifyMutationBatchInfo', () => {
   });
 
   test('more than the record-count threshold falls back to full', () => {
-    expect(H.classifyMutationBatchInfo({ recordCount: 41, addedNodeCount: 5, removedNodeCount: 0 })).toBe('full');
+    expect(H.classifyMutationBatchInfo({ recordCount: 81, addedNodeCount: 5, removedNodeCount: 0 })).toBe('full');
   });
 
   test('within the record-count threshold but over the node-count threshold falls back to full', () => {
-    expect(H.classifyMutationBatchInfo({ recordCount: 10, addedNodeCount: 40, removedNodeCount: 21 })).toBe('full');
+    expect(H.classifyMutationBatchInfo({ recordCount: 10, addedNodeCount: 100, removedNodeCount: 21 })).toBe('full');
   });
 });
 

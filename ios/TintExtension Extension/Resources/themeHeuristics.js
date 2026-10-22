@@ -11,8 +11,21 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
     'use strict';
 
+    // [role="tooltip"] included despite tooltips almost always being
+    // position:absolute, not fixed: unlike an arbitrary absolute div (which
+    // isLikelyModalCardInfo below deliberately never matches, since
+    // "absolute" is too common a position for ordinary promo tiles/carousel
+    // items to use position:fixed-only gating as the false-positive guard),
+    // role="tooltip" is itself an unambiguous, intentional ARIA declaration
+    // — no site sets it on something that isn't a tooltip — so there's no
+    // equivalent risk to gate against. Matches the static CSS overlay rule
+    // in content.js's getFullStyleSheet, which paints it unconditionally the
+    // instant it appears (tooltips are often shown/hidden faster than this
+    // engine's ~150ms mutation-debounce window, so the JS pass alone would
+    // miss many of them); this JS-side copy is reopaqueOverlays' self-
+    // healing backstop for the same elements, same as every other role here.
     var OVERLAY_SELECTOR =
-        'dialog, [popover], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [aria-modal="true"]';
+        'dialog, [popover], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"], [aria-modal="true"]';
 
     var BRIGHT_SKIP_TAGS = {
         BUTTON: 1, INPUT: 1, SELECT: 1, TEXTAREA: 1, OPTION: 1,
@@ -1543,6 +1556,66 @@
         return null;
     }
 
+    // Ad-network / tracking-widget "overlay tier" z-index floor — the same
+    // threshold content.js's modal-card path already uses inline ("Overlay-
+    // tier shells (OneSignal / OneTrust / video float) must stay
+    // transparent") to tell a deliberately-opened app-shell UI surface apart
+    // from an intrusive third-party overlay widget. Named here so the non-
+    // ARIA fullscreen-panel fallback below can reuse the exact same,
+    // already-proven cutoff rather than inventing a new number.
+    var OVERLAY_TIER_Z_INDEX_FLOOR = 1000;
+
+    /**
+     * Last-resort "paint the root itself" signal for a non-ARIA,
+     * position:fixed, covering-sheet element that content.js's
+     * visitOverlayModalWalk has already decided is worth checking (via its
+     * own position/size gating), but for which neither findInnerModalCard
+     * nor findInnerDialogPanel found a smaller delegate to paint instead —
+     * e.g. a Shopify Dawn-theme cart drawer (`position:fixed; width:100%;
+     * max-width:531px`, which is 100% width on any phone-width viewport):
+     * its entire panel IS the intended content, with nothing smaller inside
+     * to delegate to, and it carries no nav semantics either (so
+     * isLikelyNavDrawer never claims it, leaving it with no other path to
+     * ever become opaque).
+     *
+     * Unlike the ARIA-root fallback in content.js (gated on isOverlayRoot),
+     * there's no ARIA declaration here to lean on, so this requires two
+     * independent structural signals instead: real content (hasAction +
+     * enough text — the same low bar isModalCardShape already uses
+     * elsewhere) AND a z-index below the ad/tracking overlay tier
+     * (OVERLAY_TIER_Z_INDEX_FLOOR). Neither signal alone reliably tells a
+     * curtain apart from a real panel (an ad curtain can have a close
+     * button and some text; a legitimate panel can have z-index:auto) — the
+     * combination, plus every gate the caller already applied before
+     * reaching this point (position:fixed, covering-sheet, not already
+     * ARIA/nav-drawer overlay chrome), is what keeps this narrow.
+     * @param {{ textLength?: number, hasAction?: boolean,
+     *   zIndex?: string|number }} info
+     */
+    function isLikelyNonAriaFullscreenPanelInfo(info) {
+        if (!info) return false;
+        if ((info.textLength || 0) < MODAL_MIN_TEXT) return false;
+        if (!info.hasAction) return false;
+        var z = parseInt(info.zIndex, 10);
+        if (!isNaN(z) && z >= OVERLAY_TIER_Z_INDEX_FLOOR) return false;
+        return true;
+    }
+
+    function isLikelyNonAriaFullscreenPanel(el, getStyle, viewport) {
+        if (!el || el.nodeType !== 1) return false;
+        var styleFn = resolveStyleFn(getStyle);
+        if (!styleFn) return false;
+        var style;
+        try { style = styleFn(el); } catch (e) { return false; }
+        var text = '';
+        try { text = String(el.textContent || '').replace(/\s+/g, ' ').trim(); } catch (e2) {}
+        return isLikelyNonAriaFullscreenPanelInfo({
+            textLength: text.length,
+            hasAction: elementHasAction(el),
+            zIndex: style.zIndex,
+        });
+    }
+
     /**
      * Predicate inputs for unit tests without a live DOM walk.
      * @param {{ tag?: string, role?: string|null, ariaModal?: string|null,
@@ -2364,6 +2437,8 @@
         isLikelyModalCard: isLikelyModalCard,
         isLikelyModalCardInfo: isLikelyModalCardInfo,
         isInnerModalCardInfo: isInnerModalCardInfo,
+        isLikelyNonAriaFullscreenPanel: isLikelyNonAriaFullscreenPanel,
+        isLikelyNonAriaFullscreenPanelInfo: isLikelyNonAriaFullscreenPanelInfo,
         isLikelyNavDrawer: isLikelyNavDrawer,
         isLikelyNavDrawerInfo: isLikelyNavDrawerInfo,
         isNavDrawerCollapsedInfo: isNavDrawerCollapsedInfo,

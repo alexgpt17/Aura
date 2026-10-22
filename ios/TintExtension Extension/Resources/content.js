@@ -23,6 +23,10 @@
     // Elements we forced opaque because they are position:fixed/sticky.
     // Tracked so removeTheme() can cleanly revert them.
     const stickyModified = new Set();
+    // Pending-revert streak for the two geometry-dependent sticky revert
+    // triggers (isLikelyModalCardCached, shouldSkipStickyElement) — see
+    // notePendingRevert's doc comment below.
+    let stickyPendingRevert = new WeakMap();
     // Near-white / light-gray opaque surfaces cleared by visitBrightElement().
     const brightModified = new Set();
     const contrastModified = new Set();
@@ -56,6 +60,9 @@
     // ARIA reopaqueOverlays (re-evaluated every pass), these only get touched
     // while isLikelyModalCard is true — so we must revert when they grow.
     const modalCardOpaqueModified = new Set();
+    // Pending-revert streak for revertGrownModalCards — see
+    // notePendingRevert's doc comment below.
+    let modalCardPendingRevert = new WeakMap();
     // Per-element collapsed/expanded classification history for the
     // isLikelyNavDrawer transition gate (see classifyNavDrawerState in
     // themeHeuristics.js) — an element is painted opaque only on a confirmed
@@ -68,14 +75,18 @@
     let navDrawerStateHistory = new WeakMap();
     // A single live 'collapsed' reading is NOT enough to overwrite an
     // already-confirmed 'expanded' entry above — a brief reflow while
-    // unrelated content mutates nearby (confirmed on Wikipedia's mobile nav
-    // menu: it went fully transparent right as the donate banner finished
-    // rendering next to it in the DOM) can make the menu's measured rect
-    // transiently look collapsed for exactly one pass. The OPEN direction
-    // already has this same protection (isOpenTransition requires a prior
-    // confirmed 'collapsed' sighting); this WeakMap extends it symmetrically
-    // to the CLOSE direction: a 'collapsed' reading only commits to
-    // navDrawerStateHistory once seen on two consecutive passes.
+    // unrelated content mutates nearby (confirmed live on Wikipedia's mobile
+    // nav menu: the donate banner is a direct child of the menu panel itself
+    // and contains a lazy-loaded <img>, so opening the menu starts an image
+    // decode whose layout churn runs on its own timeline, independent of
+    // the menu's own open transition, and can easily span more than one
+    // pass cycle) can make the menu's measured rect transiently look
+    // collapsed for more than one pass. The OPEN direction already has this
+    // same protection (isOpenTransition requires a prior confirmed
+    // 'collapsed' sighting); this WeakMap extends it symmetrically to the
+    // CLOSE direction via notePendingRevert (see its doc comment below): a
+    // 'collapsed' reading only commits to navDrawerStateHistory once seen on
+    // NAV_DRAWER_COLLAPSE_CONFIRM_READINGS consecutive passes.
     let navDrawerPendingCollapse = new WeakMap();
     // Same transition-gating idea as navDrawerStateHistory, for menus that
     // expand IN PLACE rather than as a position:fixed/sticky overlay (see
@@ -83,6 +94,10 @@
     // Bootstrap-style ".navbar-collapse" mobile menu, which isLikelyNavDrawer
     // can never reach since it requires position fixed/sticky.
     let navMenuPanelStateHistory = new WeakMap();
+    // Pending-revert streak for navMenuPanelStateHistory's collapsed
+    // direction — same idea as navDrawerPendingCollapse above, via
+    // notePendingRevert.
+    let navMenuPanelPendingCollapse = new WeakMap();
     // Elements forced opaque by reopaqueExpandedNavMenuPanels. Tracked
     // separately from modalCardOpaqueModified (a different mechanism/gate)
     // so their revert paths never interfere with each other.
@@ -99,6 +114,12 @@
     // ordinary absolute promo tiles). See classifyExpandedContentPanelState /
     // reopaqueExpandedContentPanels below.
     let expandedContentPanelStateHistory = new WeakMap();
+    // Pending-revert streak for expandedContentPanelStateHistory's collapsed
+    // direction — same idea as navDrawerPendingCollapse above, via
+    // notePendingRevert. Does NOT cover the separate video-sibling
+    // disqualification revert (a different bug class — see
+    // visitExpandedContentPanelElement), which stays immediate.
+    let expandedContentPanelPendingCollapse = new WeakMap();
     // Elements forced opaque by reopaqueExpandedContentPanels. Tracked
     // separately from the other opaque-modified sets for the same reason as
     // navMenuPanelOpaqueModified above.
@@ -138,6 +159,32 @@
     let ignoreMutationsTimer = null;
     let scrollListenerAttached = false;
     let scrollPassTimer = null;
+    let changeListenerAttached = false;
+    let transitionendListenerAttached = false;
+    let toggleListenerAttached = false;
+    // Set inside init() once a theme was successfully applied from an
+    // already-warm browser.storage.local cache — lets the fixed 100ms
+    // startup requestThemeUpdate() (see bottom of file) skip itself on the
+    // common path, where it would otherwise be a guaranteed, redundant
+    // native-messaging round trip on every single page load for no visible
+    // benefit (the page is already correctly themed). Left false if init()
+    // found no cached data (or hasn't resolved yet by the time the 100ms
+    // timer fires) so that path still gets its one real fallback attempt —
+    // the periodic background sync and the visibilitychange-triggered
+    // requestThemeUpdate() below remain the ongoing freshness mechanism
+    // either way, so this only removes one redundant *extra* early check.
+    let initAppliedFromCache = false;
+    // Reveal-animation properties worth forcing a repaint pass over —
+    // opacity is deliberately excluded: opacity-only hover/focus micro-
+    // transitions (buttons, cards, tooltips) are extremely common and would
+    // be the largest source of unwanted full-document walks, while every
+    // CSS-only reveal pattern checked (including Wikipedia's, which
+    // transitions opacity/visibility/transform together) also transitions
+    // at least one of the properties below — so omitting opacity costs
+    // nothing against the actual bug.
+    const TRANSITIONEND_REVEAL_PROPERTIES = {
+        transform: 1, visibility: 1, 'max-height': 1, height: 1, width: 1,
+    };
 
     const H = (typeof AuraThemeHeuristics !== 'undefined' && AuraThemeHeuristics)
         ? AuraThemeHeuristics
@@ -221,6 +268,56 @@
     // huge ones. Starting estimate — tune based on device feel, not
     // measured yet.
     const FRAME_SLICE = 300;
+
+    // How many consecutive disagreeing readings a revert/downgrade path must
+    // see before it actually acts — see notePendingRevert below. nav-drawer
+    // keeps its own, higher constant since it's the original, already-
+    // shipped case (a 2-reading gate, raised here to 3); every other pass
+    // below had zero tolerance before this, so 2 is the uniform starting
+    // point for them.
+    const REVERT_CONFIRM_READINGS = 2;
+    const NAV_DRAWER_COLLAPSE_CONFIRM_READINGS = 3;
+    // Two calls to notePendingRevert for the SAME element inside this window
+    // are treated as one reading, not two — needed because
+    // reopaqueExpandedNavMenuPanels/reopaqueExpandedContentPanels/
+    // reopaqueStickyFixed each re-check their already-opaque Set and then
+    // separately re-walk the full element list within one runSafetyPasses
+    // call, visiting an already-tracked element twice per real pass. 100ms
+    // safely exceeds that synchronous re-walk gap while staying well under
+    // the ~150ms MutationObserver debounce that separates two genuinely
+    // distinct passes — if it's ever a little too generous on an unusually
+    // large page, the only consequence is slightly MORE tolerance before a
+    // revert, never a wrongful paint.
+    const PENDING_REVERT_DEDUP_WINDOW_MS = 100;
+
+    // Shared "require N consecutive disagreeing readings before reverting an
+    // already-opaque/expanded element" gate. Originated as a one-off fix
+    // (navDrawerPendingCollapse) for Wikipedia's mobile nav menu going
+    // transparent mid-donate-banner-image-decode — generalized here after
+    // confirming every other transition-gated/revert-capable pass had NO
+    // such protection at all, meaning any already-correctly-painted overlay/
+    // panel/sticky element anywhere was one unrelated nearby DOM change away
+    // from being wrongly reverted.
+    //
+    // Stability-only by design: every call site below uses this ONLY on its
+    // revert/downgrade path, never on its paint/upgrade path — it can only
+    // make a pass more reluctant to un-paint something already correctly
+    // opaque, never more willing to paint something new. `map` is a WeakMap
+    // private to one call site, holding { count, lastReadAt }.
+    function notePendingRevert(map, el, threshold) {
+        const now = Date.now();
+        const entry = map.get(el);
+        if (entry && (now - entry.lastReadAt) < PENDING_REVERT_DEDUP_WINDOW_MS) {
+            return entry.count >= threshold;
+        }
+        const count = (entry ? entry.count : 0) + 1;
+        if (count >= threshold) {
+            map.delete(el);
+            return true;
+        }
+        map.set(el, { count, lastReadAt: now });
+        return false;
+    }
 
     function isActiveSplitTheme(theme) {
         if (!theme || !Split || !Split.isSplitTheme(theme)) return false;
@@ -912,12 +1009,28 @@
                 background-image: none !important;
             }
 
+            /* [role="tooltip"] included here (and in the matching JS-side
+               OVERLAY_SELECTOR in themeHeuristics.js): Tippy/Popper/Floating
+               UI-style tooltip bubbles are almost always position:absolute,
+               not fixed — unlike an arbitrary absolute div (which the JS
+               modal-card path deliberately never paints, since "absolute" is
+               too common a position for ordinary promo tiles/carousel
+               items), role="tooltip" is an unambiguous, intentional ARIA
+               declaration with no equivalent false-positive risk, so it's
+               safe to paint on the same unconditional CSS rule as
+               dialog/menu/listbox rather than needing the JS pass's
+               position-based gating. CSS-level (not JS-pass-only) because
+               tooltips are often shown/hidden faster than the ~150ms
+               mutation-debounce window, so waiting for the JS pass would
+               mean many tooltips flash transparent or never get themed
+               before they're gone. */
             dialog,
             [popover],
             [role="dialog"],
             [role="alertdialog"],
             [role="menu"],
             [role="listbox"],
+            [role="tooltip"],
             [aria-modal="true"] {
                 background-color: var(--aura-overlay) !important;
                 color: var(--aura-text) !important;
@@ -931,6 +1044,7 @@
             [role="alertdialog"] *,
             [role="menu"] *,
             [role="listbox"] *,
+            [role="tooltip"] *,
             [aria-modal="true"] * {
                 mix-blend-mode: normal !important;
                 -webkit-text-fill-color: var(--aura-text) !important;
@@ -961,6 +1075,7 @@
             [role="alertdialog"] :is(button, [role="button"], button *, [role="button"] *),
             [role="menu"] :is(button, [role="button"], button *, [role="button"] *),
             [role="listbox"] :is(button, [role="button"], button *, [role="button"] *),
+            [role="tooltip"] :is(button, [role="button"], button *, [role="button"] *),
             [aria-modal="true"] :is(button, [role="button"], button *, [role="button"] *) {
                 color: revert !important;
                 -webkit-text-fill-color: revert !important;
@@ -974,6 +1089,7 @@
             [role="alertdialog"] a,
             [role="menu"] a,
             [role="listbox"] a,
+            [role="tooltip"] a,
             [aria-modal="true"] a {
                 color: var(--aura-link) !important;
             }
@@ -1432,7 +1548,7 @@
         return !!(H.isCoveringSheetRect && H.isCoveringSheetRect(rect, vh, vw));
     }
 
-    function paintOverlayScrimAsTransparent(el, vh, vw, allowAriaRootFallback) {
+    function paintOverlayScrimAsTransparent(el, vh, vw, allowAriaRootFallback, allowNonAriaFullscreenFallback) {
         // Google Images viewer is a full-screen second page, not a cookie
         // scrim. Leave it opaque so the mosaic cannot show through. Inline
         // !important is required: a stylesheet SITE_FIX loses to this pass's
@@ -1490,6 +1606,23 @@
         // <dialog>, or [popover]) — a deliberate declaration that this is
         // real, just-opened content, not decorative chrome.
         if (allowAriaRootFallback && H.isOverlayRoot && H.isOverlayRoot(el)) {
+            paintOverlaySheet(el);
+            return;
+        }
+        // Opt-in only, from exactly one call site (visitOverlayModalWalk's
+        // non-ARIA covering-sheet branch — never reopaqueOverlays or
+        // revertGrownModalCards). Mirrors the ARIA-root fallback just above,
+        // for the shape it structurally can't cover: a non-ARIA,
+        // position:fixed, covering-sheet panel (e.g. a Shopify Dawn-theme
+        // cart drawer) whose entire content IS the panel, with no smaller
+        // inner card for findInnerModalCard/findInnerDialogPanel to have
+        // found above. There's no ARIA role to lean on here, so
+        // isLikelyNonAriaFullscreenPanel requires two independent signals
+        // instead (real content + a z-index below the ad/tracking overlay
+        // tier) — see its own doc comment in themeHeuristics.js for why
+        // that combination is a safe enough bar without ARIA to rely on.
+        if (allowNonAriaFullscreenFallback && H.isLikelyNonAriaFullscreenPanel
+            && H.isLikelyNonAriaFullscreenPanel(el, getComputedStyle, { vh, vw })) {
             paintOverlaySheet(el);
         }
     }
@@ -1571,8 +1704,21 @@
                 highZ = !isNaN(z) && z >= 1000 && !isNavDrawer;
             } catch (e3) {}
             const coveringMeansCurtain = covering && !isNavDrawer;
-            if ((!stillCard && !isNavDrawer) || coveringMeansCurtain || highZ) {
-                paintOverlayScrimAsTransparent(el, vh, vw);
+            const shouldRevert = (!stillCard && !isNavDrawer) || coveringMeansCurtain || highZ;
+            // Same "don't flicker on one disagreeing sample" protection as
+            // navDrawerStateHistory above — see notePendingRevert's doc
+            // comment. (For a true nav drawer this stacks with
+            // navDrawerStateHistory's own gate above — isNavDrawer only
+            // reads true once that gate has already committed to
+            // 'collapsed' — so a drawer gets more cumulative tolerance than
+            // a plain modal card; intentional, flagged for retuning if real
+            // drawers ever feel sluggish to close.)
+            if (shouldRevert) {
+                if (notePendingRevert(modalCardPendingRevert, el, REVERT_CONFIRM_READINGS)) {
+                    paintOverlayScrimAsTransparent(el, vh, vw);
+                }
+            } else {
+                modalCardPendingRevert.delete(el);
             }
         });
     }
@@ -1592,7 +1738,7 @@
         try {
             const listed = scope.querySelectorAll(
                 (H && H.OVERLAY_SELECTOR) ||
-                'dialog, [popover], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [aria-modal="true"]'
+                'dialog, [popover], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"], [aria-modal="true"]'
             );
             listed.forEach(el => candidates.push(el));
             if (root.nodeType === 1 && H.isOverlayRoot(root)) {
@@ -1654,9 +1800,26 @@
             if (navState === 'expanded') {
                 seen.add(el);
                 const prevNavState = navDrawerStateHistory.get(el);
+                // Deliberately does NOT fall back to isFreshlyMountedContentPanel
+                // the way visitExpandedContentPanelElement does — tried that
+                // once and reverted it. A fixed/sticky, link-rich element
+                // that's simply permanent page chrome (never actually
+                // collapses) satisfies isLikelyNavDrawerInfo's shape on
+                // every page load and has no real 'collapsed' sighting to
+                // ever transition from; the fresh-mount fallback treated
+                // that first-ever 'expanded' sighting as "just opened" and
+                // painted it opaque over whatever it was sitting on
+                // (confirmed on store.hypixel.net's hero banner — a
+                // Ranks/Bundles/Gold/... link row over background artwork,
+                // painted solid, hiding the art). This is exactly the
+                // ambient-chrome false positive isNavDrawerOpenTransition's
+                // strict collapsed-first gate already exists to prevent
+                // (the wtatennis.com precedent) — the fallback just reopened
+                // that door. Only visitExpandedContentPanelElement's own
+                // narrower gate (isExpandableContentPanelShape, no nav-link
+                // signal) keeps the fallback there safe.
                 const isOpenTransition = !!(H.isNavDrawerOpenTransition
                     && H.isNavDrawerOpenTransition(prevNavState, navState));
-                navDrawerStateHistory.set(el, 'expanded');
                 navDrawerPendingCollapse.delete(el);
                 // Paint on a confirmed open transition, or keep repainting an
                 // already-confirmed drawer every pass (self-healing if the
@@ -1671,6 +1834,26 @@
                     let navRect;
                     try { navRect = el.getBoundingClientRect(); } catch (e) { return; }
                     if (navRect.width < 1 || navRect.height < 1) return;
+                    // Only record 'expanded' once actually treated as an
+                    // open — writing it unconditionally (as this used to,
+                    // before the fresh-mount fallback above) would
+                    // permanently poison prevNavState to 'expanded' on the
+                    // very first declined sighting: either the fresh-mount
+                    // settle-time gate hasn't elapsed yet, OR — the subtler
+                    // case fixed by writing this only here, after the
+                    // geometry/visibility checks above — the element is
+                    // caught mid-CSS-transition, still hidden/zero-size for
+                    // this one debounced pass (a near-universal shape for an
+                    // animating drawer). Either way, NEITHER
+                    // isNavDrawerOpenTransition (needs prevState ===
+                    // 'collapsed') NOR isFreshlyMountedContentPanel (bails
+                    // whenever prevState !== undefined) could ever fire
+                    // again for that element once poisoned — it would stay
+                    // unpaintable forever, with whether it happens at all
+                    // depending purely on pass-vs-animation timing. Mirrors
+                    // the same ordering used by visitNavMenuPanelElement /
+                    // visitExpandedContentPanelElement.
+                    navDrawerStateHistory.set(el, 'expanded');
                     paintModalCardSheet(el);
                 }
                 return;
@@ -1678,14 +1861,12 @@
             if (navState === 'collapsed') {
                 if (navDrawerStateHistory.get(el) === 'expanded') {
                     // Don't let a single live 'collapsed' reading overwrite
-                    // an already-confirmed open drawer — require the same
-                    // verdict on a second, later pass first (see
-                    // navDrawerPendingCollapse's doc comment above).
-                    if (navDrawerPendingCollapse.get(el)) {
+                    // an already-confirmed open drawer — require
+                    // NAV_DRAWER_COLLAPSE_CONFIRM_READINGS consecutive
+                    // agreeing passes first (see navDrawerPendingCollapse's
+                    // doc comment above and notePendingRevert's below).
+                    if (notePendingRevert(navDrawerPendingCollapse, el, NAV_DRAWER_COLLAPSE_CONFIRM_READINGS)) {
                         navDrawerStateHistory.set(el, 'collapsed');
-                        navDrawerPendingCollapse.delete(el);
-                    } else {
-                        navDrawerPendingCollapse.set(el, true);
                     }
                 } else {
                     navDrawerStateHistory.set(el, 'collapsed');
@@ -1693,6 +1874,54 @@
             }
             // 'ambiguous' or null (not a candidate): leave history untouched
             // and fall through to the checks below, same as before.
+        }
+        // Non-ARIA, full-viewport/covering-sheet position:fixed scrim —
+        // invisible to every other path: reopaqueOverlays' OVERLAY_SELECTOR
+        // requires an ARIA role, and isLikelyModalCard/isModalCardShape
+        // below deliberately EXCLUDES covering-sheet sizes (so an ad/
+        // tracking curtain never gets painted opaque) — but that exclusion
+        // doesn't just skip painting the wrapper, it means nothing ever
+        // flags it as an overlay worth checking in the first place, so the
+        // "leave the scrim transparent, find the real inner card, paint
+        // THAT opaque" pipeline (paintOverlayScrimAsTransparent →
+        // findInnerModalCard/findInnerDialogPanel) that ARIA-tagged
+        // overlays already get never triggers either. Confirmed on
+        // truthfinder.com's "Notice" consent popup: a plain, role-less
+        // position:fixed, full-viewport .modal-container div wrapping an
+        // ordinary white card — the wrapper's background is correctly
+        // stripped by the universal rule, but nothing ever looked inside
+        // it for the real card, so the card's background stayed stripped
+        // too with nothing behind it but the themed page. Routing it
+        // through the same pipeline ARIA overlays use is safe: that
+        // pipeline only ever paints something when findInnerModalCard/
+        // findInnerDialogPanel confirm a genuine inner card (hasAction,
+        // real text, reasonable non-covering-sheet size) — and
+        // isInnerModalCardInfo (what findInnerModalCard matches against)
+        // is isModalCardShape, which ITSELF excludes covering-sheet/
+        // full-viewport candidates, so a legitimate position:fixed
+        // scroll-lock shell wrapping a whole page (not a modal) can't get
+        // a false-positive paint: its main-content area would itself be
+        // too large to match. Gated on !isOverlayChrome so this never
+        // double-handles an element reopaqueOverlays already owns.
+        if (!H.isOverlayChrome(el)) {
+            let fixedStyle;
+            try { fixedStyle = getComputedStyle(el); } catch (eFixed) { fixedStyle = null; }
+            if (fixedStyle && fixedStyle.position === 'fixed'
+                && fixedStyle.visibility !== 'hidden' && fixedStyle.opacity !== '0') {
+                let fixedRect;
+                try { fixedRect = el.getBoundingClientRect(); } catch (eRect) { fixedRect = null; }
+                if (fixedRect && fixedRect.width >= 1 && fixedRect.height >= 1
+                    && isOverlayCoveringSheet(fixedRect, vh, vw)) {
+                    seen.add(el);
+                    // true (last arg): this is the one call site
+                    // allowNonAriaFullscreenFallback is safe to pass from —
+                    // see its own doc comment on paintOverlayScrimAsTransparent
+                    // for why reopaqueOverlays/revertGrownModalCards must
+                    // never pass it.
+                    paintOverlayScrimAsTransparent(el, vh, vw, false, true);
+                    return;
+                }
+            }
         }
         if (isLikelyModalCardCached(el, modalCardCache, vh, vw)) {
             seen.add(el);
@@ -1847,6 +2076,23 @@
         stickyModified.delete(el);
     }
 
+    // Same "don't flicker on one disagreeing sample" protection as
+    // navDrawerStateHistory (see notePendingRevert's doc comment), applied
+    // only at visitStickyElement's two GEOMETRY-dependent revert triggers
+    // (isLikelyModalCardCached, shouldSkipStickyElement) — the element's own
+    // live rect/coverage fractions are exactly the kind of signal a nearby,
+    // unrelated reflow can transiently disturb. The other three revert
+    // triggers in that function (ad/chrome-host skip, AMP-chrome tag/class
+    // match, position !== fixed/sticky) are deterministic identity/property
+    // checks that can't transiently flicker that way, so they keep
+    // reverting immediately — gating them would only add latency with no
+    // protective benefit.
+    function maybeRevertStickyPaint(el) {
+        if (notePendingRevert(stickyPendingRevert, el, REVERT_CONFIRM_READINGS)) {
+            revertStickyPaint(el);
+        }
+    }
+
     function isAdThemingSkipped(el) {
         if (!el || !H) return false;
         try {
@@ -1986,7 +2232,7 @@
         // Modal cards / promos are the overlay pass's job — never paint them
         // as chrome with --aura-bg (OneSignal, cookie cards, etc.).
         if (isLikelyModalCardCached(el, modalCardCache, vh, vw)) {
-            if (stickyModified.has(el)) revertStickyPaint(el);
+            if (stickyModified.has(el)) maybeRevertStickyPaint(el);
             return;
         }
         let style;
@@ -2065,9 +2311,37 @@
                         const child = row.children[i];
                         const w = child.getBoundingClientRect().width;
                         covered += w;
+                        // A child slot is routinely itself a thin wrapper div
+                        // around the real pre-styled button (one more level of
+                        // the exact "portal wraps it in extra divs" shape `row`
+                        // above already unwraps) — checking only the child's
+                        // OWN background misses an opaque fill one level
+                        // deeper, wrongly concludes "children aren't self-
+                        // opaque," and paints the outer wrapper anyway.
+                        // Confirmed on sky.coflnet.com's Notify/copy/scroll-to-
+                        // top bar (3 direct children; two are transparent
+                        // single-child wrapper divs around the real
+                        // .btn-primary button) and independently on
+                        // Kayak.com's top nav header (mc6t-wrapper) — same
+                        // shape, unrelated site/stack. Checks each level's OWN
+                        // background FIRST and only descends if that level
+                        // isn't already opaque (rather than blindly unwrapping
+                        // straight to depth 2 the way `row` does above) — an
+                        // already-opaque button with a single icon/span child
+                        // must be read at its own level, not skipped past in
+                        // favor of the icon's possibly-transparent fill.
                         try {
-                            const parsed = H.parseCssRgb(getComputedStyle(child).backgroundColor);
-                            if (parsed && parsed.a >= 0.5) coveredOpaque += w;
+                            let opaqueCheckTarget = child;
+                            let childUnwrapDepth = 0;
+                            let isOpaque = false;
+                            while (true) {
+                                const parsed = H.parseCssRgb(getComputedStyle(opaqueCheckTarget).backgroundColor);
+                                if (parsed && parsed.a >= 0.5) { isOpaque = true; break; }
+                                if (childUnwrapDepth >= 2 || !opaqueCheckTarget.children || opaqueCheckTarget.children.length !== 1) break;
+                                opaqueCheckTarget = opaqueCheckTarget.children[0];
+                                childUnwrapDepth++;
+                            }
+                            if (isOpaque) coveredOpaque += w;
                         } catch (e2) {}
                     }
                     childCoverageFrac = Math.min(1, covered / rect.width);
@@ -2075,14 +2349,15 @@
                 }
             }
         } catch (e) {}
-        // z-index >= 1000 (below) is meant to catch real overlay/CMP/
-        // notification tiers, but ordinary sticky sub-navigation commonly
-        // uses a similarly "high enough to stay above content" z-index by
-        // convention alone — confirmed on bbc.com's live-match Live
-        // Reporting/Scores/Tables tab bar (role="tablist", z-index:1003),
-        // painted transparent and overlapping the article underneath it as
-        // a result. A tablist is an unambiguous ARIA role for real
-        // navigation, never a notification/CMP widget, so it's exempted.
+        // z-index >= 2000 (below, in shouldSkipStickyElement) is meant to
+        // catch real overlay/CMP/notification tiers, but ordinary sticky
+        // sub-navigation commonly uses a similarly "high enough to stay
+        // above content" z-index by convention alone — confirmed on
+        // bbc.com's live-match Live Reporting/Scores/Tables tab bar
+        // (role="tablist", z-index:1003), painted transparent and
+        // overlapping the article underneath it as a result. A tablist is
+        // an unambiguous ARIA role for real navigation, never a
+        // notification/CMP widget, so it's exempted.
         let hasTablistRole = false;
         try {
             hasTablistRole = el.getAttribute('role') === 'tablist' || !!el.querySelector('[role="tablist"]');
@@ -2107,7 +2382,7 @@
             childOpaqueCoverageFrac,
             hasTablistRole,
         })) {
-            if (stickyModified.has(el)) revertStickyPaint(el);
+            if (stickyModified.has(el)) maybeRevertStickyPaint(el);
             return;
         }
         el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
@@ -2117,6 +2392,7 @@
         // icon-font glyph with no text of its own.
         el.style.setProperty('color', 'var(--aura-text)', 'important');
         stickyModified.add(el);
+        stickyPendingRevert.delete(el);
     }
 
     // Small icon-only controls (close/share/kebab-menu) pinned via
@@ -2429,7 +2705,23 @@
             // Composer-row-shaped ancestors collected during the climb;
             // painted below once the climb finishes (see the paint step).
             const sizedAncestors = [];
-            for (let depth = 0; depth < 8; depth++) {
+            // Innermost position:fixed/sticky ancestor seen during the
+            // climb, tracked separately from sizedAncestors — see its use
+            // in the paint step below. Google has since added an extra
+            // inner wrapper div (confirmed live: a ~42px-tall sliver that
+            // also happens to satisfy the size band below) between the
+            // field and its real floating pill, pushing the actual pill to
+            // the 9th ancestor — one level past this climb's old 8-hop
+            // limit. sizedAncestors[0] (the innermost size-matching
+            // ancestor) resolved to that inner sliver instead of the real
+            // pill, so only a thin strip got painted opaque while the
+            // pill's own background — and the +/mic/send icon buttons that
+            // live inside IT, not inside the sliver — stayed untouched,
+            // reproducing the on-device report (AI Overview text visible
+            // through the composer, icons gone). 10 gives a couple of
+            // hops' margin beyond the 9 currently needed.
+            let floatingAncestor = null;
+            for (let depth = 0; depth < 10; depth++) {
                 const parent = node.parentElement;
                 if (!parent || parent === document.body || parent === document.documentElement) {
                     break;
@@ -2452,6 +2744,9 @@
                 if (!isFloating && rect.height > 180) break;
                 if (isFloating || (rect.height >= 36 && rect.width >= 160)) {
                     sizedAncestors.push(parent);
+                }
+                if (isFloating && !floatingAncestor) {
+                    floatingAncestor = parent;
                 }
                 // Decorative empty previous siblings behind the field / pill.
                 let sib = node.previousElementSibling;
@@ -2482,17 +2777,28 @@
             // to transparent. clearAskAnythingFill is intentionally not
             // used here anymore; it's still used elsewhere for genuinely
             // decorative empty siblings, where transparent is correct.
-            if (sizedAncestors.length) {
-                const pill = sizedAncestors[0];
-                pill.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
-                pill.style.setProperty('background-image', 'none', 'important');
-                askAnythingModified.add(pill);
-                clearAskAnythingIconButtons(pill);
-                attachDedicatedGoogleRepaintObserver(pill, e => {
+            const paintComposerShell = el => {
+                el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
+                el.style.setProperty('background-image', 'none', 'important');
+                askAnythingModified.add(el);
+                clearAskAnythingIconButtons(el);
+                attachDedicatedGoogleRepaintObserver(el, e => {
                     e.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
                     e.style.setProperty('background-image', 'none', 'important');
                     clearAskAnythingIconButtons(e);
                 });
+            };
+            if (sizedAncestors.length) {
+                paintComposerShell(sizedAncestors[0]);
+            }
+            // Additive: paint the real floating pill too when the climb
+            // found one distinct from the innermost size-matching wrapper
+            // above (see floatingAncestor's doc comment). Every
+            // previously-working case is untouched — sizedAncestors[0] is
+            // still painted exactly as before — this only adds coverage
+            // for the shape where the two differ.
+            if (floatingAncestor && floatingAncestor !== sizedAncestors[0]) {
+                paintComposerShell(floatingAncestor);
             }
             field.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
             field.style.setProperty('background-image', 'none', 'important');
@@ -3055,8 +3361,17 @@
         const navState = H.classifyNavMenuPanelState(el, getComputedStyle, { vh, vw });
         if (navState === 'expanded') {
             const prevNavState = navMenuPanelStateHistory.get(el);
+            // Deliberately does NOT fall back to isFreshlyMountedContentPanel
+            // the way visitExpandedContentPanelElement does — see the
+            // matching comment on the nav-drawer branch in
+            // visitOverlayModalWalk for why: a permanent, always-visible,
+            // nav-shaped element (no real 'collapsed' sighting to ever
+            // transition from) gets misclassified as "just opened" on every
+            // page load, painting it opaque over whatever it was sitting on
+            // (confirmed regression on store.hypixel.net). Reverted.
             const isOpenTransition = !!(H.isNavDrawerOpenTransition
                 && H.isNavDrawerOpenTransition(prevNavState, navState));
+            navMenuPanelPendingCollapse.delete(el);
             // Same history-poisoning fix as visitExpandedContentPanelElement
             // above: only record 'expanded' once actually treated as an
             // open. A panel that ever mounts pre-expanded (no earlier
@@ -3065,7 +3380,15 @@
             // and isNavDrawerOpenTransition (which requires prevState ===
             // 'collapsed') could never fire again for it.
             if (isOpenTransition || navMenuPanelOpaqueModified.has(el)) {
-                navMenuPanelStateHistory.set(el, 'expanded');
+                // Written only once geometry/visibility are confirmed below
+                // (immediately before the paint itself), not here at the top
+                // of the block — otherwise a pass that catches this element
+                // mid-CSS-transition (still hidden/zero-size for this one
+                // debounced pass, a near-universal shape for an animating
+                // menu) would still commit 'expanded' to history despite
+                // never actually painting, permanently poisoning prevNavState
+                // and locking the element out of ever being painted. See the
+                // matching comment in visitExpandedContentPanelElement.
                 let style;
                 try { style = getComputedStyle(el); } catch (e) { return; }
                 if (style.visibility === 'hidden' || style.opacity === '0') return;
@@ -3073,6 +3396,7 @@
                 let rect;
                 try { rect = el.getBoundingClientRect(); } catch (e2) { return; }
                 if (rect.width < 1 || rect.height < 1) return;
+                navMenuPanelStateHistory.set(el, 'expanded');
                 el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
                 el.style.setProperty('background-image', 'none', 'important');
                 navMenuPanelOpaqueModified.add(el);
@@ -3080,8 +3404,17 @@
             return;
         }
         if (navState === 'collapsed') {
-            navMenuPanelStateHistory.set(el, 'collapsed');
-            if (navMenuPanelOpaqueModified.has(el)) revertNavMenuPanelPaint(el);
+            // Same "don't flicker on one disagreeing sample" protection as
+            // navDrawerStateHistory — see notePendingRevert's doc comment.
+            if (navMenuPanelStateHistory.get(el) === 'expanded') {
+                if (notePendingRevert(navMenuPanelPendingCollapse, el, REVERT_CONFIRM_READINGS)) {
+                    navMenuPanelStateHistory.set(el, 'collapsed');
+                    if (navMenuPanelOpaqueModified.has(el)) revertNavMenuPanelPaint(el);
+                }
+            } else {
+                navMenuPanelStateHistory.set(el, 'collapsed');
+                if (navMenuPanelOpaqueModified.has(el)) revertNavMenuPanelPaint(el);
+            }
         }
         // 'ambiguous' or null: leave history and any existing paint alone.
     }
@@ -3180,22 +3513,29 @@
             const isOpenTransition = !!(H.isNavDrawerOpenTransition
                 && H.isNavDrawerOpenTransition(prevState, panelState))
                 || isFreshlyMountedContentPanel(el, prevState);
+            expandedContentPanelPendingCollapse.delete(el);
             // Only record 'expanded' once we've actually decided to treat
             // this sighting as an open — never on a declined pass. Writing
             // it unconditionally here would permanently poison prevState
             // for any element whose first-ever 'expanded' sighting fails
             // isFreshlyMountedContentPanel's settle-time/sibling gate (e.g.
             // a panel that mounts within the settle window, or shares a
-            // wrapper class with a sibling at mount time): every later pass
-            // would see prevState === 'expanded' instead of `undefined`, so
-            // isFreshlyMountedContentPanel could never re-qualify it and
+            // wrapper class with a sibling at mount time), OR — the subtler
+            // case this history-write's placement exists to cover — an
+            // element caught mid-CSS-transition, still visibility:hidden/
+            // opacity:0/zero-size for this one 150ms-debounced pass (a near-
+            // universal shape for an animating menu/dropdown): every later
+            // pass would see prevState === 'expanded' instead of `undefined`,
+            // so isFreshlyMountedContentPanel could never re-qualify it and
             // isNavDrawerOpenTransition could never fire either (it needs
             // prevState === 'collapsed', which this element never has) —
-            // the element would stay transparent forever. Leaving prevState
-            // as `undefined` on a declined pass lets the next pass retry
-            // isFreshlyMountedContentPanel fresh instead of locking out.
+            // the element would stay transparent forever, with whether it
+            // happens at all depending purely on pass-vs-animation timing.
+            // Leaving prevState as `undefined` on a declined pass (hence
+            // writing it only once geometry/visibility/the video-sibling
+            // check are ALL confirmed, immediately before the opaque paint
+            // itself) lets the next pass retry fresh instead of locking out.
             if (isOpenTransition || expandedContentPanelOpaqueModified.has(el)) {
-                expandedContentPanelStateHistory.set(el, 'expanded');
                 let style;
                 try { style = getComputedStyle(el); } catch (e) { return; }
                 if (style.visibility === 'hidden' || style.opacity === '0') return;
@@ -3220,6 +3560,7 @@
                     if (expandedContentPanelOpaqueModified.has(el)) revertExpandedContentPanelPaint(el);
                     return;
                 }
+                expandedContentPanelStateHistory.set(el, 'expanded');
                 el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
                 el.style.setProperty('background-image', 'none', 'important');
                 expandedContentPanelOpaqueModified.add(el);
@@ -3227,8 +3568,20 @@
             return;
         }
         if (panelState === 'collapsed') {
-            expandedContentPanelStateHistory.set(el, 'collapsed');
-            if (expandedContentPanelOpaqueModified.has(el)) revertExpandedContentPanelPaint(el);
+            // Same "don't flicker on one disagreeing sample" protection as
+            // navDrawerStateHistory — see notePendingRevert's doc comment.
+            // The separate video-sibling disqualification revert above
+            // (hasVideoSibling) is a different bug class and stays immediate
+            // — not gated here.
+            if (expandedContentPanelStateHistory.get(el) === 'expanded') {
+                if (notePendingRevert(expandedContentPanelPendingCollapse, el, REVERT_CONFIRM_READINGS)) {
+                    expandedContentPanelStateHistory.set(el, 'collapsed');
+                    if (expandedContentPanelOpaqueModified.has(el)) revertExpandedContentPanelPaint(el);
+                }
+            } else {
+                expandedContentPanelStateHistory.set(el, 'collapsed');
+                if (expandedContentPanelOpaqueModified.has(el)) revertExpandedContentPanelPaint(el);
+            }
         }
         // 'ambiguous' or null: leave history and any existing paint alone.
     }
@@ -3390,6 +3743,15 @@
         if (!el || el.nodeType !== 1 || !H || !H.shouldClearShellBackground) return;
         if (el === document.documentElement || el === document.body) return;
         if (overlayModified.has(el)) return;
+        // shellModified is never reverted per-element anywhere (only wiped
+        // entirely by removeTheme()) — this pass runs twice per safety-pass
+        // invocation (once via the explicit rethemeOpaqueShells pre-pass,
+        // once again in the main per-element walk), so for any element
+        // already confirmed here, re-deriving style/rect and re-applying
+        // the identical transparent fill is pure redundant work with no
+        // possible different outcome. Skipping it is behavior-identical,
+        // not a heuristic change.
+        if (shellModified.has(el)) return;
         if (el.id === 'aura-core-engine' || el.id === 'aura-split-bg') return;
         if (el.closest && el.closest('#aura-split-bg')) return;
 
@@ -3961,14 +4323,15 @@
             ignoreMutationsTimer = setTimeout(() => {
                 ignoreMutations = false;
                 ignoreMutationsTimer = null;
-                // Mutations that arrived while this pass was running were
-                // queued (see dispatchSafetyPasses), not dropped — re-arm
-                // the same debounce path so they're not lost.
+                // Mutations (including synthetic ones pushed by the
+                // 'change'/'transitionend'/'toggle' listeners) that arrived
+                // while this pass was running were queued, not dropped —
+                // re-arm the same debounce path so they're not lost.
+                // ignoreMutations is already false at this point (just
+                // cleared above), so scheduleSafetyPassDispatch will
+                // actually arm the timer.
                 if (pendingMutationRecords.length && !mutationDebounceTimer) {
-                    mutationDebounceTimer = setTimeout(() => {
-                        mutationDebounceTimer = null;
-                        dispatchSafetyPasses();
-                    }, 150);
+                    scheduleSafetyPassDispatch();
                 }
             }, 50);
         }
@@ -4270,6 +4633,7 @@
             } catch (e) {}
         });
         stickyModified.clear();
+        stickyPendingRevert = new WeakMap();
         // Revert near-white surfaces we cleared
         brightModified.forEach(el => {
             try {
@@ -4289,6 +4653,7 @@
         });
         overlayModified.clear();
         modalCardOpaqueModified.clear();
+        modalCardPendingRevert = new WeakMap();
         // Reset so a drawer already open at re-apply time is treated as a
         // fresh baseline (no paint) rather than reading 'expanded' as its
         // own prior state and never registering a transition.
@@ -4302,6 +4667,7 @@
         });
         navMenuPanelOpaqueModified.clear();
         navMenuPanelStateHistory = new WeakMap();
+        navMenuPanelPendingCollapse = new WeakMap();
         expandedContentPanelOpaqueModified.forEach(el => {
             try {
                 el.style.removeProperty('background-color');
@@ -4310,6 +4676,7 @@
         });
         expandedContentPanelOpaqueModified.clear();
         expandedContentPanelStateHistory = new WeakMap();
+        expandedContentPanelPendingCollapse = new WeakMap();
         floatingIconControlModified.forEach(el => {
             try {
                 el.style.removeProperty('background-color');
@@ -4420,6 +4787,14 @@
             }
             style.textContent = getFullStyleSheetCached(currentTheme, lastAppliedThemeKey);
             sameOriginIframeModified.add(iframeEl);
+            // Deliberately just the stylesheet — an earlier version also
+            // re-ran the sticky/overlay/nav-menu/top-chrome JS passes
+            // against the iframe's own document here (mirroring the shadow-
+            // DOM handling below), but that was never tied to a confirmed
+            // bug, only spec symmetry, and it adds real per-pass cost on
+            // iframe-heavy pages. Reverted after confirming other changes
+            // in the same batch were causing real regressions elsewhere, to
+            // remove a plausible contributor with nothing confirmed given up.
         } catch (e) {
             // Cross-origin, or the iframe document isn't in a themeable
             // state yet — safe, expected no-op.
@@ -4493,6 +4868,13 @@
                 // shape reopaqueExpandedContentPanels already handles in
                 // the light DOM (e.g. a plain expand-in-place dropdown).
                 safePass(() => reopaqueExpandedContentPanels(root.shadowRoot, shadowElements));
+                // Nav-semantic counterpart to the pass just above (Bootstrap-
+                // style .navbar-collapse, WordPress/Divi dropdowns) — same
+                // gap, just for the nav-signal variant. Nav-drawer parity
+                // already exists here since that logic lives inside
+                // visitOverlayModalWalk, already invoked per shadow element
+                // above; this was the one remaining gap.
+                safePass(() => reopaqueExpandedNavMenuPanels(root.shadowRoot, shadowElements));
 
                 // visitStickyElement above only paints elements that are
                 // themselves position:fixed/sticky — it can't help a top bar
@@ -4693,6 +5075,51 @@
         return out;
     }
 
+    // Shared debounce arm/reset, used by the MutationObserver callback below
+    // and by the 'change'/'transitionend'/'toggle' listeners in init() —
+    // identical behavior either way, just named once so neither caller has
+    // to duplicate the timer bookkeeping.
+    function scheduleSafetyPassDispatch() {
+        if (ignoreMutations) return;
+        if (mutationDebounceTimer) clearTimeout(mutationDebounceTimer);
+        mutationDebounceTimer = setTimeout(() => {
+            mutationDebounceTimer = null;
+            dispatchSafetyPasses();
+        }, 150);
+    }
+
+    // Shared by the 'change'/'transitionend'/'toggle' listeners in init() —
+    // none of them carry a real MutationRecord, so this pushes a synthetic
+    // one (real target, empty addedNodes/removedNodes) into the same
+    // pendingMutationRecords queue the MutationObserver callback uses,
+    // letting dispatchSafetyPasses' existing classify/scope logic handle it
+    // identically to a real mutation, including correctly merging with any
+    // real mutations that land in the same debounce window.
+    //
+    // target is event.target's PARENT, not event.target itself: for
+    // 'change', event.target is the checkbox/form control, and the content
+    // a CSS-only reveal shows (e.g. Wikipedia's mobile nav drawer) is its
+    // sibling — only guaranteed reachable because sibling combinators
+    // (~ / +) require a shared parent by definition, so scoping to the
+    // parent is structurally correct, not a heuristic guess. For
+    // 'transitionend'/'toggle', event.target is normally the revealed
+    // element itself; scoping one level up is a small, cheap safety margin.
+    // An earlier version of this forced a full-document walk instead,
+    // specifically to avoid this containment question — that turned out to
+    // cost real, repeated full walks on pages where these events fire often
+    // (an auto-resizing textarea's height transition on every few
+    // keystrokes, for example), causing visible lag/flicker. Scoping here
+    // is cheap and correct, so there's no need for that trade-off.
+    function queueScopedSafetyPass(event) {
+        if (!currentTheme) return;
+        const target = (event && event.target && event.target.nodeType === 1)
+            ? (event.target.parentElement || event.target)
+            : null;
+        if (!target) return;
+        pendingMutationRecords.push({ target, addedNodes: [], removedNodes: [] });
+        scheduleSafetyPassDispatch();
+    }
+
     // Runs on the MutationObserver's 150ms debounce. Classifies the batch
     // of records queued since the last dispatch (see pendingMutationRecords
     // — mutations arriving while a pass is running are buffered, not
@@ -4703,6 +5130,17 @@
     // unresolvable common ancestor — falls back to the full document, which
     // is always correct; only a confidently "small and localized" batch
     // narrows the walk.
+    //
+    // The 'change'/'transitionend'/'toggle' listeners in init() also feed
+    // this same pipeline — they push a synthetic record (real target, empty
+    // addedNodes/removedNodes) into pendingMutationRecords rather than
+    // bypassing scoping, so a CSS-only reveal (Wikipedia's mobile nav
+    // drawer, a general SIBLING of the checkbox that reveals it) gets
+    // scoped to that target's parent (guaranteed to contain any sibling-
+    // combinator-revealed content) instead of forcing a full-document walk
+    // on every such event — the earlier full-walk-always design caused real
+    // lag/flicker on pages where this fires often (an auto-resizing
+    // textarea's height transition on every few keystrokes, for example).
     function dispatchSafetyPasses() {
         const records = pendingMutationRecords;
         pendingMutationRecords = [];
@@ -4762,6 +5200,7 @@
                 window.__TINT_THEME_DATA__._ready = true;
                 window.__TINT_THEME__ = theme;
                 applyTheme(theme);
+                initAppliedFromCache = true;
             }
         }
 
@@ -4784,12 +5223,7 @@
                     for (let i = 0; i < mutationsList.length; i++) {
                         pendingMutationRecords.push(mutationsList[i]);
                     }
-                    if (ignoreMutations) return;
-                    if (mutationDebounceTimer) clearTimeout(mutationDebounceTimer);
-                    mutationDebounceTimer = setTimeout(() => {
-                        mutationDebounceTimer = null;
-                        dispatchSafetyPasses();
-                    }, 150);
+                    scheduleSafetyPassDispatch();
                 });
                 mutationObserver.observe(document.documentElement, {
                     childList: true,
@@ -4826,6 +5260,72 @@
                     }, 200);
                 }, { passive: true });
             }
+
+            // CSS-only reveals (checkbox/radio-hack menus, :target/:hover/
+            // :focus-within accordions) toggle purely via the pseudo-class
+            // engine — no attribute, no childList mutation anywhere, so the
+            // MutationObserver above never fires for them. Confirmed live
+            // on en.wikipedia.org's mobile nav drawer (#mw-mf-page-left): a
+            // general SIBLING of the checkbox that reveals it
+            // (#main-menu-input:checked ~ #mw-mf-page-left), toggled by a
+            // native checkbox `checked` STATE change, which is a DOM
+            // property — never an attribute mutation. 'change' catches the
+            // toggle instantly, even with no CSS transition at all;
+            // 'transitionend' (filtered to TRANSITIONEND_REVEAL_PROPERTIES)
+            // catches the broader :hover/:focus-within/:target class that
+            // uses a transition without any attribute change either. Both
+            // feed queueScopedSafetyPass (see its own doc comment for why
+            // this is scoped to event.target's parent, not forced full-
+            // document).
+            if (!changeListenerAttached) {
+                changeListenerAttached = true;
+                document.addEventListener('change', (event) => {
+                    queueScopedSafetyPass(event);
+                }, { capture: true, passive: true });
+            }
+            if (!transitionendListenerAttached) {
+                transitionendListenerAttached = true;
+                document.addEventListener('transitionend', (event) => {
+                    if (!currentTheme) return;
+                    // Google's search-suggestions dropdown and AI composer
+                    // (already the subject of unresolved, previously
+                    // regression-prone lag/flicker issues — see
+                    // SUBMISSION_READINESS.md items 6/7, and the dedicated
+                    // low-latency repaint observer elsewhere in this file
+                    // that exists specifically because the general full-
+                    // document-walk pipeline has caused Google problems
+                    // before) plausibly transition exactly the properties
+                    // this listener watches on open/close. Excluding Google
+                    // here stops this trigger from reaching an already-
+                    // fragile area without touching any of that existing,
+                    // explicitly off-limits code — kept even though scoping
+                    // (vs. the earlier always-full-document design) already
+                    // reduces the risk this was originally added against.
+                    if (isGoogleHost()) return;
+                    if (!TRANSITIONEND_REVEAL_PROPERTIES[event.propertyName]) return;
+                    queueScopedSafetyPass(event);
+                }, { capture: true, passive: true });
+            }
+            // The native Popover API (popover attribute, .showPopover()/
+            // .hidePopover()) has no reflected content attribute for open/
+            // closed state — unlike <dialog>'s "open" attribute, already
+            // covered by attributeFilter above — so toggling one produces
+            // no MutationRecord either, the same blind-spot class as the
+            // :checked-driven menus 'change'/'transitionend' exist to catch.
+            // State is exposed only via :popover-open and a dedicated
+            // 'toggle' event (fired after the state change, same timing as
+            // 'change'). Per spec this 'toggle' event (both <dialog>'s and
+            // the Popover API's) does NOT bubble — capture:true is load-
+            // bearing here, not stylistic: a bubble-phase listener on
+            // document would never fire for it at all, since bubbling-up is
+            // the only phase a non-bubbling event skips; the top-down
+            // capture phase still reaches every element regardless.
+            if (!toggleListenerAttached) {
+                toggleListenerAttached = true;
+                document.addEventListener('toggle', (event) => {
+                    queueScopedSafetyPass(event);
+                }, { capture: true, passive: true });
+            }
         }
 
         // Re-evaluate time-based day/night every minute so themes flip at
@@ -4855,10 +5355,18 @@
     });
 
     init();
-    
-    // CRITICAL: Immediately trigger background script to sync from App Group
-    // This ensures we get fresh theme data even if background script hasn't run yet
+
+    // Fallback sync for a cold/empty browser.storage.local cache (e.g. the
+    // extension's background process was suspended and hasn't written
+    // anything yet) — ensures we get fresh theme data even if background.js
+    // hasn't run yet. Skipped when init() already applied a theme from a
+    // warm cache (initAppliedFromCache): in that case the page is already
+    // correctly themed and this would just be a redundant native-messaging
+    // round trip on every page load for no visible benefit. The periodic
+    // background sync and the visibilitychange listener above still keep
+    // an already-loaded page in sync with any later theme change either way.
     setTimeout(() => {
+        if (initAppliedFromCache) return;
         requestThemeUpdate();
     }, 100);
 })();
