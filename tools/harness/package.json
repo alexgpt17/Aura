@@ -1,0 +1,11 @@
+{
+  "name": "aura-harness",
+  "private": true,
+  "description": "WebKit harness for measuring and screenshotting the Aura extension engine",
+  "scripts": {
+    "harness": "node run.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.1"
+  }
+}

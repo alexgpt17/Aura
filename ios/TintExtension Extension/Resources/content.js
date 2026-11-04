@@ -9,7 +9,7 @@
     const AURA_DEBUG_LOGGING = false;
     let currentTheme = null;
     // <iframe> elements whose same-origin contentDocument we've injected a
-    // themed <style data-aura-iframe> into (see handleShadowDOM /
+    // themed <style data-aura-iframe> into (see shadowRootSteps /
     // visitSameOriginIframe) — tracked only for removeTheme() cleanup.
     const sameOriginIframeModified = new Set();
     // Set when the opt-in Dark Mode toggle (nativeDarkModeEnabled) has
@@ -102,28 +102,6 @@
     // separately from modalCardOpaqueModified (a different mechanism/gate)
     // so their revert paths never interfere with each other.
     const navMenuPanelOpaqueModified = new Set();
-    // Same transition-gating idea again, one level more general than
-    // navMenuPanelStateHistory: an in-flow (position:static/relative) card
-    // that expands with real, actionable content but carries NO nav
-    // semantics at all — e.g. booking.com's inline "Enter dates to see
-    // prices" date-picker, a plain role-less <div> that grows from
-    // collapsed to a large white card with no <nav>/links (a calendar has
-    // none) when its trigger is focused. classifyNavMenuPanelState can
-    // never reach it (requires nav tag/descendant/link-count); isLikelyModalCard
-    // can't either (requires position:fixed, precisely to avoid flagging
-    // ordinary absolute promo tiles). See classifyExpandedContentPanelState /
-    // reopaqueExpandedContentPanels below.
-    let expandedContentPanelStateHistory = new WeakMap();
-    // Pending-revert streak for expandedContentPanelStateHistory's collapsed
-    // direction — same idea as navDrawerPendingCollapse above, via
-    // notePendingRevert. Does NOT cover the separate video-sibling
-    // disqualification revert (a different bug class — see
-    // visitExpandedContentPanelElement), which stays immediate.
-    let expandedContentPanelPendingCollapse = new WeakMap();
-    // Elements forced opaque by reopaqueExpandedContentPanels. Tracked
-    // separately from the other opaque-modified sets for the same reason as
-    // navMenuPanelOpaqueModified above.
-    const expandedContentPanelOpaqueModified = new Set();
     // Elements forced opaque by visitFloatingIconControlElement — small
     // icon-only controls (close/share/kebab-menu) pinned via position:fixed/
     // absolute to float over media (a photo, a map) whose own translucent
@@ -162,6 +140,7 @@
     let changeListenerAttached = false;
     let transitionendListenerAttached = false;
     let toggleListenerAttached = false;
+    let userInputListenersAttached = false;
     // Set inside init() once a theme was successfully applied from an
     // already-warm browser.storage.local cache — lets the fixed 100ms
     // startup requestThemeUpdate() (see bottom of file) skip itself on the
@@ -228,7 +207,7 @@
     // lastAppliedThemeKey, which is already recomputed/assigned exactly when
     // the active theme changes (applyTheme) and cleared exactly when it's
     // removed (removeTheme), so it's always in sync with what a fresh build
-    // would produce. Without this, handleShadowDOM rebuilds the full sheet
+    // would produce. Without this, shadowRootSteps rebuilds the full sheet
     // from scratch for EVERY shadow root it finds on EVERY dispatched pass —
     // on a page like reddit.com with one shadow root per comment, that's a
     // real, self-inflicted lag source of exactly the same class already
@@ -242,13 +221,6 @@
     // never read for its own content beyond target/addedNodes/removedNodes.
     let pendingMutationRecords = [];
     let safetyPassesRaf = 0;
-    // Timestamp of the current theme's fresh apply — see
-    // visitExpandedContentPanelElement's fresh-mount allowance, which needs
-    // to tell "this element has no prior state because the page had only
-    // just started loading when we first saw it" apart from "this element
-    // has no prior state because it was inserted into the DOM well after
-    // the page (and this engine's initial walk of it) had already settled."
-    let engineAppliedAt = 0;
     const SPLIT_LAYER_ID = 'aura-split-bg';
     let bodyPositionForced = false;
     // Cache for the site's own !important opaque background-color rules
@@ -261,18 +233,22 @@
     const AUTHORED_OPAQUE_MAX_RULES_SCANNED = 15000;
     const AUTHORED_OPAQUE_MAX_SELECTORS = 300;
     let walkGeneration = 0;
-    let walkSliceRaf = 0;
-    const WALK_SLICE = 4000; // cap for the single-pass loops that don't use forEachSliced (unrelated to yielding — see FRAME_SLICE)
-    // Per-frame chunk size for forEachSliced, deliberately much smaller than
-    // WALK_SLICE: WALK_SLICE (4000) exceeds most real pages' element count,
-    // so using it as the chunk size meant forEachSliced completed in one
-    // synchronous call for the large majority of pages — the "chunking"
-    // provided no actual yielding to the browser at realistic page sizes.
-    // FRAME_SLICE is small enough to genuinely engage the
-    // requestAnimationFrame continuation below on ordinary pages, not just
-    // huge ones. Starting estimate — tune based on device feel, not
-    // measured yet.
-    const FRAME_SLICE = 300;
+    let walkSliceTimer = 0;
+    const WALK_SLICE = 4000; // cap for the per-pass element loops (unrelated to yielding — see SLICE_BUDGET_MS)
+    // A safety pass runs as a queue of steps (runSteps), sliced by time
+    // rather than element count so one slow step on a big page can't block
+    // input: each slice is its own task and stops after SLICE_BUDGET_MS.
+    // While the user is typing (a key/input event in the last
+    // TYPING_WINDOW_MS) slices shrink and are spaced out, so keystrokes
+    // never wait behind more than a few ms of engine work. Measured with
+    // tools/harness (Session 3): the old fixed 300-element rAF chunks plus
+    // a synchronous shadow-root phase produced 200+ ms tasks during
+    // hydration.
+    const SLICE_BUDGET_MS = 8;
+    const TYPING_SLICE_BUDGET_MS = 3;
+    const TYPING_SLICE_GAP_MS = 16;
+    const TYPING_WINDOW_MS = 600;
+    let lastUserInputAt = -Infinity;
 
     // How many consecutive disagreeing readings a revert/downgrade path must
     // see before it actually acts — see notePendingRevert below. nav-drawer
@@ -282,18 +258,19 @@
     // point for them.
     const REVERT_CONFIRM_READINGS = 2;
     const NAV_DRAWER_COLLAPSE_CONFIRM_READINGS = 3;
-    // Two calls to notePendingRevert for the SAME element inside this window
-    // are treated as one reading, not two — needed because
-    // reopaqueExpandedNavMenuPanels/reopaqueExpandedContentPanels/
+    // Two calls to notePendingRevert for the SAME element during one pass
+    // (same pendingRevertReading), or inside this window, are treated as
+    // one reading, not two — needed because reopaqueExpandedNavMenuPanels/
     // reopaqueStickyFixed each re-check their already-opaque Set and then
     // separately re-walk the full element list within one runSafetyPasses
-    // call, visiting an already-tracked element twice per real pass. 100ms
-    // safely exceeds that synchronous re-walk gap while staying well under
-    // the ~150ms MutationObserver debounce that separates two genuinely
-    // distinct passes — if it's ever a little too generous on an unusually
-    // large page, the only consequence is slightly MORE tolerance before a
-    // revert, never a wrongful paint.
+    // call, visiting an already-tracked element twice per real pass. Passes
+    // are time-sliced (runSteps), so those two visits can be more than
+    // 100ms apart; the per-pass reading counter covers that, and the time
+    // window still merges calls from outside a pass. Either way the only
+    // consequence of merging is slightly MORE tolerance before a revert,
+    // never a wrongful paint.
     const PENDING_REVERT_DEDUP_WINDOW_MS = 100;
+    let pendingRevertReading = 0;
 
     // Shared "require N consecutive disagreeing readings before reverting an
     // already-opaque/expanded element" gate. Originated as a one-off fix
@@ -308,11 +285,12 @@
     // revert/downgrade path, never on its paint/upgrade path — it can only
     // make a pass more reluctant to un-paint something already correctly
     // opaque, never more willing to paint something new. `map` is a WeakMap
-    // private to one call site, holding { count, lastReadAt }.
+    // private to one call site, holding { count, lastReadAt, reading }.
     function notePendingRevert(map, el, threshold) {
         const now = Date.now();
         const entry = map.get(el);
-        if (entry && (now - entry.lastReadAt) < PENDING_REVERT_DEDUP_WINDOW_MS) {
+        if (entry && (entry.reading === pendingRevertReading
+            || (now - entry.lastReadAt) < PENDING_REVERT_DEDUP_WINDOW_MS)) {
             return entry.count >= threshold;
         }
         const count = (entry ? entry.count : 0) + 1;
@@ -320,7 +298,7 @@
             map.delete(el);
             return true;
         }
-        map.set(el, { count, lastReadAt: now });
+        map.set(el, { count, lastReadAt: now, reading: pendingRevertReading });
         return false;
     }
 
@@ -381,10 +359,30 @@
 
     function cancelWalkSlices() {
         walkGeneration += 1;
-        if (walkSliceRaf) {
-            try { cancelAnimationFrame(walkSliceRaf); } catch (e) {}
-            walkSliceRaf = 0;
+        if (walkSliceTimer) {
+            clearTimeout(walkSliceTimer);
+            walkSliceTimer = 0;
         }
+    }
+
+    function noteUserInput() {
+        lastUserInputAt = performance.now();
+    }
+
+    function isUserTyping() {
+        return (performance.now() - lastUserInputAt) < TYPING_WINDOW_MS;
+    }
+
+    // Every slice runs in its own task, and MutationObserver records are
+    // delivered at the end of each task, so whatever is queued when a slice
+    // ends came from our own writes in that slice (no site code ran in
+    // between). Dropping them keeps Aura's inline-style writes from widening
+    // the next pass's scope to <html> or re-triggering passes. (A custom
+    // element reacting synchronously to one of our writes would be dropped
+    // too; the next site mutation picks it up.)
+    function discardOwnMutationRecords() {
+        if (!mutationObserver) return;
+        try { mutationObserver.takeRecords(); } catch (e) {}
     }
 
     function collectElements(root) {
@@ -406,23 +404,46 @@
         try { visit(el); } catch (e) {}
     }
 
-    function forEachSliced(elements, visit, onDone) {
+    // Runs `steps` in time-budgeted slices (see SLICE_BUDGET_MS). A step is
+    // either a function (run once; may return an array of further steps,
+    // which run next) or { items, visit } (visit(el) per element, split
+    // across slices as needed). onDone runs after the last step unless a
+    // newer pass cancelled this one (cancelWalkSlices).
+    function runSteps(steps, onDone) {
         const gen = walkGeneration;
+        let s = 0;
         let i = 0;
-        function step() {
+        function slice() {
+            walkSliceTimer = 0;
             if (gen !== walkGeneration) return;
-            const end = Math.min(i + FRAME_SLICE, elements.length);
-            for (; i < end; i++) {
-                const el = elements[i];
-                if (el && el.nodeType === 1) safeVisit(visit, el);
+            const typing = isUserTyping();
+            const deadline = performance.now() + (typing ? TYPING_SLICE_BUDGET_MS : SLICE_BUDGET_MS);
+            while (s < steps.length) {
+                const step = steps[s];
+                if (typeof step === 'function') {
+                    const more = safePass(step);
+                    s++;
+                    if (Array.isArray(more) && more.length) steps.splice(s, 0, ...more);
+                } else {
+                    const items = step.items;
+                    for (; i < items.length; i++) {
+                        const el = items[i];
+                        if (el && el.nodeType === 1) safeVisit(step.visit, el);
+                        if ((i & 15) === 15 && performance.now() >= deadline) { i++; break; }
+                    }
+                    if (i >= items.length) { s++; i = 0; }
+                }
+                if (performance.now() >= deadline) break;
             }
-            if (i < elements.length) {
-                walkSliceRaf = requestAnimationFrame(step);
+            discardOwnMutationRecords();
+            if (gen !== walkGeneration) return;
+            if (s < steps.length) {
+                walkSliceTimer = setTimeout(slice, typing ? TYPING_SLICE_GAP_MS : 0);
             } else if (onDone) {
                 onDone();
             }
         }
-        step();
+        slice();
     }
 
     // 1. SITE-SPECIFIC OVERRIDES
@@ -1641,7 +1662,7 @@
     // one invocation, so the result is safe to memoize per element for the
     // lifetime of one cache (created fresh each runSafetyPasses call, same
     // pattern as effectiveBgCache). `cache` is optional — falls back to
-    // uncached behavior for call sites that don't have one (handleShadowDOM's
+    // uncached behavior for call sites that don't have one (shadowRootSteps'
     // shadow-root sweep, reopaqueStickyFixed's scroll-triggered walk).
     function isLikelyModalCardCached(el, cache, vh, vw) {
         if (!H || !H.isLikelyModalCard) return false;
@@ -1805,8 +1826,8 @@
             if (navState === 'expanded') {
                 seen.add(el);
                 const prevNavState = navDrawerStateHistory.get(el);
-                // Deliberately does NOT fall back to isFreshlyMountedContentPanel
-                // the way visitExpandedContentPanelElement does — tried that
+                // Deliberately has no "freshly mounted" fallback (the
+                // removed content-panel pass had one) — tried that
                 // once and reverted it. A fixed/sticky, link-rich element
                 // that's simply permanent page chrome (never actually
                 // collapses) satisfies isLikelyNavDrawerInfo's shape on
@@ -1820,9 +1841,7 @@
                 // ambient-chrome false positive isNavDrawerOpenTransition's
                 // strict collapsed-first gate already exists to prevent
                 // (the wtatennis.com precedent) — the fallback just reopened
-                // that door. Only visitExpandedContentPanelElement's own
-                // narrower gate (isExpandableContentPanelShape, no nav-link
-                // signal) keeps the fallback there safe.
+                // that door.
                 const isOpenTransition = !!(H.isNavDrawerOpenTransition
                     && H.isNavDrawerOpenTransition(prevNavState, navState));
                 navDrawerPendingCollapse.delete(el);
@@ -1851,13 +1870,12 @@
                     // this one debounced pass (a near-universal shape for an
                     // animating drawer). Either way, NEITHER
                     // isNavDrawerOpenTransition (needs prevState ===
-                    // 'collapsed') NOR isFreshlyMountedContentPanel (bails
+                    // 'collapsed') NOR a fresh-mount fallback (bails
                     // whenever prevState !== undefined) could ever fire
                     // again for that element once poisoned — it would stay
                     // unpaintable forever, with whether it happens at all
                     // depending purely on pass-vs-animation timing. Mirrors
-                    // the same ordering used by visitNavMenuPanelElement /
-                    // visitExpandedContentPanelElement.
+                    // the same ordering used by visitNavMenuPanelElement.
                     navDrawerStateHistory.set(el, 'expanded');
                     paintModalCardSheet(el);
                 }
@@ -3018,7 +3036,7 @@
         // as Element, so scope.querySelectorAll(...) below works identically
         // when scope is a shadow root — it just can't cross a FURTHER shadow
         // boundary from there, which is fine: nested shadow roots are
-        // handled by handleShadowDOM's own recursion, not by this function.
+        // handled by shadowRootSteps (via runSafetyPasses), not by this function.
         const scope = (root.nodeType === 1 || root.nodeType === 11) ? root : document.documentElement;
         const painted = new Set();
 
@@ -3402,8 +3420,8 @@
         const navState = H.classifyNavMenuPanelState(el, getComputedStyle, { vh, vw });
         if (navState === 'expanded') {
             const prevNavState = navMenuPanelStateHistory.get(el);
-            // Deliberately does NOT fall back to isFreshlyMountedContentPanel
-            // the way visitExpandedContentPanelElement does — see the
+            // Deliberately has no "freshly mounted" fallback (the removed
+            // content-panel pass had one) — see the
             // matching comment on the nav-drawer branch in
             // visitOverlayModalWalk for why: a permanent, always-visible,
             // nav-shaped element (no real 'collapsed' sighting to ever
@@ -3413,8 +3431,8 @@
             const isOpenTransition = !!(H.isNavDrawerOpenTransition
                 && H.isNavDrawerOpenTransition(prevNavState, navState));
             navMenuPanelPendingCollapse.delete(el);
-            // Same history-poisoning fix as visitExpandedContentPanelElement
-            // above: only record 'expanded' once actually treated as an
+            // Same history-poisoning fix as the nav-drawer branch of
+            // visitOverlayModalWalk: only record 'expanded' once actually treated as an
             // open. A panel that ever mounts pre-expanded (no earlier
             // 'collapsed' sighting — e.g. opened via a URL hash on load)
             // would otherwise get prevNavState stuck at 'expanded' forever,
@@ -3429,7 +3447,7 @@
                 // menu) would still commit 'expanded' to history despite
                 // never actually painting, permanently poisoning prevNavState
                 // and locking the element out of ever being painted. See the
-                // matching comment in visitExpandedContentPanelElement.
+                // matching comment in visitOverlayModalWalk's nav-drawer branch.
                 let style;
                 try { style = getComputedStyle(el); } catch (e) { return; }
                 if (style.visibility === 'hidden' || style.opacity === '0') return;
@@ -3476,171 +3494,6 @@
         const limit = Math.min(elements.length, WALK_SLICE);
         for (let i = 0; i < limit; i++) {
             safeVisit(e => visitNavMenuPanelElement(e, vh, vw), elements[i]);
-        }
-    }
-
-    // Position-agnostic counterpart to isLikelyModalCard, for cards that
-    // expand IN PLACE (display:none -> block, height:0 -> auto) with no
-    // position:fixed of their own and no nav semantics — see
-    // expandedContentPanelStateHistory above for the booking.com date-picker
-    // shape this exists to catch. Same collapsed -> expanded transition gate
-    // as the nav drawer / nav menu panel paths, via the same
-    // isNavDrawerOpenTransition function (its logic is generic to any two
-    // state strings) — required so an ordinary always-present content block
-    // (a sidebar card, a footer panel) never gets swept up merely for
-    // "currently looking card-shaped."
-    function revertExpandedContentPanelPaint(el) {
-        try {
-            el.style.removeProperty('background-color');
-            el.style.removeProperty('background-image');
-        } catch (e) {}
-        expandedContentPanelOpaqueModified.delete(el);
-    }
-
-    // How long after a fresh theme apply the page/engine is assumed to have
-    // "settled" — see isFreshlyMountedContentPanel below.
-    const CONTENT_PANEL_SETTLE_MS = 1500;
-
-    // booking.com's date-picker doesn't exist in the DOM at all until its
-    // trigger is focused (confirmed live: querySelector finds nothing for
-    // it before the click, then the whole subtree appears already
-    // 'expanded') — so isNavDrawerOpenTransition's collapsed -> expanded
-    // gate can never fire for it; there is no earlier 'collapsed' sighting
-    // to transition FROM. A first-ever sighting is only trusted as "just
-    // opened" when BOTH: (1) it happens well after the theme's initial
-    // apply, so it can't be ordinary content the very first full walk simply
-    // hadn't reached yet, and (2) the element isn't one of several
-    // currently-VISIBLE siblings sharing its class name — a repeated,
-    // visible class is the standard shape of an infinite-scroll/list-append
-    // batch (e.g. more property-card tiles loading in, all on-screen at
-    // once), which is exactly the kind of "new but not a popup" insertion
-    // this must not paint as a near-black overlay.
-    //
-    // A same-class sibling that is itself collapsed/hidden does NOT count —
-    // that's the normal resting state of the other, unopened panels in a
-    // group of sibling dropdowns/tabs that all share one CSS-module class
-    // (confirmed on depop.com's Category/Brand/Price/Size/Color/Condition
-    // filter bar: each filter's dropdown panel shares one class with the
-    // other five, and only one is ever expanded at a time). Counting mere
-    // DOM presence rather than visibility meant every one of those panels
-    // was permanently disqualified from ever being recognized as freshly
-    // opened, leaving them transparent forever.
-    function isFreshlyMountedContentPanel(el, prevState) {
-        if (prevState !== undefined) return false;
-        if (!engineAppliedAt || (Date.now() - engineAppliedAt) < CONTENT_PANEL_SETTLE_MS) return false;
-        const cls = typeof el.className === 'string' ? el.className : '';
-        if (!cls || !el.parentElement) return true;
-        const siblings = el.parentElement.children;
-        for (let i = 0; i < siblings.length; i++) {
-            const sib = siblings[i];
-            if (sib === el || sib.className !== cls) continue;
-            let sibStyle;
-            try { sibStyle = getComputedStyle(sib); } catch (e) { continue; }
-            if (sibStyle.display === 'none' || sibStyle.visibility === 'hidden' || sibStyle.opacity === '0') continue;
-            let sibRect;
-            try { sibRect = sib.getBoundingClientRect(); } catch (e2) { continue; }
-            if (sibRect.width < 1 || sibRect.height < 1) continue;
-            return false;
-        }
-        return true;
-    }
-
-    function visitExpandedContentPanelElement(el, vh, vw) {
-        if (!el || el.nodeType !== 1 || !H || !H.classifyExpandedContentPanelState) return;
-        if (isChromeRepaintDisabledForHost()) return;
-        const panelState = H.classifyExpandedContentPanelState(el, getComputedStyle, { vh, vw });
-        if (panelState === 'expanded') {
-            const prevState = expandedContentPanelStateHistory.get(el);
-            const isOpenTransition = !!(H.isNavDrawerOpenTransition
-                && H.isNavDrawerOpenTransition(prevState, panelState))
-                || isFreshlyMountedContentPanel(el, prevState);
-            expandedContentPanelPendingCollapse.delete(el);
-            // Only record 'expanded' once we've actually decided to treat
-            // this sighting as an open — never on a declined pass. Writing
-            // it unconditionally here would permanently poison prevState
-            // for any element whose first-ever 'expanded' sighting fails
-            // isFreshlyMountedContentPanel's settle-time/sibling gate (e.g.
-            // a panel that mounts within the settle window, or shares a
-            // wrapper class with a sibling at mount time), OR — the subtler
-            // case this history-write's placement exists to cover — an
-            // element caught mid-CSS-transition, still visibility:hidden/
-            // opacity:0/zero-size for this one 150ms-debounced pass (a near-
-            // universal shape for an animating menu/dropdown): every later
-            // pass would see prevState === 'expanded' instead of `undefined`,
-            // so isFreshlyMountedContentPanel could never re-qualify it and
-            // isNavDrawerOpenTransition could never fire either (it needs
-            // prevState === 'collapsed', which this element never has) —
-            // the element would stay transparent forever, with whether it
-            // happens at all depending purely on pass-vs-animation timing.
-            // Leaving prevState as `undefined` on a declined pass (hence
-            // writing it only once geometry/visibility/the video-sibling
-            // check are ALL confirmed, immediately before the opaque paint
-            // itself) lets the next pass retry fresh instead of locking out.
-            if (isOpenTransition || expandedContentPanelOpaqueModified.has(el)) {
-                let style;
-                try { style = getComputedStyle(el); } catch (e) { return; }
-                if (style.visibility === 'hidden' || style.opacity === '0') return;
-                if (style.display === 'none') return;
-                let rect;
-                try { rect = el.getBoundingClientRect(); } catch (e2) { return; }
-                if (rect.width < 1 || rect.height < 1) return;
-                // A video player's own auto-hide controls overlay (play/pause,
-                // volume, settings, fullscreen) legitimately cycles collapsed
-                // <-> expanded just like a real popup — but it's a SIBLING of
-                // the <video> in every player markup checked, stacked in
-                // front of it, not an ARIA dialog. Painting it opaque hides
-                // the video frame behind it while the overlay's own icon
-                // children still render on top of their own parent's paint,
-                // looking exactly like "the video got painted over" while
-                // controls stay visible (confirmed on twitch.tv). Checking
-                // the immediate container's subtree catches both that shape
-                // and a wrap-the-video-as-descendant shape in one check.
-                let hasVideoSibling = false;
-                try { hasVideoSibling = !!(el.parentElement && el.parentElement.querySelector('video')); } catch (e3) {}
-                if (hasVideoSibling) {
-                    if (expandedContentPanelOpaqueModified.has(el)) revertExpandedContentPanelPaint(el);
-                    return;
-                }
-                expandedContentPanelStateHistory.set(el, 'expanded');
-                el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
-                el.style.setProperty('background-image', 'none', 'important');
-                expandedContentPanelOpaqueModified.add(el);
-            }
-            return;
-        }
-        if (panelState === 'collapsed') {
-            // Same "don't flicker on one disagreeing sample" protection as
-            // navDrawerStateHistory — see notePendingRevert's doc comment.
-            // The separate video-sibling disqualification revert above
-            // (hasVideoSibling) is a different bug class and stays immediate
-            // — not gated here.
-            if (expandedContentPanelStateHistory.get(el) === 'expanded') {
-                if (notePendingRevert(expandedContentPanelPendingCollapse, el, REVERT_CONFIRM_READINGS)) {
-                    expandedContentPanelStateHistory.set(el, 'collapsed');
-                    if (expandedContentPanelOpaqueModified.has(el)) revertExpandedContentPanelPaint(el);
-                }
-            } else {
-                expandedContentPanelStateHistory.set(el, 'collapsed');
-                if (expandedContentPanelOpaqueModified.has(el)) revertExpandedContentPanelPaint(el);
-            }
-        }
-        // 'ambiguous' or null: leave history and any existing paint alone.
-    }
-
-    function reopaqueExpandedContentPanels(root, precollected) {
-        if (!root || !currentTheme || !H) return;
-        const { vh, vw } = passViewport();
-        Array.from(expandedContentPanelOpaqueModified).forEach(el => {
-            if (!el || !el.isConnected) {
-                expandedContentPanelOpaqueModified.delete(el);
-                return;
-            }
-            safeVisit(e => visitExpandedContentPanelElement(e, vh, vw), el);
-        });
-        const elements = precollected || collectElements(root);
-        const limit = Math.min(elements.length, WALK_SLICE);
-        for (let i = 0; i < limit; i++) {
-            safeVisit(e => visitExpandedContentPanelElement(e, vh, vw), elements[i]);
         }
     }
 
@@ -4324,25 +4177,25 @@
     }
 
     // Guards a single pass so a failure in one (arbitrary third-party DOM,
-    // a throwing getter, a stack overflow from a pathologically deep tree in
-    // handleShadowDOM's recursion, etc.) can't stop the rest of the sequence
+    // a throwing getter, a stack overflow from a pathologically deep tree,
+    // etc.) can't stop the rest of the sequence
     // — and, critically, can't prevent finish() from ever resetting
     // ignoreMutations, which would otherwise silently wedge the
     // MutationObserver into ignoring all future DOM changes on the page.
     function safePass(fn) {
-        try { fn(); } catch (e) {}
+        try { return fn(); } catch (e) {}
     }
 
     function runSafetyPasses(root) {
         if (!root || !currentTheme) return;
         DBG?.passStart(root);
         cancelWalkSlices();
+        pendingRevertReading++;
         const gen = walkGeneration;
         ignoreMutations = true;
         safePass(() => promoteEngineStylesheet());
-        safePass(() => handleShadowDOM(root));
 
-        // Collected once and shared across every pass below (previously each
+        // Collected once and shared across every step below (previously each
         // of the 7 full-element walks re-queried `root.querySelectorAll('*')`
         // independently — 7 full-document scans per single reactive
         // repaint). Safe to share: none of the passes fed this array
@@ -4350,51 +4203,25 @@
         // — they only ever write inline style/attributes); the couple that
         // DO touch the DOM tree (promoteEngineStylesheet reordering the
         // engine's own <style>, ensurePseudoBgStyleEl appending an
-        // #aura-pseudo-overrides <style> to <head>) both run before this
-        // snapshot is taken and never touch elements any pass below cares
-        // about.
+        // #aura-pseudo-overrides <style> to <head>) never touch elements any
+        // pass below cares about.
         const elements = collectElements(root);
         DBG?.passElements(elements.length);
         // Shared across every isLikelyModalCard call this invocation makes
         // (revertGrownModalCards below, plus visitOverlayModalWalk/
-        // visitBrightElement/visitStickyElement in the forEachSliced walk)
+        // visitBrightElement/visitStickyElement in the element walk)
         // — see isLikelyModalCardCached's doc comment.
         const modalCardCache = new WeakMap();
-
         const { vh, vw } = passViewport();
-        // AMP (and other custom-element-heavy) pages route real content
-        // through hyphenated tags like <amp-layout>/<i-amphtml-wrapper> that
-        // the universal `div, section, ... { transparent }` stylesheet rule
-        // (getFullStyleSheet's layoutTags list) can never match by name.
-        // rethemeOpaqueShells extends the same "clear large opaque shells"
-        // treatment to any large custom element via shouldClearShellBackground
-        // / isCustomLayoutElement (SPA roots like #app/#root/#__next included,
-        // since they're just elements in this same walk) — without it, a
-        // site's own opaque (often white) fill on one of these wrappers sits
-        // on top of the correctly-themed html/body and reads as "the whole
-        // page is white".
-        safePass(() => rethemeOpaqueShells(root, elements));
-        safePass(() => clearFullBleedPseudoBackgrounds(root, elements));
-        safePass(() => clearLoaderBackgroundImages(root, elements));
-        safePass(() => rethemeLogoContrast(root, elements));
-        safePass(() => rethemeInlineHighlights(root, elements));
-        safePass(() => reopaqueOverlays(root));
-        safePass(() => revertGrownModalCards(vh, vw, modalCardCache));
-        safePass(() => paintGoogleImagesViewer(root));
-        safePass(() => reopaqueTopChrome(root));
-        safePass(() => restoreAuthoredChromeOpacity(root));
-        safePass(() => reopaqueExpandedNavMenuPanels(root, elements));
-        safePass(() => reopaqueExpandedContentPanels(root, elements));
-        safePass(() => rethemeAskAnythingComposer(root));
-        safePass(() => rethemeGoogleAiChatSurface(root));
-
         const overlaySeen = new Set();
         const skipContrast = isActiveSplitTheme(currentTheme);
+        let effectiveBgCache = null;
 
         function finish() {
             if (gen !== walkGeneration) return;
             DBG?.passEnd();
             safePass(() => paintGoogleImagesViewer(root));
+            discardOwnMutationRecords();
             if (ignoreMutationsTimer) clearTimeout(ignoreMutationsTimer);
             ignoreMutationsTimer = setTimeout(() => {
                 ignoreMutations = false;
@@ -4412,29 +4239,65 @@
             }, 50);
         }
 
-        DBG?.passSync();
+        // Shadow roots and same-origin iframes first, as before (each one is
+        // its own step, expanded by shadowRootSteps into sliced sub-steps).
+        const steps = [];
+        for (let i = 0; i < elements.length; i++) {
+            const el = elements[i];
+            if (el.shadowRoot) steps.push(() => shadowRootSteps(el));
+            if (el.tagName === 'IFRAME') steps.push(() => visitSameOriginIframe(el));
+        }
+        steps.push(
+            // AMP (and other custom-element-heavy) pages route real content
+            // through hyphenated tags like <amp-layout>/<i-amphtml-wrapper>
+            // that the universal `div, section, ... { transparent }`
+            // stylesheet rule (getFullStyleSheet's layoutTags list) can never
+            // match by name. rethemeOpaqueShells extends the same "clear
+            // large opaque shells" treatment to any large custom element via
+            // shouldClearShellBackground / isCustomLayoutElement (SPA roots
+            // like #app/#root/#__next included, since they're just elements
+            // in this same walk) — without it, a site's own opaque (often
+            // white) fill on one of these wrappers sits on top of the
+            // correctly-themed html/body and reads as "the whole page is
+            // white".
+            () => rethemeOpaqueShells(root, elements),
+            () => clearFullBleedPseudoBackgrounds(root, elements),
+            () => clearLoaderBackgroundImages(root, elements),
+            () => rethemeLogoContrast(root, elements),
+            () => rethemeInlineHighlights(root, elements),
+            () => reopaqueOverlays(root),
+            () => revertGrownModalCards(vh, vw, modalCardCache),
+            () => paintGoogleImagesViewer(root),
+            () => reopaqueTopChrome(root),
+            () => restoreAuthoredChromeOpacity(root),
+            () => reopaqueExpandedNavMenuPanels(root, elements),
+            () => rethemeAskAnythingComposer(root),
+            () => rethemeGoogleAiChatSurface(root),
+            {
+                items: elements,
+                visit: function (el) {
+                    visitShellElement(el, vh, vw);
+                    visitOverlayModalWalk(el, vh, vw, overlaySeen, modalCardCache);
+                    visitBrightElement(el, vh, vw, modalCardCache);
+                    visitStickyElement(el, vh, vw, modalCardCache);
+                    visitFloatingIconControlElement(el, vh, vw);
+                },
+            }
+        );
         // Contrast must run after bright/shell clears so muted spans are
         // judged against the theme background, not a still-white ancestor.
-        ignoreMutations = true;
-        forEachSliced(elements, function (el) {
-            visitShellElement(el, vh, vw);
-            visitOverlayModalWalk(el, vh, vw, overlaySeen, modalCardCache);
-            visitBrightElement(el, vh, vw, modalCardCache);
-            visitStickyElement(el, vh, vw, modalCardCache);
-            visitFloatingIconControlElement(el, vh, vw);
-        }, function () {
-            if (gen !== walkGeneration) return;
-            if (skipContrast) {
-                finish();
-                return;
-            }
-            // Cache lives only for this one pass, created after every
-            // background-mutating pass above has already run — see
-            // effectiveBackground's doc comment in themeHeuristics.js for
-            // why that ordering is what makes caching safe here.
-            const effectiveBgCache = new WeakMap();
-            forEachSliced(elements, el => visitContrastElement(el, effectiveBgCache), finish);
-        });
+        if (!skipContrast) {
+            steps.push(
+                // Cache lives only for this one pass, created after every
+                // background-mutating step above has already run — see
+                // effectiveBackground's doc comment in themeHeuristics.js
+                // for why that ordering is what makes caching safe here.
+                () => { effectiveBgCache = new WeakMap(); },
+                { items: elements, visit: el => visitContrastElement(el, effectiveBgCache) }
+            );
+        }
+        runSteps(steps, finish);
+        DBG?.passSync();
     }
 
     // 3g. NATIVE DARK MODE (opt-in, nativeDarkModeEnabled)
@@ -4597,7 +4460,6 @@
 
         lastAppliedThemeKey = themeKey;
         currentTheme = theme;
-        engineAppliedAt = Date.now();
         cancelWalkSlices();
 
         // Opt-in Dark Mode toggle: prefer the site's own native dark mode
@@ -4669,7 +4531,6 @@
     function removeTheme() {
         lastAppliedThemeKey = '';
         styleSheetCacheKey = null;
-        engineAppliedAt = 0;
         revertNativeDarkMode();
         cancelWalkSlices();
         if (safetyPassesRaf) {
@@ -4746,15 +4607,6 @@
         navMenuPanelOpaqueModified.clear();
         navMenuPanelStateHistory = new WeakMap();
         navMenuPanelPendingCollapse = new WeakMap();
-        expandedContentPanelOpaqueModified.forEach(el => {
-            try {
-                el.style.removeProperty('background-color');
-                el.style.removeProperty('background-image');
-            } catch (e) {}
-        });
-        expandedContentPanelOpaqueModified.clear();
-        expandedContentPanelStateHistory = new WeakMap();
-        expandedContentPanelPendingCollapse = new WeakMap();
         floatingIconControlModified.forEach(el => {
             try {
                 el.style.removeProperty('background-color');
@@ -4879,50 +4731,56 @@
         }
     }
 
-    // 5. SHADOW DOM + SAME-ORIGIN IFRAME HANDLER - Prevent duplicate style injections
-    function handleShadowDOM(root) {
-        if (!root) return;
+    // 5. SHADOW DOM - Prevent duplicate style injections
+    // Steps for one open shadow root (see runSafetyPasses): inject our
+    // stylesheet, then the sticky/overlay/nav-panel/top-chrome passes over
+    // its elements. Returned as separate steps so a large shadow root is
+    // sliced like the light DOM instead of running in one task — Reddit
+    // has hundreds of these, and walking them all synchronously on every
+    // full-document pass was the main source of input lag during load.
+    function shadowRootSteps(host) {
+        const shadow = host.shadowRoot;
+        if (!shadow) return null;
+        const css = getFullStyleSheetCached(currentTheme, lastAppliedThemeKey);
+        const existingStyle = shadow.querySelector('style[data-aura-shadow]');
+        if (existingStyle) {
+            // Comparison is cheap (no layout); skip the write when
+            // unchanged so an unrelated pass doesn't force a style
+            // recalc in every shadow root on the page — the common
+            // case, since most passes are triggered by content
+            // mutations, not a theme change.
+            if (existingStyle.textContent !== css) existingStyle.textContent = css;
+        } else {
+            const style = document.createElement('style');
+            style.setAttribute('data-aura-shadow', 'true');
+            style.textContent = css;
+            shadow.appendChild(style);
+        }
 
-        if (root.shadowRoot) {
-            const css = getFullStyleSheetCached(currentTheme, lastAppliedThemeKey);
-            const existingStyle = root.shadowRoot.querySelector('style[data-aura-shadow]');
-            if (existingStyle) {
-                // Comparison is cheap (no layout); skip the write when
-                // unchanged so an unrelated pass doesn't force a style
-                // recalc in every shadow root on the page — the common
-                // case, since most passes are triggered by content
-                // mutations, not a theme change.
-                if (existingStyle.textContent !== css) existingStyle.textContent = css;
-            } else {
-                const style = document.createElement('style');
-                style.setAttribute('data-aura-shadow', 'true');
-                style.textContent = css;
-                root.shadowRoot.appendChild(style);
-            }
-
-            // The universal stylesheet just injected strips background-color
-            // from every layout tag inside this shadow root too — but none
-            // of the JS safety-net passes below (which recognize legitimate
-            // sticky/fixed chrome and restore its opaque background) ever
-            // see shadow-root content: querySelectorAll cannot cross a
-            // shadow boundary, so collectElements(document...) never finds
-            // these elements at all. Confirmed on workspace.google.com's
-            // <gws-action-bar>: a position:fixed, white "Sign in / Get
-            // Gmail / For work" bottom bar rendered entirely inside an open
-            // shadow root goes fully transparent (universal rule strips it)
-            // with nothing to ever repaint it. Re-run the sticky/fixed
-            // re-opaque pass over this shadow root's own elements to
-            // restore parity with the light-DOM walk.
-            try {
-                const { vh, vw } = passViewport();
-                const shadowElements = root.shadowRoot.querySelectorAll('*');
-                // Shadow-scoped caches, cheap to allocate per shadow root
-                // (mirrors modalCardCache/overlaySeen in runSafetyPasses,
-                // just not shared across the whole page's shadow roots).
-                const shadowOverlaySeen = new Set();
-                const shadowModalCardCache = new WeakMap();
-                for (let i = 0; i < shadowElements.length; i++) {
-                    const shadowEl = shadowElements[i];
+        // The universal stylesheet just injected strips background-color
+        // from every layout tag inside this shadow root too — but none
+        // of the JS safety-net passes (which recognize legitimate
+        // sticky/fixed chrome and restore its opaque background) ever
+        // see shadow-root content: querySelectorAll cannot cross a
+        // shadow boundary, so collectElements(document...) never finds
+        // these elements at all. Confirmed on workspace.google.com's
+        // <gws-action-bar>: a position:fixed, white "Sign in / Get
+        // Gmail / For work" bottom bar rendered entirely inside an open
+        // shadow root goes fully transparent (universal rule strips it)
+        // with nothing to ever repaint it. Re-run the sticky/fixed
+        // re-opaque pass over this shadow root's own elements to
+        // restore parity with the light-DOM walk.
+        const { vh, vw } = passViewport();
+        const shadowElements = shadow.querySelectorAll('*');
+        // Shadow-scoped caches, cheap to allocate per shadow root
+        // (mirrors modalCardCache/overlaySeen in runSafetyPasses,
+        // just not shared across the whole page's shadow roots).
+        const shadowOverlaySeen = new Set();
+        const shadowModalCardCache = new WeakMap();
+        return [
+            {
+                items: shadowElements,
+                visit: function (shadowEl) {
                     safeVisit(e => visitStickyElement(e, vh, vw), shadowEl);
                     // Covers both the ARIA-role-based modal-card/nav-drawer
                     // path and the position:fixed-based one — see
@@ -4934,65 +4792,41 @@
                     // nothing to ever repaint it opaque — confirmed on
                     // depop.com's #transcend-consent-manager cookie banner.
                     safeVisit(e => visitOverlayModalWalk(e, vh, vw, shadowOverlaySeen, shadowModalCardCache), shadowEl);
-                }
-                // ARIA-role overlay roots (dialog/menu/listbox/aria-modal)
-                // get their own direct pass too — visitOverlayModalWalk
-                // above only handles the position:fixed/nav-drawer shapes,
-                // while reopaqueOverlays is what actually paints a plain
-                // ARIA dialog/listbox opaque (or its scrim transparent).
-                safePass(() => reopaqueOverlays(root.shadowRoot));
-                // Position-agnostic counterpart for a shadow-DOM panel with
-                // no ARIA role and no position:fixed of its own — the same
-                // shape reopaqueExpandedContentPanels already handles in
-                // the light DOM (e.g. a plain expand-in-place dropdown).
-                safePass(() => reopaqueExpandedContentPanels(root.shadowRoot, shadowElements));
-                // Nav-semantic counterpart to the pass just above (Bootstrap-
-                // style .navbar-collapse, WordPress/Divi dropdowns) — same
-                // gap, just for the nav-signal variant. Nav-drawer parity
-                // already exists here since that logic lives inside
-                // visitOverlayModalWalk, already invoked per shadow element
-                // above; this was the one remaining gap.
-                safePass(() => reopaqueExpandedNavMenuPanels(root.shadowRoot, shadowElements));
-
-                // visitStickyElement above only paints elements that are
-                // themselves position:fixed/sticky — it can't help a top bar
-                // that's simply the first thing in this shadow root's flow
-                // at the top of the page, with no pinning CSS at all.
-                // reopaqueTopChrome exists for exactly that shape in the
-                // light DOM but has never run on shadow content until now
-                // (see its widened scope check above). Gate behind a cheap,
-                // single getBoundingClientRect on the HOST element (not a
-                // subtree scan) so this doesn't reintroduce the same
-                // "unconditional per-shadow-root work" cost already fixed
-                // for the stylesheet build — only a host shaped like a top
-                // bar (near top of viewport, near full width) pays for the
-                // more expensive seed scan. Mirrors isTopChromeBarInfo's own
-                // geometry thresholds (themeHeuristics.js) minus its
-                // tag/role requirement, since a custom-element host's tag
-                // name is never literally "header"/"nav".
+                },
+            },
+            // ARIA-role overlay roots (dialog/menu/listbox/aria-modal)
+            // get their own direct pass too — visitOverlayModalWalk
+            // above only handles the position:fixed/nav-drawer shapes,
+            // while reopaqueOverlays is what actually paints a plain
+            // ARIA dialog/listbox opaque (or its scrim transparent).
+            () => reopaqueOverlays(shadow),
+            // Nav-semantic shadow-DOM panels (Bootstrap-style
+            // .navbar-collapse, WordPress/Divi dropdowns). Nav-drawer
+            // parity already exists via visitOverlayModalWalk above.
+            () => reopaqueExpandedNavMenuPanels(shadow, shadowElements),
+            // visitStickyElement above only paints elements that are
+            // themselves position:fixed/sticky — it can't help a top bar
+            // that's simply the first thing in this shadow root's flow
+            // at the top of the page, with no pinning CSS at all.
+            // reopaqueTopChrome exists for exactly that shape in the
+            // light DOM. Gate behind a cheap, single getBoundingClientRect
+            // on the HOST element (not a subtree scan) so only a host
+            // shaped like a top bar (near top of viewport, near full
+            // width) pays for the more expensive seed scan. Mirrors
+            // isTopChromeBarInfo's own geometry thresholds
+            // (themeHeuristics.js) minus its tag/role requirement, since a
+            // custom-element host's tag name is never literally
+            // "header"/"nav".
+            () => {
                 let hostRect = null;
-                try { hostRect = root.getBoundingClientRect(); } catch (eHostRect) {}
+                try { hostRect = host.getBoundingClientRect(); } catch (eHostRect) {}
                 const looksLikeTopBarHost = !!hostRect
                     && hostRect.width >= vw * 0.7
                     && hostRect.height >= 40 && hostRect.height <= vh * 0.55
                     && hostRect.top >= -20 && hostRect.top <= 80;
-                if (looksLikeTopBarHost) {
-                    safePass(() => reopaqueTopChrome(root.shadowRoot));
-                }
-            } catch (e2) {}
-        }
-
-        if (root.tagName === 'IFRAME') {
-            visitSameOriginIframe(root);
-        }
-
-        // Only process direct children, not all descendants
-        for (let i = 0; i < root.children.length; i++) {
-            const child = root.children[i];
-            if (child.nodeType === 1) {
-                handleShadowDOM(child);
-            }
-        }
+                if (looksLikeTopBarHost) reopaqueTopChrome(shadow);
+            },
+        ];
     }
 
     // REQUEST THEME UPDATE: Ask background script to sync from App Group
@@ -5270,7 +5104,7 @@
                 overlay: overlayModified, modalCard: modalCardOpaqueModified, shell: shellModified,
                 chrome: chromeModified, chromeOuter: chromeOuterModified,
                 chromeFixedInner: chromeFixedInnerModified, chromeAuthored: chromeAuthoredModified,
-                navMenuPanel: navMenuPanelOpaqueModified, expandedPanel: expandedContentPanelOpaqueModified,
+                navMenuPanel: navMenuPanelOpaqueModified,
                 floatingIcon: floatingIconControlModified, askAnything: askAnythingModified,
                 pseudoBgCleared, pseudoBgNavPanel: pseudoBgNavPanelHosts, loaderBg: loaderBgModified,
                 googleAiChat: googleAiChatModified, logoContrast: logoContrastModified,
@@ -5349,6 +5183,7 @@
                         scrollPassTimer = null;
                         if (!currentTheme) return;
                         DBG?.scrollPass();
+                        pendingRevertReading++;
                         const { vh, vw } = passViewport();
                         safePass(() => revertGrownModalCards(vh, vw));
                         safePass(() => reopaqueTopChrome(document.documentElement));
@@ -5356,6 +5191,9 @@
                         if (isGoogleImagesPage()) {
                             safePass(() => paintGoogleImagesViewer(document.documentElement));
                         }
+                        // Our own writes above must not come back as a
+                        // mutation batch and trigger a full pass.
+                        discardOwnMutationRecords();
                     }, 200);
                 }, { passive: true });
             }
@@ -5419,6 +5257,14 @@
             // document would never fire for it at all, since bubbling-up is
             // the only phase a non-bubbling event skips; the top-down
             // capture phase still reaches every element regardless.
+            // Typing makes runSteps use smaller, spaced-out slices (see
+            // TYPING_WINDOW_MS). keydown covers hardware and most soft
+            // keyboards; 'input' catches IME/autocorrect/dictation.
+            if (!userInputListenersAttached) {
+                userInputListenersAttached = true;
+                document.addEventListener('keydown', noteUserInput, { capture: true, passive: true });
+                document.addEventListener('input', noteUserInput, { capture: true, passive: true });
+            }
             if (!toggleListenerAttached) {
                 toggleListenerAttached = true;
                 document.addEventListener('toggle', (event) => {

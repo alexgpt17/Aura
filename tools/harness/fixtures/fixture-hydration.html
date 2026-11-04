@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hydration fixture (Reddit-shaped)</title>
+<!--
+  Synthetic stand-in for a Reddit post page during hydration, for measuring
+  Aura's engine cost offline. Shape, not content:
+    - sticky header + subreddit bar rendered inside open shadow roots
+    - ~40 posts/comments as custom elements, each with a shadow root holding
+      nested custom elements with their own shadow roots (~350 roots total)
+    - ~4 s of hydration: components upgrade in small batches spread across
+      the whole document, <style> tags get appended to <head>, classes flip
+    - after that, only a timestamp ticks every 2 s
+    - a contenteditable comment composer near the top
+  Deterministic (seeded PRNG) so runs are comparable.
+-->
+<style>
+  body { margin: 0; font: 15px -apple-system, system-ui, sans-serif; background: #fff; color: #1c1c1c; }
+  .bar { position: sticky; top: 0; z-index: 3; }
+  main { padding: 0 12px; }
+  #composer { min-height: 44px; border: 1px solid #ccc; border-radius: 18px; padding: 10px 14px; margin: 12px 0; background: #fff; }
+  shreddit-post, shreddit-comment { display: block; margin: 8px 0; }
+  .card { background: #f6f7f8; border-radius: 12px; padding: 10px; }
+</style>
+</head>
+<body>
+<reddit-header class="bar"></reddit-header>
+<main>
+  <h1>Which iPhone feature do you use most?</h1>
+  <p>Synthetic post body text. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
+  <div id="composer" contenteditable="true" aria-label="Add a comment"></div>
+  <div id="feed"></div>
+</main>
+<script>
+(function () {
+  var seed = 42;
+  function rnd() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+  var t0 = performance.now();
+
+  function fill(root, depth) {
+    // Mixed tree: wrappers, text, buttons, nested custom elements.
+    var card = document.createElement('div');
+    card.className = 'card';
+    for (var i = 0; i < 6; i++) {
+      var row = document.createElement('div');
+      row.className = 'row r' + i;
+      var span = document.createElement('span');
+      span.textContent = 'u/user' + Math.floor(rnd() * 999) + ' · ' + Math.floor(rnd() * 20) + 'h';
+      row.appendChild(span);
+      var p = document.createElement('p');
+      p.textContent = 'Comment text ' + i + ' lorem ipsum dolor sit amet consectetur.';
+      row.appendChild(p);
+      var btn = document.createElement('button');
+      btn.textContent = 'Reply';
+      row.appendChild(btn);
+      if (depth < 2 && i < 2) {
+        var nested = document.createElement('faceplate-tracker');
+        row.appendChild(nested);
+        pendingUpgrades.push([nested, depth + 1]);
+      }
+      card.appendChild(row);
+    }
+    root.appendChild(card);
+  }
+
+  var pendingUpgrades = [];
+  function upgrade(el, depth) {
+    if (el.shadowRoot) return;
+    var sr = el.attachShadow({ mode: 'open' });
+    var st = document.createElement('style');
+    st.textContent = ':host{display:block} .card{background:#fff;border:1px solid #eee;border-radius:8px;padding:6px}';
+    sr.appendChild(st);
+    fill(sr, depth);
+    el.classList.add('hydrated');
+  }
+
+  // Header with a sticky opaque bar inside its shadow root.
+  var header = document.querySelector('reddit-header');
+  var hsr = header.attachShadow({ mode: 'open' });
+  hsr.innerHTML = '<style>nav{position:sticky;top:0;height:48px;background:#fff;display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid #eee}</style>'
+    + '<nav><span>reddit</span><input type="search" placeholder="Search Reddit"><button>Open App</button></nav>';
+
+  var feed = document.getElementById('feed');
+  for (var i = 0; i < 40; i++) {
+    var tag = i < 8 ? 'shreddit-post' : 'shreddit-comment';
+    var el = document.createElement(tag);
+    el.setAttribute('data-i', i);
+    // Server-rendered light DOM (before hydration).
+    var ssr = document.createElement('div');
+    ssr.className = 'ssr';
+    ssr.innerHTML = '<span>u/ssr' + i + '</span><p>Server-rendered placeholder text for item ' + i + '.</p>';
+    el.appendChild(ssr);
+    feed.appendChild(el);
+    pendingUpgrades.push([el, 0]);
+  }
+
+  // Hydration: every ~40 ms, upgrade a few components chosen across the
+  // whole document (so mutation targets have no small common ancestor),
+  // append a style tag, flip some classes. ~4 s total.
+  var styleN = 0;
+  function hydrateTick() {
+    var elapsed = performance.now() - t0;
+    var n = 3 + Math.floor(rnd() * 4);
+    for (var k = 0; k < n && pendingUpgrades.length; k++) {
+      var idx = Math.floor(rnd() * pendingUpgrades.length);
+      var item = pendingUpgrades.splice(idx, 1)[0];
+      upgrade(item[0], item[1]);
+    }
+    if (rnd() < 0.5) {
+      var s = document.createElement('style');
+      s.textContent = '.gen' + (styleN++) + '{color:inherit}';
+      document.head.appendChild(s);
+    }
+    var all = feed.children;
+    all[Math.floor(rnd() * all.length)].classList.toggle('seen');
+    if (pendingUpgrades.length && elapsed < 4500) setTimeout(hydrateTick, 40);
+    else document.documentElement.setAttribute('data-hydrated', String(Math.round(elapsed)));
+  }
+  setTimeout(hydrateTick, 30);
+
+  // Steady state: a timestamp ticks every 2 s.
+  setInterval(function () {
+    var span = feed.querySelector('.ssr span');
+    if (span) span.textContent = 'u/ssr0 · ' + new Date().getSeconds() + 's';
+  }, 2000);
+})();
+</script>
+</body>
+</html>

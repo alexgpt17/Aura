@@ -1,0 +1,5 @@
+node_modules/
+out/
+# HAR snapshots hold full third-party responses (and any cookies set during
+# recording). Keep them local.
+har/

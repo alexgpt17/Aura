@@ -1,6 +1,7 @@
-# Aura — Release Plan (ship by Oct 29, 2026)
+# Aura — Release Plan (ship by Nov 10, 2026)
 Status legend: [ ] todo · [x] done · [~] partial. Update at the end of every session.
-Workflow: you say "continue with Session N" → I read this file, do that session, update it, and give you an exact test list from TEST_SITES.md.
+Workflow (from Nov 4): you say "continue with Session N" → I read this file, measure with `tools/harness` before and after the fix, update this file, and give you a short on-phone visual check list. The on-device HUD (auraDebug.js) stays in Debug builds for spot checks, but no session depends on it.
+Repo: `~/Developer/Aura` is the only copy (the iCloud Desktop copy was retired Oct 24).
 
 ## Root causes found in Session 1 (summary — full evidence in "Root-cause details" at the end of this file)
 1. **Input lag** — each mutation batch re-runs ~15 passes over the page. Scope usually collapses to `<html>` (common ancestor of unrelated + Aura's own style mutations). Several passes are O(n²) (`textContent` / `querySelectorAll('a[href]')` per element). Some passes mutate every run, re-triggering themselves. The scroll handler does full unsliced walks. On Google, `body:has()` CSS and observers rewrite every element of the AI answer card per mutation.
@@ -12,7 +13,8 @@ Workflow: you say "continue with Session N" → I read this file, do that sessio
 7. **Light themes** — dark shield, `--aura-border` is white-alpha, several fills assume dark.
 8. **Layers & overlays: geometry guessing instead of authored paint** (added Oct 23; covers #4, #6, and Airbnb) — the universal rule strips every layout background before any JS runs, so the sticky/overlay passes can't see whether the original was opaque. They guess from geometry (child coverage, covering-sheet size, "inner card" shape). See "8. Layers & overlays" in Root-cause details.
 
-## Baseline results (on device, Oct 23, build `0d47537`)
+## Baseline results (on device, Oct 23)
+- **Approximate.** Until Oct 24 the app was built from `~/Developer/Aura` while edits went to the Desktop copy, so these results came from `b74bc54` + the Oct 7 edits, not `0d47537`. The Oct 7 edits are in `git stash@{0}` and `~/Developer/Aura-oct7-uncommitted.patch`; not applied.
 - Wikipedia sidebar still turns transparent (expected; now fixed by the Session 4 layer engine).
 - Input lag on Reddit and Google AI Overview: noticeable but not severe. Still a priority.
 - Airbnb (new, not seen before; unclear when it appeared):
@@ -35,15 +37,17 @@ Workflow: you say "continue with Session N" → I read this file, do that sessio
   - Cuts: niche passes, time-based rule, Native Dark Mode (only if no shipping UI exposes it).
   - Split themes are kept.
 
-## Schedule (revised Oct 23 to fit root cause #8)
+## Schedule (re-dated Nov 4: deadline moved to Nov 10)
 | Session | Date | Scope |
 |---|---|---|
-| 2 | Oct 23 | Debug HUD + inspect (now also shows authored paint, skip reason, layout diff) + quick wins |
-| 3 | Oct 24 | Input lag (unchanged, still priority) |
-| 4 | Oct 25 | **Layer & overlay engine (new)**: absorbs the old Session 6 Wikipedia/Reddit items |
-| 5 | Oct 26 | Load flash + light-theme base (was Session 4) |
-| 6 | Oct 27 | Google AI lag/looks (was Session 5) + buttons (from old Session 6) |
-| 7 | Oct 28 | Regression + App Store submission. Oct 29 = buffer / resubmission |
+| 2 | Oct 23 ✓ | Debug HUD + inspect + quick wins (committed Nov 4 as `57b516a`) |
+| 3 | Nov 4 ✓ | Test harness + input lag |
+| 4 | Nov 5 | **Layer & overlay engine**: absorbs the old Session 6 Wikipedia/Reddit items |
+| 5 | Nov 6 | Load flash + light-theme base |
+| 6 | Nov 7 | Google AI lag/looks + buttons |
+| 7 | Nov 8 | Regression + App Store submission |
+| — | Nov 9 | Buffer / resubmission |
+| — | Nov 10 | Deadline |
 
 - **Cut:**
   - the Google token-mode prototype (it was fallback-only)
@@ -79,7 +83,7 @@ Workflow: you say "continue with Session N" → I read this file, do that sessio
   - `stickyInfoFor()` was extracted from `visitStickyElement`; `stickySkipReason()` is in themeHeuristics.js with one test per reason.
   - Release stub: the Xcode phase "Stub auraDebug.js (Release)" on the extension target fails the build if the file isn't found. Script sandboxing is off for that target only.
 - Test: Reddit + Google AI Mode with the HUD. Report passes/sec while idle and while typing. Before/after numbers go in this file.
-- Measurements (fill in from device):
+- Measurements: **superseded** by the harness (Nov 4). Device HUD numbers below were never collected.
   | Page | Idle passes/s (10 s avg) | Typing passes/s | Sync max ms | Site/own mut/s | onChanged in 30 s |
   |---|---|---|---|---|---|
   | Reddit post | | | | | |
@@ -87,17 +91,49 @@ Workflow: you say "continue with Session N" → I read this file, do that sessio
 - Inspect findings (fill in): Reddit top/subreddit bar, Airbnb header/pill/tab bar/cookie card, Wikipedia `#mw-mf-page-left`: authored verdict + `stickySkip` + rules line. Airbnb explore layout diff result.
 
 
-## Session 3 — Input lag (Blocker 1)
-- [ ] Exclude Aura's own style writes from scoping: disconnect the observer during our writes and call `takeRecords()`, or filter records by our modified Sets.
-- [ ] Scope by added nodes, not by common ancestor. Walk only addedNodes subtrees + mutated targets. Do full walks only on theme apply or route change.
-- [ ] Typing guard: while focus is in an editable and a key was pressed < 600 ms ago, skip passes for mutations inside that editable's ancestor chain. Run one pass 600 ms after typing stops.
-- [ ] Scroll handler: re-check only already-tracked sticky elements + elements in the top band. No full walks.
-- [ ] Cut the O(n²) passes: expanded content panels, in-place nav panels, inline span highlights, logo canvas inversion, loader images.
-- [ ] Gate nav-drawer classification to fixed/sticky elements only.
-- [ ] Cut the time-based day/night code (content + background).
+## Test harness (Nov 4) — `tools/harness/`, see its README
+- `npm run harness` (or `cd tools/harness && node run.js`) loads every TEST_SITES site in Playwright WebKit with an iPhone 15 Pro profile, unthemed + dark + light.
+  - **Injection:** Aura's scripts in manifest order, document_start, all frames; storage/runtime stubbed.
+  - **Screenshots:** load, +5 s, after scrolling, plus menus.
+  - **Load metrics:** Aura task time, longest task, passes (full-doc vs scoped), frame gaps, time to CSS applied / settled, Aura-caused layout Δ.
+  - **Typing:** keystroke → next frame latency in the first 4 s and on the settled page.
+  - Output: `out/<stamp>/report.md`.
+- **Snapshots:** `--har record` saves every load; `--har replay` reruns them offline with identical DOM. `--compare A B` prints before/after plus a per-element paint diff.
+- **A/B:** `AURA_EXT_DIR=<Resources of a worktree>` runs an older engine.
+- **Fixture:** `fixture-hydration` is an offline, deterministic, Reddit-shaped page (~300 shadow roots, ~4 s of hydration, a comment box). It's for engine A/B runs where the network isn't available.
+- **Simulator:** `tools/harness/sim.sh build|install|theme dark|light|off|shots` runs the real extension in Simulator Safari and takes screenshots.
+- **Not yet run against live sites** (see Session 3 notes): the environment I run in can't start WebKit or reach the internet.
+
+## Session 3 — Input lag (Blocker 1) — done Nov 4
+- **Cause (measured):** on a full-document pass, `handleShadowDOM` ran synchronously over every shadow root. That included `reopaqueExpandedContentPanels` per root, which is O(n²) because of `textContent` per element.
+  - During hydration, mutations land everywhere, so scope = `<html>` and every pass pays for all shadow roots in one task. That produced 200–260 ms tasks on the fixture (more on a phone and on real Reddit).
+  - After hydration, passes are scoped and cheap. That matches "bad for the first 3–4 s, then fine".
+- [x] Cut `reopaqueExpandedContentPanels` (approved cut). It was 80% of pass time on the fixture. The A/B paint diff shows the only change is rows inside shadow roots that it had painted theme-bg on a theme-bg page (false positives, no visible difference).
+- [x] Time-budget the whole pass: `runSafetyPasses` is now a step queue (`runSteps`).
+  - Slices of 8 ms each, every slice its own task.
+  - While typing (key/input in the last 600 ms), slices drop to 3 ms with 16 ms gaps.
+  - Each shadow root expands into its own sliced steps (`shadowRootSteps`, replacing `handleShadowDOM`).
+- [x] Exclude Aura's own writes: `takeRecords()` at the end of every slice, every pass and the scroll handler. Records queued at the end of our own task are exactly our writes, so they no longer widen scope or re-trigger passes.
+- [x] Typing detection (`keydown`/`input`, capture, passive) feeds the slice budget. A separate typing-guard deferral turned out unnecessary: typing p95 now equals unthemed.
+- [ ] Scope by added nodes. **Deferred:** full-document passes are now harmless to input, and this touches every pass's root handling. Revisit if live harness runs show long load-time CPU.
+- [ ] Scroll handler tracked-only. **Deferred** to Session 4, which rewrites sticky handling anyway.
+- [ ] Remaining approved cuts (in-place nav panels, inline highlights, logo inversion, loader images, time-based day/night). **Not done:** each cost < 3 ms per pass on the fixture after slicing, so they no longer cause lag. Cutting them removes visible behavior that I couldn't verify visually here.
+- [ ] Gate nav-drawer classification to fixed/sticky. **Deferred** to Session 4 (same code).
 - [x] ~~Cut Native Dark Mode~~ → **kept**: verified Oct 23 that SafariScreen's "Dark Mode" switch sets `nativeDarkModeEnabled`. Include it in the Session 7 regression pass.
-- [ ] Time-budget the synchronous phase (yield every ~8 ms).
-- Test: TEST_SITES "Type" rows, dark + light. Target: no visible lag; HUD shows ≤ 1 pass per typing pause and < 16 ms per slice.
+- **Numbers** (fixture-hydration, Chromium headless on an idle Mac, median of 3 loads, dark theme; light is within ±10%). Before = `57b516a` via a git worktree (`AURA_EXT_DIR`), same machine, same run:
+  | Metric | Unthemed | Before (`57b516a`) | After |
+  |---|---|---|---|
+  | Longest Aura task during load | – | 245 ms | 15 ms |
+  | Aura time, nav → load + 5 s | – | 519 ms | 143 ms |
+  | Tasks ≥ 50 ms | – | 2 | 0 |
+  | Longest frame gap during load | 17–33 ms | 233 ms | 33 ms |
+  | Typing, first 4 s: p50 / p95 / max | 23 / 30 / 42 | 25 / 43 / 196 | 28 / 35 / 40 |
+  | Typing, settled: p50 / p95 / max | 25 / 33 / 33 | 25 / 32 / 35 | 24 / 34 / 34 |
+  | Aura-caused layout Δ | – | 0 | 0 |
+  - Mac numbers. A phone is ~2–3× slower, so the before case is roughly 0.5 s stalls on device, which matches "5–6 words of lag".
+- **Simulator:** `sim.sh` is written, but the Debug build failed at the dSYM step with "No space left on device". The Mac had 40 MB free; my 2.4 GB scratch build was deleted, leaving 2.4 GB. A full RN Simulator build needs more than that.
+- **Harness fix:** typing runs whose keydowns don't pair 1:1 with sent keys are now flagged INVALID and left out of medians. 2 of the 3 old-engine light runs showed negative latencies before this.
+- **Still needed:** live Reddit/Google numbers from `npm run harness -- --sites reddit-post,google-aimode --repeat 3` with WebKit. Then the full-site regression run. Both need a machine where Playwright WebKit can start and reach the internet.
 
 ## Session 4 — Layer & overlay engine (root cause 8; absorbs old Session 6 Wikipedia/Reddit)
 - [ ] Probe primitive `readAuthoredPaint(el)`:
@@ -182,6 +218,11 @@ Workflow: you say "continue with Session N" → I read this file, do that sessio
   - Folded in the on-device baseline (Airbnb, Wikipedia, lag). Found root cause #8, revised the schedule, and added the engine principles.
   - Built the debug HUD, inspector and layout diff, plus all five quick wins.
   - Device measurements still to do (see Session 2 test list).
+- **Session 3 (Nov 4):**
+  - Committed the Session 2 work (`57b516a`, 243 engine tests green).
+  - Built `tools/harness` (WebKit/Chromium runner, offline fixture, HAR snapshots, A/B + paint diff, Simulator script).
+  - Found the early-typing lag cause with it, and made the pass engine time-sliced and shadow-root-sliced. Cut the content-panel pass. Before/after numbers are in Session 3.
+  - Blocked here: Playwright WebKit can't start inside my sandbox, and the sandbox has no general internet. Live-site runs are still to do.
 
 ## Root-cause details (Session 1 audit)
 Line numbers are from baseline commit `0d47537`. Paths are relative to `ios/TintExtension Extension/Resources/`. Confidence levels are stated per item. "Hypothesis" means the HUD (Session 2) must confirm it.
