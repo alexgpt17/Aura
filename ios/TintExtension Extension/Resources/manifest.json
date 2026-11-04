@@ -15,7 +15,7 @@
     },
 
     "content_scripts": [{
-        "js": [ "themeHeuristics.js", "splitTheme.js", "themeResolve.js", "injected.js", "content.js" ],
+        "js": [ "themeHeuristics.js", "splitTheme.js", "themeResolve.js", "injected.js", "auraDebug.js", "content.js" ],
         "matches": [ "<all_urls>" ],
         "run_at": "document_start",
         "all_frames": true

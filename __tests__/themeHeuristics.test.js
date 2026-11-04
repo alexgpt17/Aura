@@ -2519,3 +2519,36 @@ describe('logo-contrast candidate gating', () => {
     expect(H.isNearMonochromeColorStats({ rSpread: 5, gSpread: 5, bSpread: 150 })).toBe(false);
   });
 });
+
+describe('stickySkipReason', () => {
+  // A 56px bar across a phone viewport: painted (no veto).
+  const bar = {
+    position: 'sticky', tag: 'DIV', mask: 'none', visibility: 'visible', opacity: '1',
+    width: 400, height: 56, top: 0, left: 0, vh: 800, vw: 400,
+  };
+
+  test('returns null for a plain chrome bar, matching shouldSkipStickyElement', () => {
+    expect(H.stickySkipReason(bar)).toBeNull();
+    expect(H.shouldSkipStickyElement(bar)).toBe(false);
+  });
+
+  test.each([
+    ['no-info', null],
+    ['not-fixed-or-sticky', { ...bar, position: 'static' }],
+    ['skip-tag', { ...bar, tag: 'THEAD' }],
+    ['masked', { ...bar, mask: 'url(x.svg)' }],
+    ['hidden', { ...bar, opacity: '0' }],
+    ['overlay-chrome', { ...bar, overlayChrome: true }],
+    ['amp-overlay-chrome', { ...bar, tag: 'AMP-STICKY-AD' }],
+    ['zero-size', { ...bar, height: 0 }],
+    ['full-viewport', { ...bar, height: 800 }],
+    ['covering-sheet', { ...bar, height: 400 }],
+    ['too-tall', { ...bar, width: 200, height: 300 }],
+    ['z-index>=2000', { ...bar, zIndex: '2000' }],
+    ['child-coverage<0.5', { ...bar, childCoverageFrac: 0.3 }],
+    ['child-opaque-coverage>=0.35', { ...bar, childCoverageFrac: 0.9, childOpaqueCoverageFrac: 0.8 }],
+  ])('names the %s veto', (reason, info) => {
+    expect(H.stickySkipReason(info)).toBe(reason);
+    expect(H.shouldSkipStickyElement(info)).toBe(true);
+  });
+});

@@ -1866,17 +1866,20 @@
      *   childCoverageFrac?: number|null, childOpaqueCoverageFrac?: number|null,
      *   hasTablistRole?: boolean }} info
      */
-    function shouldSkipStickyElement(info) {
-        if (!info) return true;
+    // Returns the name of the first rule that vetoes a sticky/fixed repaint,
+    // or null when the element should be painted. The debug HUD shows the
+    // reason; shouldSkipStickyElement is the boolean form the engine uses.
+    function stickySkipReason(info) {
+        if (!info) return 'no-info';
         var pos = info.position;
-        if (pos !== 'fixed' && pos !== 'sticky') return true;
+        if (pos !== 'fixed' && pos !== 'sticky') return 'not-fixed-or-sticky';
         var tag = (info.tag || '').toUpperCase();
-        if (STICKY_SKIP_TAGS[tag]) return true;
-        if (info.mask && info.mask !== 'none') return true;
-        if (info.visibility === 'hidden' || info.opacity === '0') return true;
-        if (info.overlayChrome) return true;
-        if (isAmpOverlayChromeInfo(info)) return true;
-        if ((info.width || 0) < 1 || (info.height || 0) < 1) return true;
+        if (STICKY_SKIP_TAGS[tag]) return 'skip-tag';
+        if (info.mask && info.mask !== 'none') return 'masked';
+        if (info.visibility === 'hidden' || info.opacity === '0') return 'hidden';
+        if (info.overlayChrome) return 'overlay-chrome';
+        if (isAmpOverlayChromeInfo(info)) return 'amp-overlay-chrome';
+        if ((info.width || 0) < 1 || (info.height || 0) < 1) return 'zero-size';
         var sheetRect = {
             width: info.width || 0,
             height: info.height || 0,
@@ -1884,10 +1887,10 @@
             left: typeof info.left === 'number' ? info.left : 0,
         };
         if (isFullViewportRect(sheetRect, info.vh || 0, info.vw || 0)) {
-            return true;
+            return 'full-viewport';
         }
         if (isCoveringSheetRect(sheetRect, info.vh || 0, info.vw || 0)) {
-            return true;
+            return 'covering-sheet';
         }
         // Chrome bars are short. Taller fixed layers are drawers / players /
         // promo shells — never re-opaque them as --aura-bg. A literal
@@ -1897,7 +1900,7 @@
         var isSemanticHeaderTag = tag === 'HEADER' || tag === 'NAV';
         var maxVh = isSemanticHeaderTag ? TOP_CHROME_MAX_VH_SEMANTIC : TOP_CHROME_MAX_VH;
         if (vh > 0 && (info.height || 0) > vh * maxVh) {
-            return true;
+            return 'too-tall';
         }
         // Overlay / CMP / notification tiers (OneSignal, OneTrust, video
         // float) — these tend to use extreme z-index values specifically to
@@ -1916,7 +1919,7 @@
         // navigation that happens to exceed even this threshold.
         var z = parseInt(info.zIndex, 10);
         if (!isNaN(z) && z >= 2000 && !info.hasTablistRole) {
-            return true;
+            return 'z-index>=2000';
         }
         // A wide, short sticky/fixed element whose direct children cover
         // only a small fraction of its own width is very likely a
@@ -1934,7 +1937,7 @@
         if (typeof info.childCoverageFrac === 'number'
             && (info.width || 0) >= 150
             && info.childCoverageFrac < 0.5) {
-            return true;
+            return 'child-coverage<0.5';
         }
         // A wide, short sticky/fixed wrapper whose children (possibly one or
         // two levels of single-child layout wrappers deep — see
@@ -1954,9 +1957,13 @@
         if (typeof info.childOpaqueCoverageFrac === 'number'
             && (info.width || 0) >= 150
             && info.childOpaqueCoverageFrac >= 0.35) {
-            return true;
+            return 'child-opaque-coverage>=0.35';
         }
-        return false;
+        return null;
+    }
+
+    function shouldSkipStickyElement(info) {
+        return stickySkipReason(info) !== null;
     }
 
 
@@ -2469,6 +2476,7 @@
         effectiveBackground: effectiveBackground,
         shouldSkipBrightElement: shouldSkipBrightElement,
         shouldSkipStickyElement: shouldSkipStickyElement,
+        stickySkipReason: stickySkipReason,
         isSpaShellId: isSpaShellId,
         isLargeLayoutShell: isLargeLayoutShell,
         isLargeLayoutNode: isLargeLayoutNode,

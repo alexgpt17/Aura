@@ -22,6 +22,17 @@ let pendingWrite = null;
  * Syncs theme data from App Group to browser.storage.local
  * Called on initial load and when content scripts request updates
  */
+function stableStringify(value) {
+    if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+    if (value && typeof value === 'object') {
+        return '{' + Object.keys(value).sort()
+            .filter(k => value[k] !== undefined)
+            .map(k => JSON.stringify(k) + ':' + stableStringify(value[k]))
+            .join(',') + '}';
+    }
+    return JSON.stringify(value);
+}
+
 async function syncThemeFromAppGroup() {
     try {
         if (AURA_DEBUG_LOGGING) console.log("Tint background: Requesting theme sync from native handler via sendNativeMessage");
@@ -87,8 +98,11 @@ async function syncThemeFromAppGroup() {
             if (!currentNormalized || !newNormalized) {
                 themeChanged = currentNormalized !== newNormalized;
             } else {
-                const currentStr = JSON.stringify(currentNormalized);
-                const newStr = JSON.stringify(newNormalized);
+                // Key-sorted: Swift dictionary key order isn't stable across
+                // native round trips, so a plain stringify could report a
+                // change (and rewrite storage in every tab) every 5 s.
+                const currentStr = stableStringify(currentNormalized);
+                const newStr = stableStringify(newNormalized);
                 themeChanged = currentStr !== newStr;
                 
                 if (!themeChanged && currentNormalized.globalTheme && newNormalized.globalTheme) {

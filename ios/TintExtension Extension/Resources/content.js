@@ -195,6 +195,11 @@
     const Resolve = (typeof AuraThemeResolve !== 'undefined' && AuraThemeResolve)
         ? AuraThemeResolve
         : null;
+    // Debug HUD hooks (auraDebug.js). null unless the tab opted in with
+    // #aura-debug; Release builds ship a stub that is never enabled.
+    const DBG = (typeof AuraDebug !== 'undefined' && AuraDebug && AuraDebug.enabled)
+        ? AuraDebug
+        : null;
 
     // AMP gets a dedicated, isolated theming path instead of running through
     // the general reactive engine (mutation-driven sticky/overlay/shell walks
@@ -2219,56 +2224,11 @@
         return false;
     }
 
-    function visitStickyElement(el, vh, vw, modalCardCache) {
-        if (!el || el.nodeType !== 1 || !H) return;
-        if (isAdThemingSkipped(el) || isChromePaintHostSkipped(el)) {
-            if (stickyModified.has(el)) revertStickyPaint(el);
-            return;
-        }
-        if (H.isAmpOverlayChrome && H.isAmpOverlayChrome(el)) {
-            if (stickyModified.has(el)) revertStickyPaint(el);
-            return;
-        }
-        // Modal cards / promos are the overlay pass's job — never paint them
-        // as chrome with --aura-bg (OneSignal, cookie cards, etc.).
-        if (isLikelyModalCardCached(el, modalCardCache, vh, vw)) {
-            if (stickyModified.has(el)) maybeRevertStickyPaint(el);
-            return;
-        }
-        let style;
-        try { style = getComputedStyle(el); } catch (e) { return; }
-        let rect;
-        try { rect = el.getBoundingClientRect(); } catch (e) { return; }
+    // Builds the info object shouldSkipStickyElement/stickySkipReason read.
+    // Shared by visitStickyElement and the debug inspector so the HUD shows
+    // exactly what the engine saw.
+    function stickyInfoFor(el, style, rect, vh, vw) {
         const mask = style.webkitMaskImage || style.maskImage;
-        // A position:fixed element that covers most of the viewport and is
-        // NOT a recognized ARIA overlay, but DOES contain a genuine
-        // modal-card-shaped descendant, is a custom (non-ARIA) modal/
-        // bottom-sheet — e.g. Google's sports scorecard panel. Route it
-        // through the same scrim treatment real ARIA dialogs already get
-        // (transparent backdrop + opaque inner card) instead of leaving it
-        // to whatever wins the plain cascade (confirmed on Google: the
-        // panel itself renders fine, but its backdrop was left a flat
-        // solid color instead of a dimmed view of the page behind it).
-        if (style.position === 'fixed'
-            && !H.isOverlayChrome(el)
-            && isOverlayCoveringSheet(rect, vh, vw)) {
-            const inner = H.findInnerModalCard && H.findInnerModalCard(el, getComputedStyle, { vh, vw });
-            if (inner) {
-                paintOverlayScrimAsTransparent(el, vh, vw);
-                return;
-            }
-        }
-        // Cheap gate before the expensive child-unwrap/coverage-fraction and
-        // hasTablistRole computation below: shouldSkipStickyElement's own
-        // first check unconditionally skips anything that isn't
-        // position:fixed/sticky, so bailing here first changes no outcome —
-        // it only skips that work (confirmed via git history to have been
-        // running unconditionally on every element on every page's first
-        // paint) for the overwhelming majority of elements.
-        if (style.position !== 'fixed' && style.position !== 'sticky') {
-            if (stickyModified.has(el)) revertStickyPaint(el);
-            return;
-        }
         // Layout geometry (unlike background-color, which the universal
         // transparency rule already forces !important before any JS pass
         // runs) is never touched by Aura's stylesheet, so this reliably
@@ -2362,7 +2322,7 @@
         try {
             hasTablistRole = el.getAttribute('role') === 'tablist' || !!el.querySelector('[role="tablist"]');
         } catch (e4) {}
-        if (H.shouldSkipStickyElement({
+        return {
             position: style.position,
             mask: mask || 'none',
             visibility: style.visibility,
@@ -2381,7 +2341,59 @@
             childCoverageFrac,
             childOpaqueCoverageFrac,
             hasTablistRole,
-        })) {
+        };
+    }
+
+    function visitStickyElement(el, vh, vw, modalCardCache) {
+        if (!el || el.nodeType !== 1 || !H) return;
+        if (isAdThemingSkipped(el) || isChromePaintHostSkipped(el)) {
+            if (stickyModified.has(el)) revertStickyPaint(el);
+            return;
+        }
+        if (H.isAmpOverlayChrome && H.isAmpOverlayChrome(el)) {
+            if (stickyModified.has(el)) revertStickyPaint(el);
+            return;
+        }
+        // Modal cards / promos are the overlay pass's job — never paint them
+        // as chrome with --aura-bg (OneSignal, cookie cards, etc.).
+        if (isLikelyModalCardCached(el, modalCardCache, vh, vw)) {
+            if (stickyModified.has(el)) maybeRevertStickyPaint(el);
+            return;
+        }
+        let style;
+        try { style = getComputedStyle(el); } catch (e) { return; }
+        let rect;
+        try { rect = el.getBoundingClientRect(); } catch (e) { return; }
+        // A position:fixed element that covers most of the viewport and is
+        // NOT a recognized ARIA overlay, but DOES contain a genuine
+        // modal-card-shaped descendant, is a custom (non-ARIA) modal/
+        // bottom-sheet — e.g. Google's sports scorecard panel. Route it
+        // through the same scrim treatment real ARIA dialogs already get
+        // (transparent backdrop + opaque inner card) instead of leaving it
+        // to whatever wins the plain cascade (confirmed on Google: the
+        // panel itself renders fine, but its backdrop was left a flat
+        // solid color instead of a dimmed view of the page behind it).
+        if (style.position === 'fixed'
+            && !H.isOverlayChrome(el)
+            && isOverlayCoveringSheet(rect, vh, vw)) {
+            const inner = H.findInnerModalCard && H.findInnerModalCard(el, getComputedStyle, { vh, vw });
+            if (inner) {
+                paintOverlayScrimAsTransparent(el, vh, vw);
+                return;
+            }
+        }
+        // Cheap gate before the expensive child-unwrap/coverage-fraction and
+        // hasTablistRole computation in stickyInfoFor: shouldSkipStickyElement's own
+        // first check unconditionally skips anything that isn't
+        // position:fixed/sticky, so bailing here first changes no outcome —
+        // it only skips that work (confirmed via git history to have been
+        // running unconditionally on every element on every page's first
+        // paint) for the overwhelming majority of elements.
+        if (style.position !== 'fixed' && style.position !== 'sticky') {
+            if (stickyModified.has(el)) revertStickyPaint(el);
+            return;
+        }
+        if (H.shouldSkipStickyElement(stickyInfoFor(el, style, rect, vh, vw))) {
             if (stickyModified.has(el)) maybeRevertStickyPaint(el);
             return;
         }
@@ -2393,6 +2405,35 @@
         el.style.setProperty('color', 'var(--aura-text)', 'important');
         stickyModified.add(el);
         stickyPendingRevert.delete(el);
+    }
+
+    // Debug-only (HUD inspect): which layer/overlay rule applies to `el` and
+    // why, using the same helpers visitStickyElement / visitOverlayModalWalk
+    // use. Never called by the engine itself.
+    function explainLayer(el) {
+        const out = {};
+        if (!el || el.nodeType !== 1 || !H) return out;
+        const { vh, vw } = passViewport();
+        let style, rect;
+        try { style = getComputedStyle(el); rect = el.getBoundingClientRect(); } catch (e) { return out; }
+        try { out.modalCard = !!isLikelyModalCardCached(el, null, vh, vw); } catch (e) {}
+        out.coveringSheet = isOverlayCoveringSheet(rect, vh, vw);
+        out.overlayRoot = !!H.isOverlayRoot(el);
+        out.overlayChrome = !!H.isOverlayChrome(el);
+        out.adSkipped = isAdThemingSkipped(el);
+        if (out.coveringSheet && H.findInnerModalCard) {
+            try {
+                const inner = H.findInnerModalCard(el, getComputedStyle, { vh, vw });
+                if (inner) out.scrimInnerCard = inner;
+            } catch (e) {}
+        }
+        if (style.position === 'fixed' || style.position === 'sticky') {
+            try { out.stickySkip = H.stickySkipReason(stickyInfoFor(el, style, rect, vh, vw)) || 'none (painted)'; } catch (e) {}
+        }
+        if (H.classifyNavDrawerState) {
+            try { out.navDrawer = H.classifyNavDrawerState(el, getComputedStyle, { vh, vw }); } catch (e) {}
+        }
+        return out;
     }
 
     // Small icon-only controls (close/share/kebab-menu) pinned via
@@ -3924,7 +3965,9 @@
             );
             pseudoBgCleared.add(el);
         }
-        ensurePseudoBgStyleEl().textContent = Array.from(pseudoBgRulesByToken.values()).join('\n');
+        const pseudoCss = Array.from(pseudoBgRulesByToken.values()).join('\n');
+        const pseudoEl = ensurePseudoBgStyleEl();
+        if (pseudoEl.textContent !== pseudoCss) pseudoEl.textContent = pseudoCss;
     }
 
     function clearFullBleedPseudoBackgrounds(root, precollected) {
@@ -3950,6 +3993,11 @@
     // covering color is gone, the loader asset is left permanently visible.
     // Safe to clear unconditionally: a loader/spinner asset visible at rest
     // is never desirable under any theme, regardless of what exposed it.
+    // className at the time we cleared each loader. The re-check below has to
+    // lift our override (two style mutations), so it only runs when the
+    // site has actually changed the element's classes since.
+    const loaderBgClassAtClear = new WeakMap();
+
     function revertLoaderBgElement(el) {
         try { el.style.removeProperty('background-image'); } catch (e) {}
         loaderBgModified.delete(el);
@@ -3958,6 +4006,8 @@
     function visitLoaderBgElement(el) {
         if (!el || el.nodeType !== 1 || !H || !H.isLoaderBackgroundImageUrl) return;
         if (loaderBgModified.has(el)) {
+            if (loaderBgClassAtClear.get(el) === el.className
+                && el.style.getPropertyValue('background-image') === 'none') return;
             // Re-check: a site can reuse the same element for real content
             // later (a shimmer/loading container swapped to a real photo).
             // Our own override reads back as 'none' via computed style, so
@@ -3967,6 +4017,7 @@
             try { underlying = getComputedStyle(el).backgroundImage; } catch (e) { underlying = null; }
             if (underlying && H.isLoaderBackgroundImageUrl(underlying)) {
                 el.style.setProperty('background-image', 'none', 'important');
+                loaderBgClassAtClear.set(el, el.className);
             } else {
                 revertLoaderBgElement(el);
             }
@@ -3977,6 +4028,7 @@
         if (!H.isLoaderBackgroundImageUrl(style.backgroundImage)) return;
         el.style.setProperty('background-image', 'none', 'important');
         loaderBgModified.add(el);
+        loaderBgClassAtClear.set(el, el.className);
     }
 
     function clearLoaderBackgroundImages(root, precollected) {
@@ -4195,9 +4247,21 @@
         inlineHighlightModified.delete(el);
     }
 
+    // className + text at the time each span was painted. An unchanged span
+    // keeps its paint without the remove/re-set churn (four style mutations
+    // per span per pass, which re-triggered the observer).
+    const inlineHighlightKeyAtPaint = new WeakMap();
+    function inlineHighlightKey(el) {
+        let text = '';
+        try { text = String(el.textContent || ''); } catch (e) {}
+        return el.className + '|' + text;
+    }
+
     function visitInlineHighlightElement(el) {
         if (!el || el.nodeType !== 1 || el.tagName !== 'SPAN' || !H || !H.isLikelyInlineHighlightSpanInfo) return;
         if (inlineHighlightModified.has(el)) {
+            if (inlineHighlightKeyAtPaint.get(el) === inlineHighlightKey(el)
+                && el.style.getPropertyValue('background-color') === 'var(--aura-elevated)') return;
             el.style.removeProperty('background-color');
             el.style.removeProperty('background-image');
             el.style.removeProperty('color');
@@ -4225,6 +4289,7 @@
         el.style.setProperty('color', 'var(--aura-text)', 'important');
         el.style.setProperty('-webkit-text-fill-color', 'var(--aura-text)', 'important');
         inlineHighlightModified.add(el);
+        inlineHighlightKeyAtPaint.set(el, inlineHighlightKey(el));
     }
 
     function rethemeInlineHighlights(root, precollected) {
@@ -4243,10 +4308,18 @@
         }
     }
 
+    // Re-appending our <style> is a childList mutation plus a full style
+    // recalc, and Reddit/Google add styles constantly, so cap it at once per
+    // PROMOTE_ENGINE_MIN_INTERVAL_MS.
+    const PROMOTE_ENGINE_MIN_INTERVAL_MS = 2000;
+    let lastEnginePromoteAt = 0;
     function promoteEngineStylesheet() {
         const el = document.getElementById('aura-core-engine');
         if (!el || !el.parentNode) return;
         if (el.parentNode.lastElementChild === el) return;
+        const now = Date.now();
+        if (now - lastEnginePromoteAt < PROMOTE_ENGINE_MIN_INTERVAL_MS) return;
+        lastEnginePromoteAt = now;
         el.parentNode.appendChild(el);
     }
 
@@ -4262,6 +4335,7 @@
 
     function runSafetyPasses(root) {
         if (!root || !currentTheme) return;
+        DBG?.passStart(root);
         cancelWalkSlices();
         const gen = walkGeneration;
         ignoreMutations = true;
@@ -4280,6 +4354,7 @@
         // snapshot is taken and never touch elements any pass below cares
         // about.
         const elements = collectElements(root);
+        DBG?.passElements(elements.length);
         // Shared across every isLikelyModalCard call this invocation makes
         // (revertGrownModalCards below, plus visitOverlayModalWalk/
         // visitBrightElement/visitStickyElement in the forEachSliced walk)
@@ -4318,6 +4393,7 @@
 
         function finish() {
             if (gen !== walkGeneration) return;
+            DBG?.passEnd();
             safePass(() => paintGoogleImagesViewer(root));
             if (ignoreMutationsTimer) clearTimeout(ignoreMutationsTimer);
             ignoreMutationsTimer = setTimeout(() => {
@@ -4336,6 +4412,7 @@
             }, 50);
         }
 
+        DBG?.passSync();
         // Contrast must run after bright/shell clears so muted spans are
         // judged against the theme background, not a still-white ancestor.
         ignoreMutations = true;
@@ -4557,6 +4634,7 @@
         (document.head || document.documentElement).appendChild(styleEl);
 
         applyBackgroundColors(theme);
+        DBG?.cssApplied();
         const earlyShield = document.getElementById('aura-early-shield');
         if (earlyShield) earlyShield.remove();
 
@@ -4976,6 +5054,7 @@
     // 7. STORAGE CHANGE LISTENER - Direct application without re-fetch
     browser.storage.onChanged.addListener((changes, areaName) => {
         if (areaName === 'local' && changes.tintThemeData?.newValue) {
+            DBG?.storageChanged();
             const newThemeData = changes.tintThemeData.newValue;
             const newTheme = resolveTheme(newThemeData);
             if (!newTheme) return;
@@ -5185,13 +5264,31 @@
 
     // 9. INITIALIZATION
     async function init() {
+        DBG?.registerEngine({
+            sets: {
+                sticky: stickyModified, bright: brightModified, contrast: contrastModified,
+                overlay: overlayModified, modalCard: modalCardOpaqueModified, shell: shellModified,
+                chrome: chromeModified, chromeOuter: chromeOuterModified,
+                chromeFixedInner: chromeFixedInnerModified, chromeAuthored: chromeAuthoredModified,
+                navMenuPanel: navMenuPanelOpaqueModified, expandedPanel: expandedContentPanelOpaqueModified,
+                floatingIcon: floatingIconControlModified, askAnything: askAnythingModified,
+                pseudoBgCleared, pseudoBgNavPanel: pseudoBgNavPanelHosts, loaderBg: loaderBgModified,
+                googleAiChat: googleAiChatModified, logoContrast: logoContrastModified,
+                inlineHighlight: inlineHighlightModified,
+            },
+            explain: explainLayer,
+        });
         // Nested ad creative frames: never theme.
         try {
             const host = String(window.location.hostname || '');
             if (H && H.isAdNetworkHost && H.isAdNetworkHost(host)) return;
         } catch (eHost) {}
 
-        const data = await browser.storage.local.get('tintThemeData');
+        let data = null;
+        try {
+            data = await (window.__AURA_STORAGE_PROMISE__ || browser.storage.local.get('tintThemeData'));
+        } catch (eStorage) {}
+        DBG?.storageResolved();
         const td = data?.tintThemeData;
         if (td) {
             const theme = resolveTheme(td);
@@ -5220,6 +5317,7 @@
                     // everything that happened, not just whatever arrives
                     // after the pass's cooldown ends. Cheap — array push,
                     // no DOM work.
+                    DBG?.mutations(mutationsList);
                     for (let i = 0; i < mutationsList.length; i++) {
                         pendingMutationRecords.push(mutationsList[i]);
                     }
@@ -5250,6 +5348,7 @@
                     scrollPassTimer = setTimeout(() => {
                         scrollPassTimer = null;
                         if (!currentTheme) return;
+                        DBG?.scrollPass();
                         const { vh, vw } = passViewport();
                         safePass(() => revertGrownModalCards(vh, vw));
                         safePass(() => reopaqueTopChrome(document.documentElement));

@@ -141,7 +141,11 @@
 
     function loadFromStorage() {
         if (typeof browser !== 'undefined' && browser.storage) {
-            browser.storage.local.get('tintThemeData').then(function (result) {
+            // Shared with content.js (same isolated world) so the page makes
+            // one storage read instead of two.
+            var storagePromise = browser.storage.local.get('tintThemeData');
+            window.__AURA_STORAGE_PROMISE__ = storagePromise;
+            storagePromise.then(function (result) {
                 // Ad networks' own SafeFrame bootstrap scripts run after
                 // document_start (when the isAdNetworkHost bail-out above
                 // already ran), so this is the earliest point we can

@@ -440,6 +440,7 @@
 				0BEB588A2E7DFC6600B7D7B1 /* Sources */,
 				0BEB588B2E7DFC6600B7D7B1 /* Frameworks */,
 				0BEB588C2E7DFC6600B7D7B1 /* Resources */,
+				0BAA50012F5F000100FFFFFF /* Stub auraDebug.js (Release) */,
 			);
 			buildRules = (
 			);
@@ -593,6 +594,22 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		0BAA50012F5F000100FFFFFF /* Stub auraDebug.js (Release) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Stub auraDebug.js (Release)";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\n# Release builds must never ship the debug HUD: replace it with a stub.\nif [ \"${CONFIGURATION}\" != \"Release\" ]; then exit 0; fi\nOUT=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/auraDebug.js\"\nif [ ! -f \"$OUT\" ]; then\n  echo \"error: auraDebug.js not found at $OUT (the debug HUD would ship in Release)\"\n  exit 1\nfi\nprintf '%s\\n' '// Release stub: the debug HUD is compiled out.' 'globalThis.AuraDebug = { enabled: false };' > \"$OUT\"\n";
+			showEnvVarsInLog = 0;
+		};
 		00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -1169,7 +1186,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 4JV5Y33KJB;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "TintExtension Extension/Info.plist";
@@ -1219,7 +1236,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 4JV5Y33KJB;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "TintExtension Extension/Info.plist";
