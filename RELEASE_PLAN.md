@@ -131,6 +131,12 @@ Repo: `~/Developer/Aura` is the only copy (the iCloud Desktop copy was retired O
   | Typing, settled: p50 / p95 / max | 25 / 33 / 33 | 25 / 32 / 35 | 24 / 34 / 34 |
   | Aura-caused layout Δ | – | 0 | 0 |
   - Mac numbers. A phone is ~2–3× slower, so the before case is roughly 0.5 s stalls on device, which matches "5–6 words of lag".
+- **On-device check (Nov 4, your build of `6b0b644`):**
+  - Reddit early typing: **much better**.
+  - Google AI Mode typing: **better, but still slightly slow** → follow-up in Session 6 (Google-only lag sources below are untouched: `body:has()` SITE_FIX rules, the dedicated Google repaint observer, and the composer passes on keystrokes).
+  - booking.com (the removed content-panel pass's target): **looks good**.
+  - Wikipedia drawer still goes transparent after ~3 s: expected; that's Session 4.
+- **Signing (Nov 4):** the Apple Development certificate expired Nov 4, 11:08 AM PT, and Xcode replaced it. The new team profiles are valid for only 7 days, which usually means a free (Personal Team) account. **Before Session 7, confirm the paid Developer Program membership for team `4JV5Y33KJB` is active and that a valid Apple Distribution certificate exists.**
 - **Simulator:** `sim.sh` is written, but the Debug build failed at the dSYM step with "No space left on device". The Mac had 40 MB free; my 2.4 GB scratch build was deleted, leaving 2.4 GB. A full RN Simulator build needs more than that.
 - **Harness fix:** typing runs whose keydowns don't pair 1:1 with sent keys are now flagged INVALID and left out of medians. 2 of the 3 old-engine light runs showed negative latencies before this.
 - **Still needed:** live Reddit/Google numbers from `npm run harness -- --sites reddit-post,google-aimode --repeat 3` with WebKit. Then the full-site regression run. Both need a machine where Playwright WebKit can start and reach the internet.
