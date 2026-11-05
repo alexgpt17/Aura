@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shadow-DOM sticky bars fixture (Reddit-shaped)</title>
+<!--
+  Offline stand-in for Reddit's sticky top header and subreddit bar
+  (TEST_SITES R-1, R-2; RELEASE_PLAN root cause #4). Shape, not content:
+    - each bar is a custom element that is itself position:sticky, with no
+      background of its own
+    - its painted surface is a plain (not sticky) div INSIDE its open shadow
+      root, so the layer rule has to look through the shadow boundary
+    - the subreddit bar holds an avatar, a name and a narrow "Open App"
+      button, so its children cover well under half its width
+    - posts scroll under both
+-->
+<style>
+  body { margin: 0; font: 15px -apple-system, system-ui, sans-serif; background: #fff; color: #1c1c1c; }
+  top-header { position: sticky; top: 0; z-index: 4; display: block; }
+  subreddit-bar { position: sticky; top: 48px; z-index: 3; display: block; }
+  main { padding: 0 12px; }
+  .post { margin: 12px 0; padding: 12px; border-radius: 12px; background: #f6f7f8; }
+  .post .img { height: 220px; border-radius: 8px; background: linear-gradient(135deg, #a1c4fd, #c2e9fb); margin-top: 8px; }
+</style>
+</head>
+<body>
+<top-header></top-header>
+<subreddit-bar></subreddit-bar>
+<main id="posts"></main>
+<script>
+  document.querySelector('top-header').attachShadow({ mode: 'open' }).innerHTML =
+    '<style>.wrap{height:48px;background:#fff;display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid #eee}'
+    + '.logo{width:32px;height:32px;border-radius:50%;background:#ff4500}</style>'
+    + '<div class="wrap"><span class="logo"></span><span>reddit</span></div>';
+  document.querySelector('subreddit-bar').attachShadow({ mode: 'open' }).innerHTML =
+    '<style>.row{height:52px;background:#fff;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid #eee}'
+    + '.av{width:28px;height:28px;border-radius:50%;background:#46d160}button{margin-left:auto;border:1px solid #ccc;border-radius:16px;background:#fff;padding:4px 10px}</style>'
+    + '<div class="row"><span class="av"></span><b>r/iphone</b><button>Open App</button></div>';
+  var m = document.getElementById('posts');
+  for (var i = 0; i < 10; i++) {
+    m.insertAdjacentHTML('beforeend', '<div class="post"><div>u/user' + i + ' · ' + (i + 1) + 'h</div><h3>Post title number ' + i + '</h3><div class="img"></div></div>');
+  }
+</script>
+</body>
+</html>

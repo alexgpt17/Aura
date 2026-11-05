@@ -23,6 +23,24 @@ Repo: `~/Developer/Aura` is the only copy (the iCloud Desktop copy was retired O
   3. The bottom tab bar is transparent.
 - All three Airbnb bugs trace to root cause #8, not to Airbnb-specific code.
 
+## Nov 5 phone findings (after Session 4)
+DOM read live in Chrome where noted. "Pre-S4" means the screenshot was taken before the Session 4 build.
+- **Bearbottom "Find my size"** (pre-S4): the page's color swatches show through the panel.
+  - DOM: `.ff-backdrop` (role-less, fixed, z-index 100000, `rgba(0,0,0,.55)`) contains `.ff-modal` (`[role=dialog][aria-modal]`, white, full width × 76% of the height).
+  - The old covering-sheet "scrim" path cleared both. **Expected fixed by Session 4**; re-check (B-2).
+- **Airbnb category chips** (on the S4 build): a square theme-colored box around each emoji.
+  - DOM: the emoji `<video>` sits in a transparent 28×28 `position:absolute` span inside a clickable `a[role=tab]`. `isLikelyFloatingIconControl` matches it, so `visitFloatingIconControlElement` paints `--aura-overlay`.
+  - A remaining paint-by-shape pass. **Open → Session 5B.**
+- **Bearbottom chat launcher** (pre-S4): a square box around a round button. Same category; re-check after 5B.
+- **Wikipedia "Banner logo"**: a bordered alt-text box where the banner image should be. Cause unconfirmed. **Open → Session 5B** (compare with Aura off first).
+- **Walmart "Spanish/Español now available" tooltip** (pre-S4): transparent body over the order timeline.
+  - A non-ARIA, absolutely positioned popover; no pass handles that shape. **Open → Session 5B.**
+- **Walmart "See more shipping activity" and "Give feedback"** (pre-S4): a full-width white `<button>` strip and a white button with light text. Buttons. **Open → Session 6.**
+- **Google Forms checkboxes** (pre-S4): `div[role=checkbox|radio]` show their state through the box's background, which the universal rule strips. Unchecked boxes show white; a checked box blends into the background. **Open → Session 6.**
+- **Google Forms "Autosave your work" dialog** (pre-S4): only the top of the card is painted, and the text overlaps the form.
+  - Same "inner card" path Session 4 replaced. **Expected fixed**; re-check (F-1).
+  - `docs.google.com` matches `isGoogleHost()` and the google.com SITE_FIXES, so those need scoping (Session 6).
+
 ## Engine principles (Oct 23 — apply to every fix from here on)
 - **Fixed/sticky layers** (headers, toolbars, tab bars, search bars, sidebars): if the original was opaque, the themed one is opaque, including after scroll, resize, and late-loading content. Decide from the **authored paint**, never from geometry.
 - **Overlays** (modals, cookie/consent, dropdowns, drawers): backdrop and card are handled separately (dark translucent scrim kept, opaque card painted, transparent wrapper left alone). Never clipped.
@@ -42,7 +60,7 @@ Repo: `~/Developer/Aura` is the only copy (the iCloud Desktop copy was retired O
 |---|---|---|
 | 2 | Oct 23 ✓ | Debug HUD + inspect + quick wins (committed Nov 4 as `57b516a`) |
 | 3 | Nov 4 ✓ | Test harness + input lag |
-| 4 | Nov 5 | **Layer & overlay engine**: absorbs the old Session 6 Wikipedia/Reddit items |
+| 4 | Nov 4–5 ✓ | **Layer & overlay engine**: absorbs the old Session 6 Wikipedia/Reddit items (code + harness done; on-device check pending) |
 | 5 | Nov 6 | Load flash + light-theme base |
 | 6 | Nov 7 | Google AI lag/looks + buttons |
 | 7 | Nov 8 | Regression + App Store submission |
@@ -116,9 +134,9 @@ Repo: `~/Developer/Aura` is the only copy (the iCloud Desktop copy was retired O
 - [x] Exclude Aura's own writes: `takeRecords()` at the end of every slice, every pass and the scroll handler. Records queued at the end of our own task are exactly our writes, so they no longer widen scope or re-trigger passes.
 - [x] Typing detection (`keydown`/`input`, capture, passive) feeds the slice budget. A separate typing-guard deferral turned out unnecessary: typing p95 now equals unthemed.
 - [ ] Scope by added nodes. **Deferred:** full-document passes are now harmless to input, and this touches every pass's root handling. Revisit if live harness runs show long load-time CPU.
-- [ ] Scroll handler tracked-only. **Deferred** to Session 4, which rewrites sticky handling anyway.
+- [x] Scroll handler tracked-only. Done in Session 4.
 - [ ] Remaining approved cuts (in-place nav panels, inline highlights, logo inversion, loader images, time-based day/night). **Not done:** each cost < 3 ms per pass on the fixture after slicing, so they no longer cause lag. Cutting them removes visible behavior that I couldn't verify visually here.
-- [ ] Gate nav-drawer classification to fixed/sticky. **Deferred** to Session 4 (same code).
+- [x] Gate nav-drawer classification to fixed/sticky. Done in Session 4.
 - [x] ~~Cut Native Dark Mode~~ → **kept**: verified Oct 23 that SafariScreen's "Dark Mode" switch sets `nativeDarkModeEnabled`. Include it in the Session 7 regression pass.
 - **Numbers** (fixture-hydration, Chromium headless on an idle Mac, median of 3 loads, dark theme; light is within ±10%). Before = `57b516a` via a git worktree (`AURA_EXT_DIR`), same machine, same run:
   | Metric | Unthemed | Before (`57b516a`) | After |
@@ -141,31 +159,79 @@ Repo: `~/Developer/Aura` is the only copy (the iCloud Desktop copy was retired O
 - **Harness fix:** typing runs whose keydowns don't pair 1:1 with sent keys are now flagged INVALID and left out of medians. 2 of the 3 old-engine light runs showed negative latencies before this.
 - **Still needed:** live Reddit/Google numbers from `npm run harness -- --sites reddit-post,google-aimode --repeat 3` with WebKit. Then the full-site regression run. Both need a machine where Playwright WebKit can start and reach the internet.
 
-## Session 4 — Layer & overlay engine (root cause 8; absorbs old Session 6 Wikipedia/Reddit)
-- [ ] Probe primitive `readAuthoredPaint(el)`:
-  - The universal and white-inline rules get `:where(:not([data-aura-probe]))` (zero specificity, so the cascade is unchanged).
-  - Probe a batch: set `data-aura-probe` + `data-aura-notrans` (transition off) → read computed bg-color/bg-image/backdrop-filter in one recalc → remove probe → remove notrans next frame.
-  - Cache per element, keyed by `className`. Read the site's own inline bg before our inline write.
-  - `data-aura-*` isn't in the observer's attributeFilter, so probing creates no mutation records.
-  - Same `:where` clause in the shadow-root copies.
-- [ ] Fixed/sticky rule (replaces the coverage/covering-sheet/z-index vetoes in `shouldSkipStickyElement` for the paint decision; ad/AMP skips stay):
-  - Probe the layer and its descendants to depth 3 that are ≥ 40% of its width.
-  - Paint the first authored-opaque node per branch `--aura-bg` (alpha ≥ 0.5, or translucent + backdrop-filter); stop descending there.
-  - Never paint an authored-transparent element.
-- [ ] Persistence:
-  - Re-check tracked layers on scroll/resize (tracked set only).
-  - Re-probe on class change.
-  - Re-paint if the site rewrites `style`.
-  - Probe new nodes inside a tracked layer.
-- [ ] Overlay rule (replaces the `isOverlayCoveringSheet` → `paintOverlayScrimAsTransparent` → `findInnerModalCard` paint path in `reopaqueOverlays`, `visitOverlayModalWalk`, `visitStickyElement`, `revertGrownModalCards`):
-  - Backdrop = authored dark translucent → restore the authored scrim.
-  - Card = authored opaque → `--aura-overlay`.
-  - Wrapper = authored transparent → leave it, keep descending.
-- [ ] Layout invariance: jest test scanning content.js CSS + `setProperty` calls for geometry properties (padding/margin/size/inset/border-width/display/position/transform), with a justified allowlist.
-- [ ] Per-site rules only where HUD inspect shows the general rule is wrong. Remove the unverified Reddit SITE_FIX if the general rule covers it.
-- Test: TEST_SITES A-1..A-3, R-1, R-2, W-1, W-3, X-2 (curtain must not return), dark + light; HUD layout diff = 0 on Airbnb explore.
+## Session 4 — Layer & overlay engine (root cause 8; absorbs old Session 6 Wikipedia/Reddit) — done Nov 4, on-device check pending
+- [x] Probe primitive `readAuthoredPaint(els)` (content.js section 3c-bis):
+  - The universal rule, the white-inline rule, the SPA-root rule and the static ARIA-overlay rule get `:where(:not([data-aura-probe]))` (zero specificity). Shadow-root and iframe copies get it too (same sheet).
+  - A batch is flagged with `data-aura-probe` + `data-aura-notrans` (`transition: none`), read in one recalc, and unflagged in the same task. `data-aura-notrans` comes off on the next frame.
+  - Aura's own inline background writes (any pass) are lifted for the read and put back. The site's own inline paint is saved before the engine's first write.
+  - Cached per element by `className`; a class/style mutation inside a tracked root forces a re-read for that root.
+  - No mutation records: `data-aura-*` isn't in the attributeFilter, and lifted inline writes happen inside a slice (discarded).
+- [x] Pure verdict `classifyAuthoredPaint(paint, mode)` in themeHeuristics.js (14 jest cases): `opaque` (alpha ≥ 0.5, or any tint behind a backdrop blur), `scrim` (overlay mode: dark, 0.05 < alpha < 0.95, no blur), `clear`.
+- [x] Fixed/sticky rule. `visitStickyElement` hands every visible fixed/sticky element to `evaluateAuthoredLayer`:
+  - It probes the root plus descendants to depth 3 (overlay: 6) that are ≥ 40% of its width (overlay: 30%), skipping controls/media and nested fixed/sticky elements (those are their own roots). It also looks inside a host's open shadow root (Reddit's bars).
+  - It paints the first authored-opaque node per branch (`--aura-bg`; overlay `--aura-overlay`) and stops there. It never paints an authored-transparent node.
+  - `stickySkipReason` keeps only identity/visibility vetoes (skip-tag, masked, hidden, overlay-chrome, AMP, zero-size). The full-viewport, covering-sheet, too-tall, z-index ≥ 2000, child-coverage and child-opaque-coverage vetoes are gone. A fixed covering sheet goes through the overlay rule instead.
+  - `reopaqueTopChrome` no longer paints or clears fixed/sticky bars or anything inside them (the layer engine owns them); its fixed-inner branch and `findFixedChromeDescendant` are removed.
+- [x] Persistence:
+  - Scroll + resize (window and visualViewport), 200 ms throttle: re-check tracked roots only, using cached probes. `reopaqueStickyFixed` and the full-document `reopaqueTopChrome` scroll walk are removed.
+  - Class change: the root is marked dirty and re-probed on the next pass, even when that pass is scoped below the root.
+  - Style rewrite: the observer callback puts the paint back in the same microtask, saves the site's new inline paint, and marks the root dirty.
+  - New nodes inside a tracked root (the donate banner) re-evaluate the root.
+- [x] Overlay rule, replacing `isOverlayCoveringSheet → paintOverlayScrimAsTransparent → findInnerModalCard`:
+  - `reopaqueOverlays`: a covering ARIA overlay goes through the rule; the wrapper gets explicit `transparent` because the static CSS paints it. Kept from the old path: if nothing in an ARIA overlay is authored-opaque, it keeps the flat sheet. **Smaller ARIA menus/listboxes/popovers keep the old flat `--aura-overlay` sheet** (decided: their real surface is often an unstyled ancestor popup outside the root; Google suggestions are the risk).
+  - `visitOverlayModalWalk`: the non-ARIA fixed covering sheet, the modal card, and the expanded nav drawer all go through the rule.
+  - The z-index ≥ 1000 modal-card veto stays (fox5-class shells). Nav drawers stay exempt from it.
+  - `paintOverlayScrimAsTransparent`, `paintModalCardSheet` and `revertGrownModalCards` are removed. Google Images' viewer keeps its own opaque sheet.
+- [x] Nav-drawer classification is gated to fixed/sticky. **The collapsed → expanded transition gate is removed** (with `navDrawerStateHistory`): its job was to stop link-rich ambient chrome being painted on shape alone (store.hypixel.net). The authored rule already leaves a transparent link row unpainted, and the gate was what left Airbnb's header unpainted (it classifies as an "expanded drawer"). wtatennis.com stays excluded by host.
+- [x] Layout invariance: `__tests__/layoutInvariance.test.js` (in `test:engine`).
+  - It scans content.js/injected.js/splitTheme.js generated CSS and every `setProperty`, plus direct `.style.x =` and `cssText` writes, for padding/margin/size/inset/border(-width/-style)/display/position/transform/flex/grid/gap/font metrics/box-sizing/zoom.
+  - Allowlist: the Wikipedia `.infobox/.navbox/...` 1px border (Minerva already draws 1px; only the color changes), and the split-theme `html::before` layer.
+  - Found and fixed one real case: `border: none` on Wikipedia's footer Codex buttons shrank them by the border width. It is now `border-color: transparent`.
+- [ ] Per-site rules: none added. The unverified Reddit `shreddit-subreddit-header` SITE_FIX is **kept** until R-2 is checked on device. The general rule now covers that shape (fixture-shadow-bars), so remove it if R-2 passes without it. Then the wtatennis/github host exclusions are the only layer exceptions.
+- Unused now (kept, still unit-tested; delete in a cleanup): `findInnerModalCard`, `findInnerDialogPanel`, `isLikelyNonAriaFullscreenPanel`, `isNavDrawerOpenTransition` (the menu-panel pass still uses it), `childCoverage`-era docs in themeHeuristics.js.
+- **Harness:** four new offline fixtures (see tools/harness/README.md): `fixture-wiki-drawer`, `fixture-airbnb-explore`, `fixture-airbnb-login`, `fixture-shadow-bars`. Also a second paint dump after scrolling (`paint-scrolled`), and `--compare` lists up to 60 differing elements.
+- **Numbers** (Chromium headless, idle Mac, median of 3, dark; light within noise). Before = `c23baa1` via git worktree + `AURA_EXT_DIR`, same run:
+  | Fixture | Layer state, before → after (dark and light) | Longest Aura task (median) | Aura ms load+5 s | Aura ms during scroll | Layout Δ |
+  |---|---|---|---|---|---|
+  | wiki-drawer | drawer cleared at open (~1.0 s) and stays cleared; a menu section painted as "inner card" → drawer opaque from open through banner + scroll | 10 → 11 | 43 → 47 | 8.0 → 2.1 | 0 → 0 |
+  | airbnb-explore | header + tab bar transparent (listing text visible through the header) → both opaque, including after the class flip and the full `style` rewrite | 11 → 10 | 38 → 44 | 15.4 → 3.3 | 0 → 0 |
+  | airbnb-login | card cleared, only `.copy` painted, backdrop cleared, tab bar transparent → whole card opaque, backdrop kept at 45%, tab bar opaque | 13 → 12 | 34 → 32 | 1.1 → 1.2 | 0 → 0 |
+  | shadow-bars | host painted (by geometry) → surface inside the shadow root painted; same look | 9 → 10 | 25 → 22 | 6.7 → 2.8 | 0 → 0 |
+  | hydration | unchanged look (see paint diff) | 15 → 15 | 141 → 133 | 28.2 → 20.4 | 0 → 0 |
+  - Typing on hydration, first 4 s p50/p95/max: 25/32/35 → 26/35/47 (dark), 28/35/51 → 26/34/36 (light). Settled is unchanged. 0 keys over 100 ms either way.
+  - Tasks ≥ 50 ms: 0 in every median run. One of 18 new-engine hydration loads (the first themed load of the batch) had a single 55 ms task outside every timed sub-pass. 6 + 6 extra loads per engine didn't reproduce it (top tasks 12–16 ms for both engines).
+- **Paint diff, every element that paints differently** (before → after, dark and light, at +5 s and after scroll):
+  - explore `div.hdr`, `nav.tabbar`: transparent → theme bg. The fix.
+  - login `nav.tabbar`, `div.cookie-card`: transparent → theme bg; `div.cookie-scrim`: transparent → authored `rgba(0,0,0,.45)`; `div.copy`: theme bg → transparent (now inside the opaque card). The fix.
+  - wiki `ul.menu-section`: theme bg → transparent. It was the old "inner card"; it now sits inside the painted drawer. The drawer itself flips in the old engine (see the per-frame timeline), so at the +5 s sample both happened to read opaque.
+  - hydration `reddit-header.bar` (sticky host, no paint of its own): theme bg → transparent. Its sticky white `nav` inside the shadow root is painted in both, so it looks the same.
+  - shadow-bars `top-header`, `subreddit-bar` (hosts): theme bg → transparent; `›div.wrap`, `›div.row` (their real white surfaces): transparent → theme bg. Same look; the paint now sits on the surface the site painted.
+  - Everything else: 0 differences (7417 hydration elements, all unthemed runs).
+- Known gaps:
+  - A layer painted via one of the CSS variables Aura hijacks to `transparent` (`--background-color-neutral-subtle`) probes as transparent.
+  - A cookie card inserted after load is transparent for one debounce (~150 ms) before the pass paints it. This is pre-existing and goes with Session 5.
+- Test: TEST_SITES A-1..A-3, R-1, R-2, W-1, W-3, X-2 (curtain must not return), dark + light; HUD layout diff = 0 on Airbnb explore. HUD inspect now shows `authoredLayer` (opaque/scrim/clear), `layerRoot` (mode/source) and `layerPaint`.
+- **On-device check Nov 5: all Session 4 rows pass.**
 
-## Session 5 — Theme load flash (Blocker 2) + light-theme base (Blocker 7) (was Session 4)
+## Session 5 — Small surfaces + load flash + light-theme base (Blocker 2, 7)
+### 5B — Small surfaces (do first; see "Nov 5 phone findings")
+- [ ] `visitFloatingIconControlElement` decides by authored paint:
+  - Restore an authored translucent scrim.
+  - Paint `--aura-overlay` only when the site painted the element opaque.
+  - Never paint an element the site left transparent.
+  - Reuse `readAuthoredPaint` / `classifyAuthoredPaint` (content.js 3c-bis, themeHeuristics.js).
+  - Fixes the Airbnb emoji boxes.
+- [ ] Audit every other shape-based "paint opaque" write for the same flaw: `restoreAuthoredChromeOpacity` (`isLikelyAuthoredSurface`), `visitNavMenuPanelElement`, `reopaqueTopChrome`'s outer paint, and the `paintOverlaySheet` path for small ARIA overlays. Move each one to authored paint, or write down why it can't be.
+- [ ] Non-ARIA positioned popovers:
+  - An absolutely positioned element with a z-index (not auto) that the site painted opaque goes through `evaluateAuthoredLayer(el, 'overlay', 'overlay')`.
+  - Limit the cost: only elements the walk already reads, with cached probes.
+  - Fixes Walmart's language tooltip.
+- [ ] Wikipedia "Banner logo" box: confirm with Aura off; find the pass via HUD inspect or a fixture; fix it for the category, not the site.
+- [ ] Fixtures:
+  - `fixture-airbnb-chips`: `a[role=tab]` > an absolute 28×28 span > `<video>`.
+  - `fixture-popover`: a Walmart-style tooltip with an arrow.
+  - `fixture-bearbottom-fit`: `.ff-backdrop` > `.ff-modal`, as a regression guard.
+### 5A — Theme load flash + light-theme base (was Session 4)
 - [ ] Use Session 2 HUD data to confirm the cause: late injection vs slow storage vs cold-cache fallback.
 - [ ] Ship a static `aura-base.css` via manifest `content_scripts.css` (Safari applies it before first paint). It holds the theme-agnostic structure keyed on `html[data-aura]` plus a neutral shield. injected.js sets the vars + attribute as soon as its single storage read resolves.
 - [ ] Light-theme shield: follow `prefers-color-scheme` until the theme is known (or remember the last theme's lightness). Final choice depends on Session 2 data.
@@ -183,10 +249,13 @@ Repo: `~/Developer/Aura` is the only copy (the iCloud Desktop copy was retired O
   - Add a button-contrast pass in light + shadow DOM, using each button's own background (including the first gradient stop; the Session 4 probe gives the authored fill).
   - Replace the `color: revert` rule.
   - Covers the Airbnb category chips (link color on white pills), the "Guest favorite" badge, and the "Prices include all fees" pill.
+  - Full-width light buttons (Walmart "See more shipping activity"): treat as a surface or fix contrast, depending on the authored fill. Also Walmart "Give feedback" (white button, light text).
+- [ ] Stateful custom controls (`[role=checkbox|radio|switch]`, `[aria-checked]`, `[aria-selected]` chips): keep the authored state fill, mapped for contrast, so checked vs unchecked stays visible. Test on a Google Form (F-1).
+- [ ] Scope the google.com SITE_FIXES away from `docs.google.com` (Forms matches `isGoogleHost()`).
 - Test: TEST_SITES Google rows + Type-2/Type-3 + B-1, dark + light, side by side with Aura off.
 
 ## Session 7 — Regression + App Store submission
-- [ ] Full TEST_SITES pass (dark + light + one split preset). Fix only regressions.
+- [ ] Full TEST_SITES pass (dark + light + one split preset). Fix only regressions. Includes the Nov 5 rows: B-2 Bearbottom Find my size, F-1 Google Form, X-6 Walmart order page, A-4 Airbnb chips.
 - [ ] Release build: verify the debug stub was swapped in (HUD unreachable), no console noise, version/build bumped.
 - [ ] Privacy:
   - App Privacy = Data Not Collected.
@@ -229,6 +298,10 @@ Repo: `~/Developer/Aura` is the only copy (the iCloud Desktop copy was retired O
   - Built `tools/harness` (WebKit/Chromium runner, offline fixture, HAR snapshots, A/B + paint diff, Simulator script).
   - Found the early-typing lag cause with it, and made the pass engine time-sliced and shadow-root-sliced. Cut the content-panel pass. Before/after numbers are in Session 3.
   - Blocked here: Playwright WebKit can't start inside my sandbox, and the sandbox has no general internet. Live-site runs are still to do.
+- **Session 4 (Nov 4):**
+  - Built the authored-paint probe and the layer & overlay engine, with persistence on scroll, resize, class change, style rewrite and new nodes. Added the layout-invariance test.
+  - Folded in both deferred Session 3 items.
+  - Measured on four new offline fixtures (no HAR snapshots exist yet), A/B against `c23baa1`. Not committed.
 
 ## Root-cause details (Session 1 audit)
 Line numbers are from baseline commit `0d47537`. Paths are relative to `ios/TintExtension Extension/Resources/`. Confidence levels are stated per item. "Hypothesis" means the HUD (Session 2) must confirm it.

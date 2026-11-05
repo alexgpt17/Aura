@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Airbnb explore fixture</title>
+<!--
+  Offline stand-in for airbnb.com's mobile explore page (TEST_SITES A-2,
+  A-3; RELEASE_PLAN root cause #8). Shape, not content:
+    - a fixed white header holding a full-width white search pill (one
+      transparent row wrapper deep) and a row of category chips. The old
+      sticky rule counted the pill as "self-opaque children" and skipped
+      the header.
+    - a fixed white bottom tab bar with 3 narrow items (Explore / Wishlists
+      / Log in), whose children cover < 50% of its width.
+    - listing cards that scroll under both.
+  Persistence: the header gains a class 1.2 s after load (Airbnb toggles
+  classes on scroll), and at 2 s the tab bar's whole style attribute is
+  rewritten (React style prop), which wipes any inline paint. Neither may
+  leave the layer see-through.
+-->
+<style>
+  body { margin: 0; font: 15px -apple-system, system-ui, sans-serif; background: #fff; color: #222; }
+  .hdr { position: fixed; top: 0; left: 0; right: 0; z-index: 10; background: #fff; padding: 14px 16px 0; box-shadow: 0 1px 0 #ebebeb; }
+  .hdr.c1scrolled { box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+  .search-row { padding-bottom: 10px; }
+  .pill { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 18px; border-radius: 26px; background: #fff; box-shadow: 0 3px 10px rgba(0,0,0,.12); border: 1px solid #ddd; }
+  .pill .title { font-weight: 600; }
+  .pill .sub { color: #717171; font-size: 13px; }
+  .chips { display: flex; gap: 22px; overflow: hidden; padding: 4px 0 10px; }
+  .chips a { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; color: #717171; text-decoration: none; min-width: 56px; }
+  .chips a i { display: block; width: 24px; height: 24px; border-radius: 6px; background: #b0b0b0; }
+  .chips a.sel { color: #222; border-bottom: 2px solid #222; padding-bottom: 6px; }
+  main { padding: 168px 16px 90px; }
+  .card { margin-bottom: 26px; }
+  .card .photo { height: 300px; border-radius: 14px; background: linear-gradient(135deg, #f6d365, #fda085); }
+  .card h3 { margin: 10px 0 2px; font-size: 15px; }
+  .card p { margin: 0; color: #717171; }
+  .tabbar { position: fixed; left: 0; right: 0; bottom: 0; height: 64px; z-index: 10; background: #fff; border-top: 1px solid #ebebeb; display: flex; justify-content: center; gap: 30px; align-items: center; }
+  .tabbar a { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 58px; font-size: 10px; color: #717171; text-decoration: none; }
+  .tabbar a.on { color: #e31c5f; }
+  .tabbar a i { display: block; width: 22px; height: 22px; border-radius: 50%; border: 2px solid currentColor; box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div class="hdr" data-testid="little-search">
+  <div class="search-row">
+    <div class="pill" role="button" tabindex="0">
+      <span>🔍</span>
+      <div><div class="title">Where to?</div><div class="sub">Anywhere · Any week · Add guests</div></div>
+    </div>
+  </div>
+  <div class="chips">
+    <a class="sel" href="#icons"><i></i>Icons</a>
+    <a href="#views"><i></i>Amazing views</a>
+    <a href="#beach"><i></i>Beachfront</a>
+    <a href="#cabins"><i></i>Cabins</a>
+    <a href="#pools"><i></i>Pools</a>
+  </div>
+</div>
+<main id="listings"></main>
+<nav class="tabbar" aria-label="Tab bar">
+  <a class="on" href="#explore"><i></i>Explore</a>
+  <a href="#wishlists"><i></i>Wishlists</a>
+  <a href="#login"><i></i>Log in</a>
+</nav>
+<script>
+  var m = document.getElementById('listings');
+  for (var i = 0; i < 12; i++) {
+    m.insertAdjacentHTML('beforeend', '<div class="card"><div class="photo"></div><h3>Cabin in the woods ' + i + '</h3><p>Hosted by Alex · 3 beds</p><p><b>$' + (120 + i * 7) + '</b> night</p></div>');
+  }
+  setTimeout(function () { document.querySelector('.hdr').classList.add('c1scrolled'); }, 1200);
+  setTimeout(function () { document.querySelector('.tabbar').setAttribute('style', 'transform: translateY(0px)'); }, 2000);
+</script>
+</body>
+</html>

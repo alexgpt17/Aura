@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wikipedia drawer fixture (Minerva-shaped)</title>
+<!--
+  Offline stand-in for en.m.wikipedia.org's mobile nav drawer (TEST_SITES
+  W-1, RELEASE_PLAN root cause #6). Shape, not content:
+    - #mw-mf-page-left: position:fixed, 300px wide, full height, z-index 2,
+      a sibling of the #main-menu-input checkbox that reveals it
+      (#main-menu-input:checked ~ #mw-mf-page-left), painted with Codex's
+      --background-color-interactive-subtle token like Minerva
+    - the drawer opens 800 ms after load via the checkbox (fires 'change'
+      like a tap would)
+    - 2.5 s after opening, a .donate-banner (opaque white card: text, link,
+      image) is inserted at the top of the drawer — the late banner that
+      turned the drawer transparent on device
+    - an article with an infobox underneath
+-->
+<style>
+  :root { --background-color-interactive-subtle: #f8f9fa; --background-color-base: #fff; }
+  body { margin: 0; font: 16px -apple-system, system-ui, sans-serif; background: var(--background-color-base); color: #202122; }
+  .header-container { display: flex; align-items: center; height: 54px; padding: 0 8px; border-bottom: 1px solid #eaecf0; background: #fff; }
+  .branding-box { font: 20px Georgia, serif; margin-left: 8px; }
+  #main-menu-input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  #mw-mf-main-menu-button { display: block; width: 44px; height: 44px; line-height: 44px; text-align: center; font-size: 22px; cursor: pointer; }
+  #mw-mf-page-left {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 300px; z-index: 2;
+    background-color: var(--background-color-interactive-subtle);
+    overflow-y: auto; visibility: hidden; transform: translateX(-100%);
+  }
+  #main-menu-input:checked ~ #mw-mf-page-left { visibility: visible; transform: none; }
+  #mw-mf-page-left ul { list-style: none; margin: 0; padding: 8px 0; }
+  #mw-mf-page-left li a { display: block; padding: 12px 20px; color: #202122; text-decoration: none; font-size: 15px; }
+  #mw-mf-page-left .menu-section { border-bottom: 1px solid #c8ccd1; }
+  .donate-banner { margin: 12px; padding: 14px; background: #fff; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,.2); font-size: 14px; }
+  .donate-banner a { display: inline-block; margin-top: 8px; color: #36c; font-weight: 600; }
+  .donate-banner .anim { width: 64px; height: 48px; float: right; margin-left: 8px; background: #36c; border-radius: 4px; }
+  main { padding: 0 16px 40px; }
+  h1 { font: 28px Georgia, serif; border-bottom: 1px solid #a2a9b1; padding-bottom: 6px; }
+  table.infobox { width: 100%; border: 1px solid #a2a9b1; background: #f8f9fa; border-collapse: collapse; font-size: 14px; margin: 12px 0; }
+  table.infobox th, table.infobox td { padding: 4px 8px; text-align: left; vertical-align: top; }
+</style>
+</head>
+<body>
+<nav class="navigation-drawer" aria-label="Site">
+  <input type="checkbox" id="main-menu-input" aria-label="Open main menu">
+  <div class="header-container">
+    <label for="main-menu-input" id="mw-mf-main-menu-button">☰</label>
+    <div class="branding-box">Wikipedia</div>
+  </div>
+  <div id="mw-mf-page-left" class="menu">
+    <ul class="menu-section">
+      <li><a href="#home">Home</a></li>
+      <li><a href="#random">Random</a></li>
+      <li><a href="#nearby">Nearby</a></li>
+    </ul>
+    <ul class="menu-section">
+      <li><a href="#login">Log in</a></li>
+      <li><a href="#settings">Settings</a></li>
+      <li><a href="#donate">Donate</a></li>
+    </ul>
+    <ul>
+      <li><a href="#about">About Wikipedia</a></li>
+      <li><a href="#disclaimers">Disclaimers</a></li>
+    </ul>
+  </div>
+</nav>
+<main>
+  <h1>Golden Gate Bridge</h1>
+  <table class="infobox">
+    <tr><th>Carries</th><td>6 lanes of US 101</td></tr>
+    <tr><th>Crosses</th><td>Golden Gate</td></tr>
+    <tr><th>Total length</th><td>8,981 ft</td></tr>
+    <tr><th>Opened</th><td>May 27, 1937</td></tr>
+  </table>
+  <script>
+    for (var i = 0; i < 14; i++) document.write('<p>The Golden Gate Bridge is a suspension bridge spanning the Golden Gate, the one-mile-wide strait connecting San Francisco Bay and the Pacific Ocean. Paragraph ' + i + '.</p>');
+  </script>
+</main>
+<script>
+  setTimeout(function () {
+    document.getElementById('main-menu-input').click();
+    setTimeout(function () {
+      var b = document.createElement('div');
+      b.className = 'donate-banner';
+      b.innerHTML = '<div class="anim"></div><strong>Wikipedia is not for sale.</strong> A personal appeal to readers in the United States. <a href="#donate-now">Donate now</a>';
+      var drawer = document.getElementById('mw-mf-page-left');
+      drawer.insertBefore(b, drawer.firstChild);
+    }, 2500);
+  }, 800);
+</script>
+</body>
+</html>

@@ -22,9 +22,13 @@ Before testing, force-quit Safari once (cold start). In debug builds, add `#aura
 | A-1 | airbnb.com → Log in (cookie popup appears) | Whole card opaque; nothing shows through or sticks out at its edges; "Accept all" / "Only necessary" readable; backdrop dimmed, not solid | | |
 | A-2 | airbnb.com explore page, scroll slowly then fast | Header, search bar and category chips stay opaque; no content shows through; spacing between header and search bar matches Aura-off (HUD layout diff = 0) | | |
 | A-3 | airbnb.com bottom tab bar, on login and explore, while scrolling | Bar opaque; Explore/Wishlists/… labels readable | | |
+| A-4 | airbnb.com category chips under the search bar | No square boxes around the emoji icons; labels readable | | |
 | B-1 | Light buttons: Amazon "Add to Cart", GitHub "Sign up", a cookie banner "Accept" | Button text readable | | |
+| B-2 | bearbottomclothing.com product page → "Find my size" | Panel opaque (no swatches showing through), backdrop dimmed, not solid | | |
 | X-1 | youtube.com, x.com, amazon.com search, github.com mobile menu | No white slabs, menus opaque, header readable | | |
 | X-2 | News site with ads + cookie banner (fox5sandiego.com) | No solid curtain; ads untouched; banner card opaque | | |
 | X-3 | Google Maps | No full-screen theme curtain | | |
 | X-4 | Turn the theme off for one site in the app | Site returns fully to its original look | | |
 | X-5 | App → Safari settings → turn on "Dark Mode" (native) → open github.com and wikipedia | Site uses its own dark mode; turning it off restores the Aura theme | | |
+| X-6 | walmart.com order / tracking page | "Spanish/Español" tooltip opaque; no white full-width strips; "Give feedback" readable | | |
+| F-1 | A Google Form with checkboxes (docs.google.com/forms) | Checked vs unchecked boxes clearly distinct; "Autosave" dialog fully opaque, no overlapping text | | |

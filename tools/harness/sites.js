@@ -64,4 +64,9 @@ module.exports = [
         fixture: true,
         type: { selectors: ['#composer'] },
     },
+    // Session 4 layer/overlay shapes (see each file's header comment).
+    { id: 'fixture-wiki-drawer', rows: ['W-1 (synthetic)'], fixture: true },
+    { id: 'fixture-airbnb-explore', rows: ['A-2', 'A-3 (synthetic)'], fixture: true },
+    { id: 'fixture-airbnb-login', rows: ['A-1', 'A-3 (synthetic)'], fixture: true },
+    { id: 'fixture-shadow-bars', rows: ['R-1', 'R-2 (synthetic)'], fixture: true },
 ];

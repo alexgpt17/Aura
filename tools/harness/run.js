@@ -275,6 +275,12 @@ async function runLoad(browser, opts) {
             for (let i = 0; i < 12; i++) { await page.mouse.wheel(0, 200).catch(() => {}); await page.evaluate(() => window.scrollBy(0, 200)).catch(() => {}); await sleep(60); }
             await sleep(800);
             await shot('scrolled');
+            // Second paint dump after scrolling: layers must keep their
+            // paint through scroll (compare diffs this one too).
+            try {
+                const sig = await page.evaluate(paintSignatureInPage);
+                fs.writeFileSync(path.join(outDir, `${site.id}--${theme}--paint-scrolled${res.rep ? '-' + res.rep : ''}.json`), JSON.stringify(sig));
+            } catch (e) {}
             const scrollEnd = toPage(wallNow());
             res.load = await page.evaluate(summarizeInPage, { from: 0, to: nav.load + 5000 });
             res.scroll = await page.evaluate(summarizeInPage, { from: scrollStart, to: scrollEnd });
@@ -447,7 +453,7 @@ function compare(dirA, dirB) {
         for (const [m, x, y] of rows) L.push(`| ${a.site} | ${a.theme} | ${m} | ${fmt(x)} | ${fmt(y)} |`);
     }
     // Paint diff (meaningful for fixtures and HAR replays).
-    const paintFiles = fs.readdirSync(dirA).filter(f => /--paint\.json$/.test(f));
+    const paintFiles = fs.readdirSync(dirA).filter(f => /--paint(-scrolled)?\.json$/.test(f));
     const P = [];
     for (const f of paintFiles) {
         const fb = path.join(dirB, f);
@@ -461,7 +467,7 @@ function compare(dirA, dirB) {
             if (pa[i][0] !== pb[i][0]) { aligned = false; break; }
             if (pa[i][1] !== pb[i][1] || pa[i][2] !== pb[i][2] || pa[i][3] !== pb[i][3]) diffs.push(pa[i][0] + ': ' + pa[i].slice(1).join(' ') + '  →  ' + pb[i].slice(1).join(' '));
         }
-        P.push(`- **${f.replace('--paint.json', '')}**: ` + (!aligned || pa.length !== pb.length ? `DOM differs (${pa.length} vs ${pb.length} elements), not comparable` : `${diffs.length} of ${n} elements paint differently`) + (diffs.length ? '\n' + diffs.slice(0, 8).map(d => '  - `' + d + '`').join('\n') : ''));
+        P.push(`- **${f.replace(/--paint(-scrolled)?\.json$/, (m, sc) => sc ? ' (after scroll)' : '')}**: ` + (!aligned || pa.length !== pb.length ? `DOM differs (${pa.length} vs ${pb.length} elements), not comparable` : `${diffs.length} of ${n} elements paint differently`) + (diffs.length ? '\n' + diffs.slice(0, 60).map(d => '  - `' + d + '`').join('\n') : ''));
     }
     if (P.length) L.push('', '## Paint diff (computed bg / color / bg-image per element)', ...P);
     return L.join('\n') + '\n';

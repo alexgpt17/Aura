@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Airbnb login + cookie card fixture</title>
+<!--
+  Offline stand-in for airbnb.com/login with the cookie popup (TEST_SITES
+  A-1, A-3; RELEASE_PLAN root cause #8). Shape, not content:
+    - a login form (country select, phone input, pink Continue button,
+      bordered social buttons)
+    - a role-less, position:fixed dark translucent backdrop
+    - a role-less, position:fixed white cookie card, ~87% vw x 57% vh, with
+      a text column and two buttons. At this size the old rule treated the
+      card as a "covering sheet": it went transparent and only its text
+      column was painted.
+    - the cookie card appears 600 ms after load, like the real one
+    - a fixed 3-item bottom tab bar
+-->
+<style>
+  body { margin: 0; font: 15px -apple-system, system-ui, sans-serif; background: #fff; color: #222; }
+  .top { height: 64px; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid #ebebeb; font-weight: 700; }
+  form { padding: 24px; }
+  h1 { font-size: 22px; margin: 0 0 20px; }
+  .field { border: 1px solid #b0b0b0; border-radius: 8px; padding: 10px 12px; margin-bottom: -1px; }
+  .field label { display: block; font-size: 12px; color: #717171; }
+  .field select, .field input { border: 0; font-size: 16px; width: 100%; background: transparent; padding: 2px 0; }
+  .cta { display: block; width: 100%; margin-top: 18px; height: 48px; border: 0; border-radius: 8px; background: #e31c5f; color: #fff; font-size: 16px; font-weight: 600; }
+  .or { text-align: center; color: #717171; margin: 22px 0; font-size: 12px; }
+  .social { display: block; width: 100%; height: 48px; margin-bottom: 14px; border: 1px solid #222; border-radius: 8px; background: #fff; font-size: 15px; }
+  .cookie-scrim { position: fixed; inset: 0; z-index: 20; background: rgba(0, 0, 0, 0.45); }
+  .cookie-card { position: fixed; z-index: 21; left: 6.5vw; width: 87vw; bottom: 84px; height: 57vh; box-sizing: border-box; padding: 24px; background: #fff; border-radius: 16px; box-shadow: 0 8px 28px rgba(0,0,0,.28); display: flex; flex-direction: column; }
+  .cookie-card .copy { flex: 1; overflow: auto; width: 82%; }
+  .cookie-card h2 { font-size: 18px; margin: 0 0 10px; }
+  .cookie-card p { margin: 0 0 10px; font-size: 14px; line-height: 1.4; }
+  .cookie-card .actions { display: flex; gap: 10px; }
+  .cookie-card .actions button { flex: 1; height: 44px; border-radius: 8px; font-size: 15px; font-weight: 600; }
+  .accept { background: #222; color: #fff; border: 0; }
+  .necessary { background: #fff; color: #222; border: 1px solid #222; }
+  .tabbar { position: fixed; left: 0; right: 0; bottom: 0; height: 64px; z-index: 10; background: #fff; border-top: 1px solid #ebebeb; display: flex; justify-content: center; gap: 30px; align-items: center; }
+  .tabbar a { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 58px; font-size: 10px; color: #717171; text-decoration: none; }
+  .tabbar a.on { color: #e31c5f; }
+  .tabbar a i { display: block; width: 22px; height: 22px; border-radius: 50%; border: 2px solid currentColor; box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div class="top">Log in or sign up</div>
+<form onsubmit="return false">
+  <h1>Welcome to Airbnb</h1>
+  <div class="field"><label for="cc">Country/Region</label><select id="cc"><option>United States (+1)</option></select></div>
+  <div class="field"><label for="ph">Phone number</label><input id="ph" type="tel"></div>
+  <button class="cta">Continue</button>
+  <div class="or">or</div>
+  <button class="social" type="button">Continue with email</button>
+  <button class="social" type="button">Continue with Apple</button>
+  <button class="social" type="button">Continue with Google</button>
+</form>
+<nav class="tabbar" aria-label="Tab bar">
+  <a class="on" href="#explore"><i></i>Explore</a>
+  <a href="#wishlists"><i></i>Wishlists</a>
+  <a href="#login"><i></i>Log in</a>
+</nav>
+<script>
+  setTimeout(function () {
+    document.body.insertAdjacentHTML('beforeend',
+      '<div class="cookie-scrim"></div>' +
+      '<div class="cookie-card" data-testid="main-cookies-banner-container">' +
+        '<div class="copy"><h2>Your Privacy</h2>' +
+        '<p>We use cookies and similar technologies to help personalise content, tailor and measure ads, and provide a better experience.</p>' +
+        '<p>By clicking accept, you agree to this, as outlined in our <a href="#cookie-policy">Cookie Policy</a>. You can change your preferences at any time.</p></div>' +
+        '<div class="actions"><button class="accept">Accept all</button><button class="necessary">Only necessary</button></div>' +
+      '</div>');
+  }, 600);
+</script>
+</body>
+</html>

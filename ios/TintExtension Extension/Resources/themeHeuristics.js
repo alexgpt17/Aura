@@ -1855,20 +1855,20 @@
     }
 
     /**
-     * Sticky/fixed re-opaque is ONLY for chrome-like bars (headers, thin
-     * toolbars). Overlay-tier z-index, drawers, video floats, CMP shells, and
-     * anything taller than top-chrome height must be skipped — painting those
-     * is the fox5sandiego / usopen "solid curtain over content" failure mode.
+     * Identity/visibility vetoes for the fixed/sticky layer rule. Size,
+     * z-index and child coverage are NOT vetoes any more (Session 4): they
+     * were guesses at whether the site's own layer was opaque, and both
+     * kinds of wrong guess shipped (Airbnb's header and tab bar left
+     * see-through; Wikipedia's drawer and Airbnb's cookie card cleared).
+     * content.js now reads the authored paint instead (classifyAuthoredPaint)
+     * and routes covering sheets through the overlay rule.
      * @param {{ position?: string, mask?: string, visibility?: string,
-     *   opacity?: string, overlayChrome?: boolean, width?: number, height?: number,
-     *   top?: number, left?: number, vh?: number, vw?: number, tag?: string,
-     *   zIndex?: number|string, id?: string, className?: string,
-     *   childCoverageFrac?: number|null, childOpaqueCoverageFrac?: number|null,
-     *   hasTablistRole?: boolean }} info
+     *   opacity?: string, overlayChrome?: boolean, width?: number,
+     *   height?: number, tag?: string, id?: string, className?: string }} info
      */
-    // Returns the name of the first rule that vetoes a sticky/fixed repaint,
-    // or null when the element should be painted. The debug HUD shows the
-    // reason; shouldSkipStickyElement is the boolean form the engine uses.
+    // Returns the name of the first rule that vetoes the layer rule, or null
+    // when it applies. The debug HUD shows the reason; shouldSkipStickyElement
+    // is the boolean form.
     function stickySkipReason(info) {
         if (!info) return 'no-info';
         var pos = info.position;
@@ -1880,87 +1880,39 @@
         if (info.overlayChrome) return 'overlay-chrome';
         if (isAmpOverlayChromeInfo(info)) return 'amp-overlay-chrome';
         if ((info.width || 0) < 1 || (info.height || 0) < 1) return 'zero-size';
-        var sheetRect = {
-            width: info.width || 0,
-            height: info.height || 0,
-            top: typeof info.top === 'number' ? info.top : 0,
-            left: typeof info.left === 'number' ? info.left : 0,
-        };
-        if (isFullViewportRect(sheetRect, info.vh || 0, info.vw || 0)) {
-            return 'full-viewport';
-        }
-        if (isCoveringSheetRect(sheetRect, info.vh || 0, info.vw || 0)) {
-            return 'covering-sheet';
-        }
-        // Chrome bars are short. Taller fixed layers are drawers / players /
-        // promo shells — never re-opaque them as --aura-bg. A literal
-        // header/nav tag is a strong enough "real chrome" signal to earn a
-        // taller allowance (multi-row headers), same as isTopChromeBarInfo.
-        var vh = info.vh || 0;
-        var isSemanticHeaderTag = tag === 'HEADER' || tag === 'NAV';
-        var maxVh = isSemanticHeaderTag ? TOP_CHROME_MAX_VH_SEMANTIC : TOP_CHROME_MAX_VH;
-        if (vh > 0 && (info.height || 0) > vh * maxVh) {
-            return 'too-tall';
-        }
-        // Overlay / CMP / notification tiers (OneSignal, OneTrust, video
-        // float) — these tend to use extreme z-index values specifically to
-        // guarantee top-most stacking regardless of the host page's own
-        // usage (the existing test fixture uses 2147483647). Ordinary sticky
-        // chrome commonly uses a much more modest "just above normal
-        // content" z-index by convention alone (Bootstrap's own documented
-        // scale tops out around 1090 for dropdowns/modals/toasts) — both
-        // bbc.com's live-match tab bar (role="tablist", z-index:1003) and
-        // workspace.google.com's shadow-DOM "Sign in / Get Gmail" bottom
-        // action bar (z-index:1016) are real, confirmed false positives at
-        // the old z >= 1000 threshold. Raised to 2000 — comfortably above
-        // every legitimate-chrome z-index observed so far, comfortably
-        // below every real CMP/notification-tier value. The tablist
-        // exemption stays as an extra, independent safeguard for real
-        // navigation that happens to exceed even this threshold.
-        var z = parseInt(info.zIndex, 10);
-        if (!isNaN(z) && z >= 2000 && !info.hasTablistRole) {
-            return 'z-index>=2000';
-        }
-        // A wide, short sticky/fixed element whose direct children cover
-        // only a small fraction of its own width is very likely a
-        // positioning wrapper for one small floating control (a "back to
-        // top" button parked at one edge via justify-content:flex-end, a
-        // chat launcher, etc.) — not a real chrome bar. Painting the WHOLE
-        // WRAPPER opaque then produces a bar spanning the wrapper's full
-        // width where only the small control should be visible (confirmed
-        // on github.com's `.BackToTop`: position:sticky, display:flex,
-        // justify-content:flex-end, hosting one 36px button in a 390px-wide
-        // box with no background of its own). A genuine chrome bar's
-        // content (logo, nav links, search) typically spans most of its
-        // own box, so this can't misfire on real chrome. Width-gated so it
-        // never affects small badges/pills already handled elsewhere.
-        if (typeof info.childCoverageFrac === 'number'
-            && (info.width || 0) >= 150
-            && info.childCoverageFrac < 0.5) {
-            return 'child-coverage<0.5';
-        }
-        // A wide, short sticky/fixed wrapper whose children (possibly one or
-        // two levels of single-child layout wrappers deep — see
-        // unwrapSingleChildRow in content.js) already carry their own opaque
-        // background (buttons with authored fills, not plain text/links
-        // relying on the container for contrast) is just a positioning shell
-        // for pre-styled controls. Painting the wrapper too produces a solid
-        // bar behind/around already-visible buttons (confirmed on
-        // sky.coflnet.com's Notify/copy/scroll-to-top bottom bar). Threshold
-        // is deliberately lower than childCoverageFrac's 0.5 — the mere
-        // *presence* of several independently-opaque buttons is already a
-        // strong "pre-styled controls, not text chrome" signal even when
-        // generous padding/gaps keep their combined width fraction modest. A
-        // genuine chrome bar's content (logo, nav links, search) is
-        // typically plain text with no background of its own, so this can't
-        // misfire on real chrome.
-        if (typeof info.childOpaqueCoverageFrac === 'number'
-            && (info.width || 0) >= 150
-            && info.childOpaqueCoverageFrac >= 0.35) {
-            return 'child-opaque-coverage>=0.35';
-        }
         return null;
     }
+
+    /**
+     * The layer & overlay rule's per-node verdict, from the paint the SITE
+     * authored for the node (content.js readAuthoredPaint):
+     *   'opaque' — paint the theme surface here and stop descending:
+     *              alpha >= 0.5, or any visible tint behind a backdrop
+     *              blur (frosted bars are opaque in effect).
+     *   'scrim'  — overlay mode only: a dark translucent backdrop. Keep its
+     *              authored color (dimmed, not solid, not cleared) and keep
+     *              descending to find the card.
+     *   'clear'  — transparent or a faint wash: leave it, keep descending.
+     * In layer mode a dark translucent bar at >= 0.5 is 'opaque': it's a
+     * surface with text on it, which needs the theme surface + theme text.
+     * @param {{ bg?: string, backdrop?: string }|null} paint
+     * @param {'layer'|'overlay'} mode
+     * @returns {'opaque'|'scrim'|'clear'}
+     */
+    function classifyAuthoredPaint(paint, mode) {
+        if (!paint) return 'clear';
+        var c = parseCssRgb(paint.bg);
+        var a = c ? c.a : 0;
+        if (a <= AUTHORED_PAINT_MIN_ALPHA) return 'clear';
+        var blurred = !!paint.backdrop && paint.backdrop !== 'none';
+        var dark = Math.max(c.r, c.g, c.b) <= AUTHORED_SCRIM_MAX_CHANNEL;
+        if (mode === 'overlay' && dark && a < AUTHORED_SCRIM_MAX_ALPHA && !blurred) return 'scrim';
+        if (a >= 0.5 || blurred) return 'opaque';
+        return 'clear';
+    }
+    var AUTHORED_PAINT_MIN_ALPHA = 0.05;
+    var AUTHORED_SCRIM_MAX_ALPHA = 0.95;
+    var AUTHORED_SCRIM_MAX_CHANNEL = 96;
 
     function shouldSkipStickyElement(info) {
         return stickySkipReason(info) !== null;
@@ -2477,6 +2429,7 @@
         shouldSkipBrightElement: shouldSkipBrightElement,
         shouldSkipStickyElement: shouldSkipStickyElement,
         stickySkipReason: stickySkipReason,
+        classifyAuthoredPaint: classifyAuthoredPaint,
         isSpaShellId: isSpaShellId,
         isLargeLayoutShell: isLargeLayoutShell,
         isLargeLayoutNode: isLargeLayoutNode,

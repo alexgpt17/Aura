@@ -20,13 +20,15 @@
     let nativeDarkModeApplied = null;
     let mutationObserver = null;
     let customEventListenerAttached = false;
-    // Elements we forced opaque because they are position:fixed/sticky.
-    // Tracked so removeTheme() can cleanly revert them.
-    const stickyModified = new Set();
-    // Pending-revert streak for the two geometry-dependent sticky revert
-    // triggers (isLikelyModalCardCached, shouldSkipStickyElement) — see
-    // notePendingRevert's doc comment below.
-    let stickyPendingRevert = new WeakMap();
+    // Layer & overlay engine (section 3c-bis). Every element the authored-
+    // paint rule wrote a background on: el -> { root, bg, opaque }.
+    const layerPaints = new Map();
+    // Every fixed/sticky layer or overlay root the rule evaluated:
+    // root -> { mode, source, pass, dirty, painted: Set }.
+    const layerRoots = new Map();
+    // Tracked roots a mutation batch landed inside; the next pass
+    // re-evaluates them (see runSafetyPasses).
+    const pendingLayerRecheck = new Set();
     // Near-white / light-gray opaque surfaces cleared by visitBrightElement().
     const brightModified = new Set();
     const contrastModified = new Set();
@@ -40,66 +42,25 @@
     // separately from cleared inners so we can undo if the bar later grows
     // into a covering sheet (fox5-class curtain).
     const chromeOuterModified = new Set();
-    // position:fixed/sticky descendants found INSIDE a painted chrome outer
-    // (e.g. a <header> that wraps a position:fixed .header-bar div, common
-    // on sites where the semantic <header> itself stays in normal flow and
-    // only an inner bar becomes sticky). These render in their own layer,
-    // detached from the outer element's box, so they get painted opaque
-    // too instead of cleared — tracked separately since isTopChromeBar
-    // doesn't recognize a plain fixed div, so they need their own revert
-    // check (still fixed/sticky, not grown into a curtain) rather than
-    // chromeOuterModified's.
-    const chromeFixedInnerModified = new Set();
     // Nav/menu/header elements repainted opaque because the site's own CSS
     // gave them an !important background we out-specificity'd (see
     // restoreAuthoredChromeOpacity). Tracked only for removeTheme() cleanup —
     // unlike the fixed-position tiers above, a non-fixed menu can't grow
     // into a curtain by scrolling, so there's no separate revert pass.
     const chromeAuthoredModified = new Set();
-    // Non-ARIA modal cards painted opaque by visitOverlayModalWalk. Unlike
-    // ARIA reopaqueOverlays (re-evaluated every pass), these only get touched
-    // while isLikelyModalCard is true — so we must revert when they grow.
-    const modalCardOpaqueModified = new Set();
-    // Pending-revert streak for revertGrownModalCards — see
-    // notePendingRevert's doc comment below.
-    let modalCardPendingRevert = new WeakMap();
-    // Per-element collapsed/expanded classification history for the
-    // isLikelyNavDrawer transition gate (see classifyNavDrawerState in
-    // themeHeuristics.js) — an element is painted opaque only on a confirmed
-    // collapsed -> expanded transition, never merely because it "currently
-    // looks expanded." That level-triggered check is what mispainted
-    // wtatennis.com's ambient sticky nav bar into a full-page curtain
-    // earlier this session (see CHROME_REPAINT_DISABLED_HOSTS below).
-    // WeakMap: entries need no manual disconnect cleanup, unlike the Sets
-    // above, since they vanish along with the element itself.
-    let navDrawerStateHistory = new WeakMap();
-    // A single live 'collapsed' reading is NOT enough to overwrite an
-    // already-confirmed 'expanded' entry above — a brief reflow while
-    // unrelated content mutates nearby (confirmed live on Wikipedia's mobile
-    // nav menu: the donate banner is a direct child of the menu panel itself
-    // and contains a lazy-loaded <img>, so opening the menu starts an image
-    // decode whose layout churn runs on its own timeline, independent of
-    // the menu's own open transition, and can easily span more than one
-    // pass cycle) can make the menu's measured rect transiently look
-    // collapsed for more than one pass. The OPEN direction already has this
-    // same protection (isOpenTransition requires a prior confirmed
-    // 'collapsed' sighting); this WeakMap extends it symmetrically to the
-    // CLOSE direction via notePendingRevert (see its doc comment below): a
-    // 'collapsed' reading only commits to navDrawerStateHistory once seen on
-    // NAV_DRAWER_COLLAPSE_CONFIRM_READINGS consecutive passes.
-    let navDrawerPendingCollapse = new WeakMap();
-    // Same transition-gating idea as navDrawerStateHistory, for menus that
-    // expand IN PLACE rather than as a position:fixed/sticky overlay (see
+    // Per-element collapsed/expanded history for menus that expand IN PLACE
+    // rather than as a position:fixed/sticky overlay (see
     // classifyNavMenuPanelState / reopaqueExpandedNavMenuPanels) — e.g. a
     // Bootstrap-style ".navbar-collapse" mobile menu, which isLikelyNavDrawer
-    // can never reach since it requires position fixed/sticky.
+    // can never reach since it requires position fixed/sticky. Painted only
+    // on a confirmed collapsed -> expanded transition, never merely because
+    // it "currently looks expanded" (the wtatennis.com ambient-nav curtain).
     let navMenuPanelStateHistory = new WeakMap();
     // Pending-revert streak for navMenuPanelStateHistory's collapsed
-    // direction — same idea as navDrawerPendingCollapse above, via
-    // notePendingRevert.
+    // direction, via notePendingRevert.
     let navMenuPanelPendingCollapse = new WeakMap();
     // Elements forced opaque by reopaqueExpandedNavMenuPanels. Tracked
-    // separately from modalCardOpaqueModified (a different mechanism/gate)
+    // separately from the layer engine's paints (a different mechanism/gate)
     // so their revert paths never interfere with each other.
     const navMenuPanelOpaqueModified = new Set();
     // Elements forced opaque by visitFloatingIconControlElement — small
@@ -251,17 +212,12 @@
     let lastUserInputAt = -Infinity;
 
     // How many consecutive disagreeing readings a revert/downgrade path must
-    // see before it actually acts — see notePendingRevert below. nav-drawer
-    // keeps its own, higher constant since it's the original, already-
-    // shipped case (a 2-reading gate, raised here to 3); every other pass
-    // below had zero tolerance before this, so 2 is the uniform starting
-    // point for them.
+    // see before it actually acts — see notePendingRevert below.
     const REVERT_CONFIRM_READINGS = 2;
-    const NAV_DRAWER_COLLAPSE_CONFIRM_READINGS = 3;
     // Two calls to notePendingRevert for the SAME element during one pass
     // (same pendingRevertReading), or inside this window, are treated as
-    // one reading, not two — needed because reopaqueExpandedNavMenuPanels/
-    // reopaqueStickyFixed each re-check their already-opaque Set and then
+    // one reading, not two — needed because reopaqueExpandedNavMenuPanels
+    // re-checks its already-opaque Set and then
     // separately re-walk the full element list within one runSafetyPasses
     // call, visiting an already-tracked element twice per real pass. Passes
     // are time-sliced (runSteps), so those two visits can be more than
@@ -273,9 +229,9 @@
     let pendingRevertReading = 0;
 
     // Shared "require N consecutive disagreeing readings before reverting an
-    // already-opaque/expanded element" gate. Originated as a one-off fix
-    // (navDrawerPendingCollapse) for Wikipedia's mobile nav menu going
-    // transparent mid-donate-banner-image-decode — generalized here after
+    // already-opaque/expanded element" gate. Originated as a one-off fix for
+    // Wikipedia's mobile nav menu going transparent mid-donate-banner-image-
+    // decode — generalized here after
     // confirming every other transition-gated/revert-capable pass had NO
     // such protection at all, meaning any already-correctly-painted overlay/
     // panel/sticky element anywhere was one unrelated nearby DOM change away
@@ -626,7 +582,9 @@
                     background: transparent !important;
                     background-color: transparent !important;
                     background-image: none !important;
-                    border: none !important;
+                    /* border-color, not border: none — removing the border
+                       would shrink the button (layout invariance). */
+                    border-color: transparent !important;
                     box-shadow: none !important;
                     color: var(--aura-text) !important;
                 }
@@ -912,6 +870,7 @@
             // still caught by the separate (tag-based) bright-surface pass.
             ':not([role="alert"]):not([role="status"]):not([aria-live="assertive"]):not([aria-live="polite"])' +
             getUniversalTransparencyExcludeNot(window.location.hostname);
+        const probeNot = ':where(:not([data-aura-probe]))';
         const textBlend = 'normal';
         const splitTextFill = (isSplit && Split && Split.liveSplitTextFillCss && Split.liveSplitTextGradient)
             ? Split.liveSplitTextFillCss(Split.liveSplitTextGradient(Split.SPLIT_PCT_START))
@@ -1009,10 +968,17 @@
             }`}
 
 
-            :is(${layoutTags})${overlayNot} {
+            /* probeNot (zero specificity, so the cascade is unchanged) is on
+               every rule that strips or repaints a background:
+               readAuthoredPaint sets data-aura-probe to read what the site
+               itself painted. */
+            :is(${layoutTags})${overlayNot}${probeNot} {
                 background-color: transparent !important;
                 backdrop-filter: none !important;
                 -webkit-backdrop-filter: none !important;
+            }
+            [data-aura-notrans] {
+                transition: none !important;
             }
 
             /* thead is swept into the transparent rule above like every other
@@ -1030,7 +996,7 @@
             }
 
             /* Common SPA roots: first-paint assist. JS inline !important is the guarantee. */
-            #app, #app-mount, #root, #__next, #__nuxt {
+            :is(#app, #app-mount, #root, #__next, #__nuxt)${probeNot} {
                 background-color: transparent !important;
                 background-image: none !important;
             }
@@ -1050,14 +1016,14 @@
                mutation-debounce window, so waiting for the JS pass would
                mean many tooltips flash transparent or never get themed
                before they're gone. */
-            dialog,
-            [popover],
-            [role="dialog"],
-            [role="alertdialog"],
-            [role="menu"],
-            [role="listbox"],
-            [role="tooltip"],
-            [aria-modal="true"] {
+            dialog${probeNot},
+            [popover]${probeNot},
+            [role="dialog"]${probeNot},
+            [role="alertdialog"]${probeNot},
+            [role="menu"]${probeNot},
+            [role="listbox"]${probeNot},
+            [role="tooltip"]${probeNot},
+            [aria-modal="true"]${probeNot} {
                 background-color: var(--aura-overlay) !important;
                 color: var(--aura-text) !important;
                 -webkit-text-fill-color: var(--aura-text) !important;
@@ -1173,7 +1139,7 @@
                 [class*="bg-slate-50"],
                 [class*="bg-neutral-50"],
                 [class*="bg-stone-50"]
-            ):not(button):not([role="button"]):not(input):not(select):not(textarea):not(svg):not(img):not([class*="icon" i]):not([class*="Icon"]):not([role="dialog"]):not([role="alertdialog"]):not([role="menu"]):not([role="listbox"]):not([aria-modal="true"]):not(dialog):not([popover]) {
+            ):not(button):not([role="button"]):not(input):not(select):not(textarea):not(svg):not(img):not([class*="icon" i]):not([class*="Icon"]):not([role="dialog"]):not([role="alertdialog"]):not([role="menu"]):not([role="listbox"]):not([aria-modal="true"]):not(dialog):not([popover])${probeNot} {
                 background-color: transparent !important;
             }
 
@@ -1461,7 +1427,7 @@
     }
 
     function visitBrightElement(el, vh, vw, modalCardCache) {
-        if (!el || el.nodeType !== 1 || !H || overlayModified.has(el)) return;
+        if (!el || el.nodeType !== 1 || !H || overlayModified.has(el) || layerPaints.has(el)) return;
         if (el === document.documentElement || el === document.body) return;
         if (el.id === 'aura-core-engine') return;
 
@@ -1563,94 +1529,356 @@
         overlayModified.add(el);
     }
 
-    function paintModalCardSheet(el) {
-        paintOverlaySheet(el);
-        modalCardOpaqueModified.add(el);
-    }
-
     function isOverlayCoveringSheet(rect, vh, vw) {
         if (!rect) return false;
         if (H.isFullViewportRect(rect, vh, vw)) return true;
         return !!(H.isCoveringSheetRect && H.isCoveringSheetRect(rect, vh, vw));
     }
 
-    function paintOverlayScrimAsTransparent(el, vh, vw, allowAriaRootFallback, allowNonAriaFullscreenFallback) {
-        // Google Images viewer is a full-screen second page, not a cookie
-        // scrim. Leave it opaque so the mosaic cannot show through. Inline
-        // !important is required: a stylesheet SITE_FIX loses to this pass's
-        // previous transparent write.
-        modalCardOpaqueModified.delete(el);
-        if (isGoogleImagesPage()) {
-            el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
-            el.style.setProperty('background-image', 'none', 'important');
-            overlayModified.add(el);
-            return;
+    // 3c-bis. LAYER & OVERLAY ENGINE — decide by AUTHORED paint, not geometry.
+    // The universal rule strips every layout background before any JS runs,
+    // so a plain getComputedStyle can't tell whether the site's own header,
+    // tab bar, drawer or cookie card was opaque. readAuthoredPaint asks the
+    // cascade directly: every rule that strips or repaints a background is
+    // guarded by :where(:not([data-aura-probe])) (zero specificity), so an
+    // element carrying data-aura-probe computes the site's own paint again.
+    // A batch is flagged, read in one style recalc and unflagged in the same
+    // task, so no frame ever renders the probe state. data-aura-* isn't in
+    // the observer's attributeFilter, so probing creates no mutation records.
+    // data-aura-notrans holds transitions off until the next frame so
+    // neither flip animates. Aura's own inline writes on a probed element
+    // are lifted for the read and put back after it.
+    //
+    // Results are cached per element, keyed by className. A class or style
+    // mutation inside a tracked root marks the root dirty (markDirtyLayerRoots),
+    // which forces a fresh read for its whole subtree on the next evaluation.
+    const authoredPaintCache = new WeakMap(); // el -> { key, paint }
+    // The site's own inline background/color, saved before the engine's
+    // first write on an element so a release (or a probe) can restore it.
+    const siteInlinePaint = new WeakMap();
+    const LAYER_INLINE_PROPS = ['background-color', 'background-image', 'color'];
+    let notransPending = [];
+    let notransRaf = 0;
+
+    function probeKey(el) {
+        if (typeof el.className === 'string') return el.className;
+        try { return el.getAttribute('class') || ''; } catch (e) { return ''; }
+    }
+
+    // Other passes' inline background writes (all !important) hide the
+    // authored value from a probe too, so they're lifted for the read.
+    function auraWroteInlineBg(el) {
+        return overlayModified.has(el) || brightModified.has(el) || shellModified.has(el)
+            || chromeModified.has(el) || chromeAuthoredModified.has(el)
+            || navMenuPanelOpaqueModified.has(el) || floatingIconControlModified.has(el)
+            || askAnythingModified.has(el) || googleAiChatModified.has(el)
+            || inlineHighlightModified.has(el);
+    }
+
+    function clearNotrans() {
+        notransRaf = 0;
+        const list = notransPending;
+        notransPending = [];
+        for (let i = 0; i < list.length; i++) {
+            try { list[i].removeAttribute('data-aura-notrans'); } catch (e) {}
         }
-        el.style.setProperty('background-color', 'transparent', 'important');
-        overlayModified.add(el);
-        const inner = H.findInnerModalCard
-            ? H.findInnerModalCard(el, getComputedStyle, { vh, vw })
-            : null;
-        if (inner) {
-            paintOverlaySheet(inner);
-            return;
+    }
+
+    // Authored { bg, backdrop } per element of `els` (null if unreadable).
+    function readAuthoredPaint(els, force) {
+        const out = new Array(els.length);
+        const todo = [];
+        for (let i = 0; i < els.length; i++) {
+            const c = force ? null : authoredPaintCache.get(els[i]);
+            if (c && c.key === probeKey(els[i])) out[i] = c.paint;
+            else todo.push(i);
         }
-        // Some genuine ARIA dialogs (role="dialog"/"alertdialog", aria-modal,
-        // <dialog>, [popover]) wrap a content panel that is ITSELF
-        // full-viewport-sized on mobile — e.g. booking.com's "More"
-        // traveller/currency/language sheet: the [role="dialog"] node has no
-        // background of its own, and the actual white panel is a plain,
-        // role-less <div> one level inside it, sized to the full viewport.
-        // findInnerModalCard/isModalCardShape deliberately won't match that
-        // shape (covering-sheet sizes are excluded there to avoid painting
-        // empty ad curtains opaque), so only look for a full-viewport
-        // content panel here — gated on `el` itself already being a
-        // confirmed ARIA overlay root, never an anonymous curtain wrapper.
-        if (H.isOverlayRoot && H.isOverlayRoot(el) && H.findInnerDialogPanel) {
-            const panel = H.findInnerDialogPanel(el, getComputedStyle, { vh, vw });
-            if (panel) {
-                paintOverlaySheet(panel);
-                return;
+        if (!todo.length) return out;
+        const lifted = [];
+        for (let t = 0; t < todo.length; t++) {
+            const el = els[todo[t]];
+            if (layerPaints.has(el)) {
+                lifted.push([el, null]);
+                restoreSiteInline(el);
+            } else if (auraWroteInlineBg(el)) {
+                const saved = LAYER_INLINE_PROPS.slice(0, 2).map(p => [p, el.style.getPropertyValue(p), el.style.getPropertyPriority(p)]);
+                lifted.push([el, saved]);
+                saved.forEach(([p]) => el.style.removeProperty(p));
+            }
+            el.setAttribute('data-aura-notrans', '');
+            el.setAttribute('data-aura-probe', '');
+        }
+        for (let t = 0; t < todo.length; t++) {
+            const el = els[todo[t]];
+            let paint = null;
+            try {
+                const cs = getComputedStyle(el);
+                paint = {
+                    bg: cs.backgroundColor,
+                    backdrop: cs.webkitBackdropFilter || cs.backdropFilter || 'none',
+                };
+            } catch (e) {}
+            out[todo[t]] = paint;
+            authoredPaintCache.set(el, { key: probeKey(el), paint });
+        }
+        for (let t = 0; t < todo.length; t++) {
+            const el = els[todo[t]];
+            el.removeAttribute('data-aura-probe');
+            notransPending.push(el);
+        }
+        for (let l = 0; l < lifted.length; l++) {
+            const [el, saved] = lifted[l];
+            if (saved) saved.forEach(([p, v, prio]) => { if (v) el.style.setProperty(p, v, prio); });
+            else applyLayerPaint(el, layerPaints.get(el));
+        }
+        if (!notransRaf) notransRaf = requestAnimationFrame(clearNotrans);
+        return out;
+    }
+
+    function restoreSiteInline(el) {
+        const saved = siteInlinePaint.get(el);
+        LAYER_INLINE_PROPS.forEach((p, i) => {
+            const s = saved && saved[i];
+            if (s && s[1]) el.style.setProperty(p, s[1], s[2]);
+            else el.style.removeProperty(p);
+        });
+    }
+
+    function applyLayerPaint(el, rec) {
+        const st = el.style;
+        if (st.getPropertyValue('background-color') !== rec.bg || st.getPropertyPriority('background-color') !== 'important') {
+            st.setProperty('background-color', rec.bg, 'important');
+        }
+        // Same icon/text legibility pairing as paintOverlaySheet: an opaque
+        // theme surface gets the theme text color.
+        if (rec.opaque && st.getPropertyValue('color') !== 'var(--aura-text)') {
+            st.setProperty('color', 'var(--aura-text)', 'important');
+        }
+    }
+
+    function writeLayerPaint(el, entry, root, bg, opaque) {
+        let rec = layerPaints.get(el);
+        if (!rec) {
+            if (!siteInlinePaint.has(el)) {
+                // Another pass's inline write isn't the site's paint.
+                const ours = auraWroteInlineBg(el);
+                siteInlinePaint.set(el, LAYER_INLINE_PROPS.map(p => (ours && p !== 'color')
+                    ? [p, '', '']
+                    : [p, el.style.getPropertyValue(p), el.style.getPropertyPriority(p)]));
+            }
+            rec = { root: null, bg: '', opaque: false };
+            layerPaints.set(el, rec);
+        }
+        if (rec.root !== root) {
+            const prev = rec.root && layerRoots.get(rec.root);
+            if (prev) prev.painted.delete(el);
+            rec.root = root;
+            entry.painted.add(el);
+        }
+        if (rec.opaque && !opaque) {
+            const saved = siteInlinePaint.get(el);
+            const c = saved && saved[2];
+            if (c && c[1]) el.style.setProperty('color', c[1], c[2]);
+            else el.style.removeProperty('color');
+        }
+        rec.bg = bg;
+        rec.opaque = opaque;
+        applyLayerPaint(el, rec);
+        // Store the browser's serialization so the style-rewrite check in
+        // the observer compares like with like.
+        rec.bg = el.style.getPropertyValue('background-color');
+    }
+
+    function releaseLayerPaint(el) {
+        const rec = layerPaints.get(el);
+        if (!rec) return;
+        try { restoreSiteInline(el); } catch (e) {}
+        const entry = rec.root && layerRoots.get(rec.root);
+        if (entry) entry.painted.delete(el);
+        layerPaints.delete(el);
+    }
+
+    // source: only release roots registered by that path (null = any).
+    function releaseLayerRoot(root, source) {
+        const entry = layerRoots.get(root);
+        if (!entry || (source && entry.source !== source)) return;
+        Array.from(entry.painted).forEach(releaseLayerPaint);
+        layerRoots.delete(root);
+    }
+
+    // Root plus the descendants worth judging: depth-limited, wide enough
+    // relative to the root (narrow children are buttons/pills/icons, not
+    // the layer's surface), not a control or media element, and not itself
+    // fixed/sticky (that one is its own root). A custom element's open
+    // shadow root is descended too: Reddit's sticky bars are hosts with no
+    // paint of their own whose surface is a plain div inside the shadow
+    // root. A node this root already painted stays a candidate regardless
+    // of width, so a transient reflow can't drop and re-add its paint.
+    const LAYER_MAX_DEPTH = { layer: 3, overlay: 6 };
+    const LAYER_MIN_WIDTH_FRAC = { layer: 0.4, overlay: 0.3 };
+    const LAYER_MAX_NODES = 48;
+
+    function collectLayerCandidates(root, mode) {
+        const nodes = [root];
+        const parent = [-1];
+        let rootWidth = 0;
+        try { rootWidth = root.getBoundingClientRect().width; } catch (e) {}
+        const minWidth = Math.max(1, rootWidth * LAYER_MIN_WIDTH_FRAC[mode]);
+        let level = [0];
+        for (let depth = 1; depth <= LAYER_MAX_DEPTH[mode] && level.length; depth++) {
+            const next = [];
+            for (let li = 0; li < level.length && nodes.length < LAYER_MAX_NODES; li++) {
+                const node = nodes[level[li]];
+                const kids = node.shadowRoot
+                    ? [...node.shadowRoot.children, ...node.children]
+                    : node.children;
+                for (let k = 0; kids && k < kids.length && nodes.length < LAYER_MAX_NODES; k++) {
+                    const kid = kids[k];
+                    if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[kid.tagName]) continue;
+                    const rec = layerPaints.get(kid);
+                    if (!(rec && rec.root === root)) {
+                        let r;
+                        try { r = kid.getBoundingClientRect(); } catch (e) { continue; }
+                        if (r.width < minWidth || r.height < 1) continue;
+                        let pos = '';
+                        try { pos = getComputedStyle(kid).position; } catch (e) { continue; }
+                        if (pos === 'fixed' || pos === 'sticky') continue;
+                    }
+                    nodes.push(kid);
+                    parent.push(level[li]);
+                    next.push(nodes.length - 1);
+                }
+            }
+            level = next;
+        }
+        return { nodes, parent };
+    }
+
+    // The rule itself. mode 'layer' (fixed/sticky bars, sidebars): paint the
+    // first authored-opaque node per branch --aura-bg and stop descending
+    // there; never paint an authored-transparent node. mode 'overlay'
+    // (drawers, modals, cookie sheets): same, with --aura-overlay for the
+    // card, plus a dark translucent backdrop keeps its authored scrim
+    // color. An authored-transparent wrapper is left alone and descended
+    // through. Evaluated at most once per pass per root.
+    function evaluateAuthoredLayer(root, mode, source) {
+        if (!root || root.nodeType !== 1 || !H || !H.classifyAuthoredPaint) return;
+        let entry = layerRoots.get(root);
+        if (entry && entry.pass === pendingRevertReading && entry.mode === mode) return;
+        if (!entry) {
+            entry = { mode, source, pass: 0, dirty: false, painted: new Set() };
+            layerRoots.set(root, entry);
+        }
+        entry.mode = mode;
+        entry.source = source;
+        entry.pass = pendingRevertReading;
+        const force = entry.dirty;
+        entry.dirty = false;
+
+        const { nodes, parent } = collectLayerCandidates(root, mode);
+        const paints = readAuthoredPaint(nodes, force);
+        const token = mode === 'overlay' ? 'var(--aura-overlay)' : 'var(--aura-bg)';
+        const covered = new Array(nodes.length);
+        const wanted = new Map();
+        let anyOpaque = false;
+        for (let i = 0; i < nodes.length; i++) {
+            if (parent[i] >= 0 && covered[parent[i]]) { covered[i] = true; continue; }
+            const verdict = H.classifyAuthoredPaint(paints[i], mode);
+            if (verdict === 'opaque') {
+                wanted.set(nodes[i], [token, true]);
+                covered[i] = true;
+                anyOpaque = true;
+            } else if (verdict === 'scrim') {
+                wanted.set(nodes[i], [paints[i].bg, false]);
             }
         }
-        // Last resort, opt-in only (see allowAriaRootFallback's one call
-        // site in reopaqueOverlays — never passed by revertGrownModalCards,
-        // whose entire job is reverting a modal card that grew into curtain
-        // size back to transparent, e.g. the fox5sandiego.com fix; this
-        // fallback must never fight that). Some genuine ARIA dialogs have
-        // real content that isn't concentrated in one "card" child at all —
-        // e.g. xdsoft's datetimepicker (confirmed on vagaro.com's date
-        // picker, aria-modal="true"): its clickable content is a grid of
-        // plain <td> day cells with no role and no button/a, so neither
-        // findInnerModalCard nor findInnerDialogPanel above can ever find a
-        // delegate. Leaving such a dialog permanently transparent (nothing
-        // to show through it, since it IS the content) is strictly worse
-        // than painting the confirmed ARIA root itself: unlike an anonymous
-        // curtain matched only by geometry, an element H.isOverlayRoot
-        // accepts here carries genuine page-authored modal semantics
-        // (role="dialog"/"alertdialog"/"menu"/"listbox", aria-modal="true",
-        // <dialog>, or [popover]) — a deliberate declaration that this is
-        // real, just-opened content, not decorative chrome.
-        if (allowAriaRootFallback && H.isOverlayRoot && H.isOverlayRoot(el)) {
-            paintOverlaySheet(el);
+        // A covering ARIA overlay is painted by the static OVERLAY_SELECTOR
+        // rule, so "leave the wrapper alone" means writing transparent.
+        // Fallback kept from the old path: an ARIA overlay with no
+        // authored-opaque surface anywhere (e.g. a date-picker grid of plain
+        // cells) keeps the static paint rather than floating its content
+        // over the page.
+        if (source === 'aria' && !wanted.has(root)) {
+            if (anyOpaque) wanted.set(root, ['transparent', false]);
+            else wanted.set(root, [token, true]);
+        }
+        Array.from(entry.painted).forEach(el => { if (!wanted.has(el)) releaseLayerPaint(el); });
+        wanted.forEach(([bg, opaque], el) => writeLayerPaint(el, entry, root, bg, opaque));
+    }
+
+    // Overlay entry point shared by reopaqueOverlays, visitOverlayModalWalk
+    // and visitStickyElement. Google Images' viewer is a full-screen second
+    // page, not a cookie scrim: it stays opaque (see paintGoogleImagesSheet).
+    function paintAuthoredOverlay(el, source) {
+        if (isGoogleImagesPage()) {
+            paintGoogleImagesSheet(el);
             return;
         }
-        // Opt-in only, from exactly one call site (visitOverlayModalWalk's
-        // non-ARIA covering-sheet branch — never reopaqueOverlays or
-        // revertGrownModalCards). Mirrors the ARIA-root fallback just above,
-        // for the shape it structurally can't cover: a non-ARIA,
-        // position:fixed, covering-sheet panel (e.g. a Shopify Dawn-theme
-        // cart drawer) whose entire content IS the panel, with no smaller
-        // inner card for findInnerModalCard/findInnerDialogPanel to have
-        // found above. There's no ARIA role to lean on here, so
-        // isLikelyNonAriaFullscreenPanel requires two independent signals
-        // instead (real content + a z-index below the ad/tracking overlay
-        // tier) — see its own doc comment in themeHeuristics.js for why
-        // that combination is a safe enough bar without ARIA to rely on.
-        if (allowNonAriaFullscreenFallback && H.isLikelyNonAriaFullscreenPanel
-            && H.isLikelyNonAriaFullscreenPanel(el, getComputedStyle, { vh, vw })) {
-            paintOverlaySheet(el);
+        evaluateAuthoredLayer(el, 'overlay', source);
+    }
+
+    // Persistence. A class/style mutation inside a tracked root forces a
+    // fresh probe for that root; any mutation inside one re-evaluates it
+    // (new nodes, a late donate banner) even when the pass is scoped below
+    // it. Returns the touched roots.
+    function markDirtyLayerRoots(records) {
+        const touched = new Set();
+        if (!layerRoots.size) return touched;
+        const seen = new Set();
+        for (let i = 0; i < records.length; i++) {
+            const rec = records[i];
+            const dirty = rec.type === 'attributes' && (rec.attributeName === 'class' || rec.attributeName === 'style');
+            let node = rec.target;
+            for (let d = 0; node && d < 40; d++) {
+                const key = dirty ? node : null;
+                if (key && seen.has(key)) break;
+                if (key) seen.add(key);
+                const entry = layerRoots.get(node);
+                if (entry) {
+                    touched.add(node);
+                    if (dirty) entry.dirty = true;
+                }
+                node = node.parentNode || node.host;
+            }
         }
+        return touched;
+    }
+
+    // Re-check tracked roots only (scroll, resize, mutations inside a root):
+    // cached probes, so this is a handful of rect reads and no-op writes.
+    function recheckLayerRoots(roots) {
+        const { vh, vw } = passViewport();
+        roots.forEach(root => {
+            const entry = layerRoots.get(root);
+            if (!entry) return;
+            if (!root.isConnected) {
+                releaseLayerRoot(root);
+                return;
+            }
+            if (entry.source === 'sticky') visitStickyElement(root, vh, vw);
+            else evaluateAuthoredLayer(root, entry.mode, entry.source);
+        });
+    }
+
+    // The site rewrote `style` on an element we painted (React style props,
+    // animation libraries): its inline paint is the new authored value, so
+    // save it, put ours back right away (no transparent frame), and have
+    // the root re-probe on the next pass.
+    function repairRewrittenLayerPaints(records) {
+        let repaired = false;
+        for (let i = 0; i < records.length; i++) {
+            const r = records[i];
+            if (r.type !== 'attributes' || r.attributeName !== 'style') continue;
+            const el = r.target;
+            const rec = layerPaints.get(el);
+            if (!rec || el.style.getPropertyValue('background-color') === rec.bg) continue;
+            siteInlinePaint.set(el, LAYER_INLINE_PROPS.map(p => [p, el.style.getPropertyValue(p), el.style.getPropertyPriority(p)]));
+            const entry = layerRoots.get(rec.root);
+            if (entry) entry.dirty = true;
+            applyLayerPaint(el, rec);
+            repaired = true;
+        }
+        if (repaired) discardOwnMutationRecords();
     }
 
     // isLikelyModalCard is independently recomputed up to 4x per element per
@@ -1663,7 +1891,7 @@
     // lifetime of one cache (created fresh each runSafetyPasses call, same
     // pattern as effectiveBgCache). `cache` is optional — falls back to
     // uncached behavior for call sites that don't have one (shadowRootSteps'
-    // shadow-root sweep, reopaqueStickyFixed's scroll-triggered walk).
+    // shadow-root sweep, the scroll-triggered layer re-check).
     function isLikelyModalCardCached(el, cache, vh, vw) {
         if (!H || !H.isLikelyModalCard) return false;
         if (!cache) return !!H.isLikelyModalCard(el, getComputedStyle, { vh, vw });
@@ -1671,82 +1899,6 @@
         const result = !!H.isLikelyModalCard(el, getComputedStyle, { vh, vw });
         cache.set(el, result);
         return result;
-    }
-
-    /**
-     * CMP wrappers often start card-sized (opaque paint), then expand to a
-     * covering sheet. isLikelyModalCard then becomes false, so the walk stops
-     * touching them — without this pass the earlier --aura-overlay fill stays
-     * forever (fox5sandiego.com curtain).
-     */
-    function revertGrownModalCards(vh, vw, modalCardCache) {
-        if (!H) return;
-        Array.from(modalCardOpaqueModified).forEach(el => {
-            if (!el || !el.isConnected) {
-                modalCardOpaqueModified.delete(el);
-                return;
-            }
-            let rect;
-            try { rect = el.getBoundingClientRect(); } catch (e) {
-                modalCardOpaqueModified.delete(el);
-                return;
-            }
-            const covering = isOverlayCoveringSheet(rect, vh, vw);
-            let stillCard = false;
-            try {
-                stillCard = isLikelyModalCardCached(el, modalCardCache, vh, vw);
-            } catch (e2) {
-                stillCard = false;
-            }
-            // Nav drawers are expected to be covering-sheet sized while
-            // open — that's not the curtain-growth signal it is for a plain
-            // modal card. Only revert one if it's actually closed/hidden.
-            //
-            // Trust an already-confirmed open transition (navDrawerStateHistory,
-            // maintained by visitOverlayModalWalk) over a fresh, live
-            // isLikelyNavDrawer re-derivation: a transient reflow while
-            // unrelated content mutates nearby (confirmed on Wikipedia's
-            // mobile nav menu — it went fully transparent the moment the
-            // donate banner finished rendering inside it) can make a single
-            // live geometry sample momentarily disagree with the drawer's
-            // already-confirmed identity, which used to wipe the whole
-            // panel to transparent right here. Only fall back to the fresh
-            // heuristic when there's no history at all.
-            let isNavDrawer = navDrawerStateHistory.get(el) === 'expanded';
-            if (!isNavDrawer) {
-                try {
-                    isNavDrawer = !!(H.isLikelyNavDrawer
-                        && H.isLikelyNavDrawer(el, getComputedStyle, { vh, vw }));
-                } catch (eNav) {
-                    isNavDrawer = false;
-                }
-            }
-            // High z-index is the OneSignal/OneTrust/video-float curtain
-            // tier — but nav drawers legitimately sit above everything else
-            // on the page too, so it can't be a revert trigger for those.
-            let highZ = false;
-            try {
-                const z = parseInt(getComputedStyle(el).zIndex, 10);
-                highZ = !isNaN(z) && z >= 1000 && !isNavDrawer;
-            } catch (e3) {}
-            const coveringMeansCurtain = covering && !isNavDrawer;
-            const shouldRevert = (!stillCard && !isNavDrawer) || coveringMeansCurtain || highZ;
-            // Same "don't flicker on one disagreeing sample" protection as
-            // navDrawerStateHistory above — see notePendingRevert's doc
-            // comment. (For a true nav drawer this stacks with
-            // navDrawerStateHistory's own gate above — isNavDrawer only
-            // reads true once that gate has already committed to
-            // 'collapsed' — so a drawer gets more cumulative tolerance than
-            // a plain modal card; intentional, flagged for retuning if real
-            // drawers ever feel sluggish to close.)
-            if (shouldRevert) {
-                if (notePendingRevert(modalCardPendingRevert, el, REVERT_CONFIRM_READINGS)) {
-                    paintOverlayScrimAsTransparent(el, vh, vw);
-                }
-            } else {
-                modalCardPendingRevert.delete(el);
-            }
-        });
     }
 
     function reopaqueOverlays(root) {
@@ -1788,15 +1940,16 @@
             try { rect = el.getBoundingClientRect(); } catch (e) { return; }
             if (rect.width < 1 || rect.height < 1) return;
 
+            // A covering ARIA overlay is backdrop + card: decide each by
+            // authored paint. A smaller one (menu, listbox, popover) keeps
+            // the flat --aura-overlay sheet: its own surface is very often
+            // an unstyled wrapper inside the site's real popup box, which
+            // isn't part of this root.
             if (isOverlayCoveringSheet(rect, vh, vw)) {
-                // true: every candidate here already passed H.isOverlayRoot
-                // or was matched by OVERLAY_SELECTOR, so the opt-in ARIA-root
-                // fallback inside paintOverlayScrimAsTransparent is safe to
-                // allow from this call site specifically — see its own doc
-                // comment for why revertGrownModalCards must never pass this.
-                paintOverlayScrimAsTransparent(el, vh, vw, true);
+                paintAuthoredOverlay(el, 'aria');
                 return;
             }
+            if (layerRoots.has(el)) releaseLayerRoot(el);
 
             paintOverlaySheet(el);
         }
@@ -1806,171 +1959,65 @@
 
     function visitOverlayModalWalk(el, vh, vw, seen, modalCardCache) {
         if (!el || el.nodeType !== 1 || !H || seen.has(el)) return;
-        if (isAdThemingSkipped(el)) return;
-        if (H.isAmpOverlayChrome && H.isAmpOverlayChrome(el)) {
-            if (modalCardOpaqueModified.has(el)) {
-                paintOverlayScrimAsTransparent(el, vh, vw);
-            }
+        if (isAdThemingSkipped(el)) {
+            releaseLayerRoot(el, 'overlay');
             return;
         }
-        // Full-screen / near-full-screen nav drawers (hamburger menus) are
-        // real, deliberately-opened UI — unlike curtain artifacts, they must
-        // stay opaque even at covering-sheet size and high z-index, or the
-        // menu text becomes unreadable against the page bleeding through.
-        // Gated on a confirmed collapsed -> expanded TRANSITION (see
-        // navDrawerStateHistory above), not on "currently looks expanded"
-        // alone — that level-triggered check is what mispainted
-        // wtatennis.com's ambient sticky nav bar into a curtain.
-        if (H.classifyNavDrawerState && !isChromeRepaintDisabledForHost()) {
-            const navState = H.classifyNavDrawerState(el, getComputedStyle, { vh, vw });
-            if (navState === 'expanded') {
-                seen.add(el);
-                const prevNavState = navDrawerStateHistory.get(el);
-                // Deliberately has no "freshly mounted" fallback (the
-                // removed content-panel pass had one) — tried that
-                // once and reverted it. A fixed/sticky, link-rich element
-                // that's simply permanent page chrome (never actually
-                // collapses) satisfies isLikelyNavDrawerInfo's shape on
-                // every page load and has no real 'collapsed' sighting to
-                // ever transition from; the fresh-mount fallback treated
-                // that first-ever 'expanded' sighting as "just opened" and
-                // painted it opaque over whatever it was sitting on
-                // (confirmed on store.hypixel.net's hero banner — a
-                // Ranks/Bundles/Gold/... link row over background artwork,
-                // painted solid, hiding the art). This is exactly the
-                // ambient-chrome false positive isNavDrawerOpenTransition's
-                // strict collapsed-first gate already exists to prevent
-                // (the wtatennis.com precedent) — the fallback just reopened
-                // that door.
-                const isOpenTransition = !!(H.isNavDrawerOpenTransition
-                    && H.isNavDrawerOpenTransition(prevNavState, navState));
-                navDrawerPendingCollapse.delete(el);
-                // Paint on a confirmed open transition, or keep repainting an
-                // already-confirmed drawer every pass (self-healing if the
-                // site's own script strips our inline style) — but never
-                // merely because it "currently looks expanded" with no prior
-                // collapsed sighting.
-                if (isOpenTransition || modalCardOpaqueModified.has(el)) {
-                    let navStyle;
-                    try { navStyle = getComputedStyle(el); } catch (e) { return; }
-                    if (navStyle.visibility === 'hidden' || navStyle.opacity === '0') return;
-                    if (navStyle.display === 'none') return;
-                    let navRect;
-                    try { navRect = el.getBoundingClientRect(); } catch (e) { return; }
-                    if (navRect.width < 1 || navRect.height < 1) return;
-                    // Only record 'expanded' once actually treated as an
-                    // open — writing it unconditionally (as this used to,
-                    // before the fresh-mount fallback above) would
-                    // permanently poison prevNavState to 'expanded' on the
-                    // very first declined sighting: either the fresh-mount
-                    // settle-time gate hasn't elapsed yet, OR — the subtler
-                    // case fixed by writing this only here, after the
-                    // geometry/visibility checks above — the element is
-                    // caught mid-CSS-transition, still hidden/zero-size for
-                    // this one debounced pass (a near-universal shape for an
-                    // animating drawer). Either way, NEITHER
-                    // isNavDrawerOpenTransition (needs prevState ===
-                    // 'collapsed') NOR a fresh-mount fallback (bails
-                    // whenever prevState !== undefined) could ever fire
-                    // again for that element once poisoned — it would stay
-                    // unpaintable forever, with whether it happens at all
-                    // depending purely on pass-vs-animation timing. Mirrors
-                    // the same ordering used by visitNavMenuPanelElement.
-                    navDrawerStateHistory.set(el, 'expanded');
-                    paintModalCardSheet(el);
-                }
-                return;
-            }
-            if (navState === 'collapsed') {
-                if (navDrawerStateHistory.get(el) === 'expanded') {
-                    // Don't let a single live 'collapsed' reading overwrite
-                    // an already-confirmed open drawer — require
-                    // NAV_DRAWER_COLLAPSE_CONFIRM_READINGS consecutive
-                    // agreeing passes first (see navDrawerPendingCollapse's
-                    // doc comment above and notePendingRevert's below).
-                    if (notePendingRevert(navDrawerPendingCollapse, el, NAV_DRAWER_COLLAPSE_CONFIRM_READINGS)) {
-                        navDrawerStateHistory.set(el, 'collapsed');
-                    }
-                } else {
-                    navDrawerStateHistory.set(el, 'collapsed');
-                }
-            }
-            // 'ambiguous' or null (not a candidate): leave history untouched
-            // and fall through to the checks below, same as before.
+        if (H.isAmpOverlayChrome && H.isAmpOverlayChrome(el)) {
+            releaseLayerRoot(el, 'overlay');
+            return;
         }
-        // Non-ARIA, full-viewport/covering-sheet position:fixed scrim —
-        // invisible to every other path: reopaqueOverlays' OVERLAY_SELECTOR
-        // requires an ARIA role, and isLikelyModalCard/isModalCardShape
-        // below deliberately EXCLUDES covering-sheet sizes (so an ad/
-        // tracking curtain never gets painted opaque) — but that exclusion
-        // doesn't just skip painting the wrapper, it means nothing ever
-        // flags it as an overlay worth checking in the first place, so the
-        // "leave the scrim transparent, find the real inner card, paint
-        // THAT opaque" pipeline (paintOverlayScrimAsTransparent →
-        // findInnerModalCard/findInnerDialogPanel) that ARIA-tagged
-        // overlays already get never triggers either. Confirmed on
-        // truthfinder.com's "Notice" consent popup: a plain, role-less
-        // position:fixed, full-viewport .modal-container div wrapping an
-        // ordinary white card — the wrapper's background is correctly
-        // stripped by the universal rule, but nothing ever looked inside
-        // it for the real card, so the card's background stayed stripped
-        // too with nothing behind it but the themed page. Routing it
-        // through the same pipeline ARIA overlays use is safe: that
-        // pipeline only ever paints something when findInnerModalCard/
-        // findInnerDialogPanel confirm a genuine inner card (hasAction,
-        // real text, reasonable non-covering-sheet size) — and
-        // isInnerModalCardInfo (what findInnerModalCard matches against)
-        // is isModalCardShape, which ITSELF excludes covering-sheet/
-        // full-viewport candidates, so a legitimate position:fixed
-        // scroll-lock shell wrapping a whole page (not a modal) can't get
-        // a false-positive paint: its main-content area would itself be
-        // too large to match. Gated on !isOverlayChrome so this never
-        // double-handles an element reopaqueOverlays already owns.
-        if (!H.isOverlayChrome(el)) {
-            let fixedStyle;
-            try { fixedStyle = getComputedStyle(el); } catch (eFixed) { fixedStyle = null; }
-            if (fixedStyle && fixedStyle.position === 'fixed'
-                && fixedStyle.visibility !== 'hidden' && fixedStyle.opacity !== '0') {
-                let fixedRect;
-                try { fixedRect = el.getBoundingClientRect(); } catch (eRect) { fixedRect = null; }
-                if (fixedRect && fixedRect.width >= 1 && fixedRect.height >= 1
-                    && isOverlayCoveringSheet(fixedRect, vh, vw)) {
-                    seen.add(el);
-                    // true (last arg): this is the one call site
-                    // allowNonAriaFullscreenFallback is safe to pass from —
-                    // see its own doc comment on paintOverlayScrimAsTransparent
-                    // for why reopaqueOverlays/revertGrownModalCards must
-                    // never pass it.
-                    paintOverlayScrimAsTransparent(el, vh, vw, false, true);
-                    return;
-                }
+        let style;
+        try { style = getComputedStyle(el); } catch (e) { return; }
+        const pinned = style.position === 'fixed' || style.position === 'sticky';
+        if (style.visibility === 'hidden' || style.opacity === '0' || style.display === 'none') return;
+        // Nav drawers (hamburger menus) go through the overlay rule even at
+        // overlay-tier z-index (the modal-card veto below). Classification
+        // is gated to fixed/sticky elements: a drawer is one by definition
+        // (isLikelyNavDrawerInfo requires it), and navSignalsFromElement's
+        // subtree link query was O(n²) when run for every element. No
+        // collapsed -> expanded transition gate any more: it stopped
+        // ambient link rows (store.hypixel.net's hero) from being painted
+        // on shape alone, and the authored-paint rule now leaves anything
+        // the site didn't paint opaque untouched. wtatennis.com stays
+        // excluded via isChromeRepaintDisabledForHost.
+        if (pinned && H.classifyNavDrawerState && !isChromeRepaintDisabledForHost()
+            && H.classifyNavDrawerState(el, getComputedStyle, { vh, vw }) === 'expanded') {
+            seen.add(el);
+            paintAuthoredOverlay(el, 'overlay');
+            return;
+        }
+        // Non-ARIA, position:fixed covering sheet: a custom modal, cookie
+        // sheet or drawer (truthfinder.com's .modal-container, a Shopify
+        // cart drawer, Airbnb's cookie card). reopaqueOverlays only sees
+        // ARIA roles, so route it through the overlay rule here: backdrop
+        // keeps its authored scrim, the authored-opaque card is painted,
+        // transparent wrappers are left alone. Gated on !isOverlayChrome so
+        // this never double-handles an element reopaqueOverlays owns.
+        if (style.position === 'fixed' && !H.isOverlayChrome(el)) {
+            let fixedRect;
+            try { fixedRect = el.getBoundingClientRect(); } catch (eRect) { fixedRect = null; }
+            if (fixedRect && fixedRect.width >= 1 && fixedRect.height >= 1
+                && isOverlayCoveringSheet(fixedRect, vh, vw)) {
+                seen.add(el);
+                paintAuthoredOverlay(el, 'overlay');
+                return;
             }
         }
         if (isLikelyModalCardCached(el, modalCardCache, vh, vw)) {
             seen.add(el);
             if (H.isSearchChrome && H.isSearchChrome(el)) return;
-            let style;
-            try { style = getComputedStyle(el); } catch (e) { return; }
-            if (style.visibility === 'hidden' || style.opacity === '0') return;
-            if (style.display === 'none') return;
-            // Overlay-tier shells (OneSignal / OneTrust / video float) must stay
-            // transparent — painting them --aura-overlay is the same curtain
-            // class as sticky re-opaque on these sites.
+            // Overlay-tier shells (OneSignal / OneTrust / video float) stay
+            // unpainted — the curtain class on fox5sandiego.com.
             const z = parseInt(style.zIndex, 10);
             if (!isNaN(z) && z >= 1000) {
-                if (modalCardOpaqueModified.has(el)) {
-                    paintOverlayScrimAsTransparent(el, vh, vw);
-                }
+                releaseLayerRoot(el, 'overlay');
                 return;
             }
             let rect;
             try { rect = el.getBoundingClientRect(); } catch (e) { return; }
             if (rect.width < 1 || rect.height < 1) return;
-            if (isOverlayCoveringSheet(rect, vh, vw)) {
-                paintOverlayScrimAsTransparent(el, vh, vw);
-                return;
-            }
-            paintModalCardSheet(el);
+            paintAuthoredOverlay(el, 'overlay');
         }
     }
 
@@ -2079,43 +2126,14 @@
         } catch (e3) {}
     }
 
-    // 3d. STICKY/FIXED SAFETY NET
-    // The universal transparency rule (getFullStyleSheet) strips backgrounds off
-    // sticky/fixed headers and bars, so page content scrolls through them. CSS
-    // can't select by computed position, so re-opaque ONLY chrome-like bars here.
-    // Full-viewport and covering-sheet fixed overlays (HubSpot anchors, cookie
-    // modals, fox5-class CMP wrappers, etc.) must NOT be painted — doing so
-    // creates a solid theme-colored curtain over the page (seen on usopen.com /
-    // wta.com / fox5sandiego.com) with content only peeking on overscroll.
-    // Visible dialogs are handled by reopaqueOverlays instead.
-    // Skip alone is not enough: an element painted while small must have its
-    // inline fill cleared once a later pass decides it should be skipped
-    // (covering-sheet growth while scrolling).
-    function revertStickyPaint(el) {
-        try {
-            el.style.removeProperty('background-color');
-            el.style.removeProperty('color');
-        } catch (e) {}
-        stickyModified.delete(el);
-    }
-
-    // Same "don't flicker on one disagreeing sample" protection as
-    // navDrawerStateHistory (see notePendingRevert's doc comment), applied
-    // only at visitStickyElement's two GEOMETRY-dependent revert triggers
-    // (isLikelyModalCardCached, shouldSkipStickyElement) — the element's own
-    // live rect/coverage fractions are exactly the kind of signal a nearby,
-    // unrelated reflow can transiently disturb. The other three revert
-    // triggers in that function (ad/chrome-host skip, AMP-chrome tag/class
-    // match, position !== fixed/sticky) are deterministic identity/property
-    // checks that can't transiently flicker that way, so they keep
-    // reverting immediately — gating them would only add latency with no
-    // protective benefit.
-    function maybeRevertStickyPaint(el) {
-        if (notePendingRevert(stickyPendingRevert, el, REVERT_CONFIRM_READINGS)) {
-            revertStickyPaint(el);
-        }
-    }
-
+    // 3d. STICKY/FIXED LAYERS
+    // The universal transparency rule strips backgrounds off sticky/fixed
+    // headers and bars, so page content would scroll through them. CSS
+    // can't select by computed position, so visitStickyElement hands every
+    // fixed/sticky element to the authored-paint rule (section 3c-bis).
+    // Curtains (fox5sandiego.com / usopen.com-class CMP wrappers) stay
+    // unpainted because their authored paint is transparent, not because
+    // of their size.
     function isAdThemingSkipped(el) {
         if (!el || !H) return false;
         try {
@@ -2138,8 +2156,8 @@
     // wtatennis.com: `.page-hero` / `[data-widget*="sticky-page-hero"]` is a
     // `<header>` that is `position: sticky; top: 0; z-index: 0` (confirmed
     // via the site's own screen.css) and pins at the top of the viewport
-    // while later sections scroll up over it. Both reopaqueStickyFixed
-    // (generic sticky safety net) AND reopaqueTopChrome (which treats any
+    // while later sections scroll up over it. Both visitStickyElement
+    // (generic sticky layer rule) AND reopaqueTopChrome (which treats any
     // semantic <header>/<nav> near the top as chrome, regardless of nav
     // signal, since the UC Davis relaxation) paint it opaque independently —
     // it has to be excluded from both. Painting it opaque produces exactly
@@ -2168,9 +2186,10 @@
     // bar becoming sticky, targeting it by selector (as with the .page-hero
     // skip above) does not generalize here.
     //
-    // This host-disable is checked in FOUR places: reopaqueStickyFixed,
-    // reopaqueTopChrome, restoreAuthoredChromeOpacity, and the
-    // isLikelyNavDrawer branch in visitOverlayModalWalk.
+    // This host-disable is checked in FOUR places: the scroll/resize layer
+    // re-check (formerly reopaqueStickyFixed), reopaqueTopChrome,
+    // restoreAuthoredChromeOpacity, and the nav-drawer branch in
+    // visitOverlayModalWalk.
     //
     // A narrower version once disabled only the first two (reasoning: only
     // those fired on the thin sticky nav bar, so the other two should be
@@ -2242,104 +2261,13 @@
         return false;
     }
 
-    // Builds the info object shouldSkipStickyElement/stickySkipReason read.
-    // Shared by visitStickyElement and the debug inspector so the HUD shows
-    // exactly what the engine saw.
+    // Builds the info object stickySkipReason reads. Shared by
+    // visitStickyElement and the debug inspector so the HUD shows exactly
+    // what the engine saw. Only identity/visibility facts: whether a layer
+    // gets painted is the authored-paint rule's call (section 3c-bis), not
+    // its size, z-index or how much of it its children cover.
     function stickyInfoFor(el, style, rect, vh, vw) {
         const mask = style.webkitMaskImage || style.maskImage;
-        // Layout geometry (unlike background-color, which the universal
-        // transparency rule already forces !important before any JS pass
-        // runs) is never touched by Aura's stylesheet, so this reliably
-        // reads the site's true original layout regardless of when it's
-        // sampled. Capped at a handful of children to keep this cheap —
-        // busier bars are much more likely genuine chrome anyway, so
-        // skipping the computation there (leaving childCoverageFrac null,
-        // which the predicate treats as "don't apply this gate") is safe.
-        let childCoverageFrac = null;
-        // Same pass, but only counting children that already carry their own
-        // opaque authored background (buttons with a real fill, not plain
-        // text/links leaning on the container for contrast). A wrapper whose
-        // children are already self-opaque doesn't need painting itself,
-        // regardless of how much of the width they cover — confirmed on
-        // sky.coflnet.com's Notify/copy/scroll-to-top bottom bar, where three
-        // pre-styled buttons fill most of the bar but the wrapper still got
-        // re-opaqued behind/around them.
-        let childOpaqueCoverageFrac = null;
-        try {
-            if (rect.width > 0) {
-                // A position:fixed element is very often just a placement
-                // shell around exactly one inner flex/grid row that does the
-                // actual layout, with the buttons as THAT row's children —
-                // not the outer shell's direct children (Tailwind-style
-                // `fixed bottom-4` wrapper + `flex gap-2` row is the common
-                // shape). Unwrap a couple of single-child levels first, same
-                // "portals wrap the card in extra divs" philosophy as
-                // findInnerModalCard, so the buttons are measured against
-                // the row that actually holds them.
-                let row = el;
-                let unwrapDepth = 0;
-                while (unwrapDepth < 2 && row.children && row.children.length === 1) {
-                    row = row.children[0];
-                    unwrapDepth++;
-                }
-                if (row.children && row.children.length > 0 && row.children.length <= 6) {
-                    let covered = 0;
-                    let coveredOpaque = 0;
-                    for (let i = 0; i < row.children.length; i++) {
-                        const child = row.children[i];
-                        const w = child.getBoundingClientRect().width;
-                        covered += w;
-                        // A child slot is routinely itself a thin wrapper div
-                        // around the real pre-styled button (one more level of
-                        // the exact "portal wraps it in extra divs" shape `row`
-                        // above already unwraps) — checking only the child's
-                        // OWN background misses an opaque fill one level
-                        // deeper, wrongly concludes "children aren't self-
-                        // opaque," and paints the outer wrapper anyway.
-                        // Confirmed on sky.coflnet.com's Notify/copy/scroll-to-
-                        // top bar (3 direct children; two are transparent
-                        // single-child wrapper divs around the real
-                        // .btn-primary button) and independently on
-                        // Kayak.com's top nav header (mc6t-wrapper) — same
-                        // shape, unrelated site/stack. Checks each level's OWN
-                        // background FIRST and only descends if that level
-                        // isn't already opaque (rather than blindly unwrapping
-                        // straight to depth 2 the way `row` does above) — an
-                        // already-opaque button with a single icon/span child
-                        // must be read at its own level, not skipped past in
-                        // favor of the icon's possibly-transparent fill.
-                        try {
-                            let opaqueCheckTarget = child;
-                            let childUnwrapDepth = 0;
-                            let isOpaque = false;
-                            while (true) {
-                                const parsed = H.parseCssRgb(getComputedStyle(opaqueCheckTarget).backgroundColor);
-                                if (parsed && parsed.a >= 0.5) { isOpaque = true; break; }
-                                if (childUnwrapDepth >= 2 || !opaqueCheckTarget.children || opaqueCheckTarget.children.length !== 1) break;
-                                opaqueCheckTarget = opaqueCheckTarget.children[0];
-                                childUnwrapDepth++;
-                            }
-                            if (isOpaque) coveredOpaque += w;
-                        } catch (e2) {}
-                    }
-                    childCoverageFrac = Math.min(1, covered / rect.width);
-                    childOpaqueCoverageFrac = Math.min(1, coveredOpaque / rect.width);
-                }
-            }
-        } catch (e) {}
-        // z-index >= 2000 (below, in shouldSkipStickyElement) is meant to
-        // catch real overlay/CMP/notification tiers, but ordinary sticky
-        // sub-navigation commonly uses a similarly "high enough to stay
-        // above content" z-index by convention alone — confirmed on
-        // bbc.com's live-match Live Reporting/Scores/Tables tab bar
-        // (role="tablist", z-index:1003), painted transparent and
-        // overlapping the article underneath it as a result. A tablist is
-        // an unambiguous ARIA role for real navigation, never a
-        // notification/CMP widget, so it's exempted.
-        let hasTablistRole = false;
-        try {
-            hasTablistRole = el.getAttribute('role') === 'tablist' || !!el.querySelector('[role="tablist"]');
-        } catch (e4) {}
         return {
             position: style.position,
             mask: mask || 'none',
@@ -2356,78 +2284,44 @@
             zIndex: style.zIndex,
             vh,
             vw,
-            childCoverageFrac,
-            childOpaqueCoverageFrac,
-            hasTablistRole,
         };
     }
 
+    // Every fixed/sticky layer: a covering sheet (drawer, cookie sheet,
+    // full-screen menu) goes through the overlay rule, anything else
+    // (header, toolbar, tab bar, search bar, sidebar) through the layer
+    // rule. Both paint only what the site painted opaque.
     function visitStickyElement(el, vh, vw, modalCardCache) {
         if (!el || el.nodeType !== 1 || !H) return;
-        if (isAdThemingSkipped(el) || isChromePaintHostSkipped(el)) {
-            if (stickyModified.has(el)) revertStickyPaint(el);
-            return;
-        }
-        if (H.isAmpOverlayChrome && H.isAmpOverlayChrome(el)) {
-            if (stickyModified.has(el)) revertStickyPaint(el);
-            return;
-        }
-        // Modal cards / promos are the overlay pass's job — never paint them
-        // as chrome with --aura-bg (OneSignal, cookie cards, etc.).
-        if (isLikelyModalCardCached(el, modalCardCache, vh, vw)) {
-            if (stickyModified.has(el)) maybeRevertStickyPaint(el);
-            return;
-        }
         let style;
         try { style = getComputedStyle(el); } catch (e) { return; }
+        if (style.position !== 'fixed' && style.position !== 'sticky') {
+            releaseLayerRoot(el, 'sticky');
+            return;
+        }
+        if (isAdThemingSkipped(el) || isChromePaintHostSkipped(el)
+            || (H.isAmpOverlayChrome && H.isAmpOverlayChrome(el))) {
+            releaseLayerRoot(el, 'sticky');
+            return;
+        }
+        // Modal cards are the overlay walk's (same rule, overlay mode).
+        if (isLikelyModalCardCached(el, modalCardCache, vh, vw)) return;
         let rect;
         try { rect = el.getBoundingClientRect(); } catch (e) { return; }
-        // A position:fixed element that covers most of the viewport and is
-        // NOT a recognized ARIA overlay, but DOES contain a genuine
-        // modal-card-shaped descendant, is a custom (non-ARIA) modal/
-        // bottom-sheet — e.g. Google's sports scorecard panel. Route it
-        // through the same scrim treatment real ARIA dialogs already get
-        // (transparent backdrop + opaque inner card) instead of leaving it
-        // to whatever wins the plain cascade (confirmed on Google: the
-        // panel itself renders fine, but its backdrop was left a flat
-        // solid color instead of a dimmed view of the page behind it).
-        if (style.position === 'fixed'
-            && !H.isOverlayChrome(el)
-            && isOverlayCoveringSheet(rect, vh, vw)) {
-            const inner = H.findInnerModalCard && H.findInnerModalCard(el, getComputedStyle, { vh, vw });
-            if (inner) {
-                paintOverlayScrimAsTransparent(el, vh, vw);
-                return;
-            }
-        }
-        // Cheap gate before the expensive child-unwrap/coverage-fraction and
-        // hasTablistRole computation in stickyInfoFor: shouldSkipStickyElement's own
-        // first check unconditionally skips anything that isn't
-        // position:fixed/sticky, so bailing here first changes no outcome —
-        // it only skips that work (confirmed via git history to have been
-        // running unconditionally on every element on every page's first
-        // paint) for the overwhelming majority of elements.
-        if (style.position !== 'fixed' && style.position !== 'sticky') {
-            if (stickyModified.has(el)) revertStickyPaint(el);
+        if (H.stickySkipReason(stickyInfoFor(el, style, rect, vh, vw))) {
+            releaseLayerRoot(el, 'sticky');
             return;
         }
-        if (H.shouldSkipStickyElement(stickyInfoFor(el, style, rect, vh, vw))) {
-            if (stickyModified.has(el)) maybeRevertStickyPaint(el);
+        const covering = style.position === 'fixed' && isOverlayCoveringSheet(rect, vh, vw);
+        if (covering && isGoogleImagesPage()) {
+            paintGoogleImagesSheet(el);
             return;
         }
-        el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
-        // Same icon-legibility pairing as paintOverlaySheet — a small fixed
-        // control (e.g. a scroll-to-top button) freshly painted opaque can't
-        // rely on the separate textContent-based contrast pass to notice an
-        // icon-font glyph with no text of its own.
-        el.style.setProperty('color', 'var(--aura-text)', 'important');
-        stickyModified.add(el);
-        stickyPendingRevert.delete(el);
+        evaluateAuthoredLayer(el, covering ? 'overlay' : 'layer', 'sticky');
     }
 
     // Debug-only (HUD inspect): which layer/overlay rule applies to `el` and
-    // why, using the same helpers visitStickyElement / visitOverlayModalWalk
-    // use. Never called by the engine itself.
+    // why. Never called by the engine itself.
     function explainLayer(el) {
         const out = {};
         if (!el || el.nodeType !== 1 || !H) return out;
@@ -2439,16 +2333,18 @@
         out.overlayRoot = !!H.isOverlayRoot(el);
         out.overlayChrome = !!H.isOverlayChrome(el);
         out.adSkipped = isAdThemingSkipped(el);
-        if (out.coveringSheet && H.findInnerModalCard) {
-            try {
-                const inner = H.findInnerModalCard(el, getComputedStyle, { vh, vw });
-                if (inner) out.scrimInnerCard = inner;
-            } catch (e) {}
-        }
         if (style.position === 'fixed' || style.position === 'sticky') {
-            try { out.stickySkip = H.stickySkipReason(stickyInfoFor(el, style, rect, vh, vw)) || 'none (painted)'; } catch (e) {}
+            try { out.stickySkip = H.stickySkipReason(stickyInfoFor(el, style, rect, vh, vw)) || 'none (rule applies)'; } catch (e) {}
         }
-        if (H.classifyNavDrawerState) {
+        try {
+            const paint = readAuthoredPaint([el], true)[0];
+            out.authoredLayer = H.classifyAuthoredPaint(paint, out.coveringSheet ? 'overlay' : 'layer');
+        } catch (e) {}
+        const entry = layerRoots.get(el);
+        if (entry) out.layerRoot = entry.mode + '/' + entry.source + ', painted ' + entry.painted.size;
+        const rec = layerPaints.get(el);
+        if (rec) out.layerPaint = rec.bg;
+        if (H.classifyNavDrawerState && (style.position === 'fixed' || style.position === 'sticky')) {
             try { out.navDrawer = H.classifyNavDrawerState(el, getComputedStyle, { vh, vw }); } catch (e) {}
         }
         return out;
@@ -2477,6 +2373,7 @@
         if (!el || el.nodeType !== 1 || !H || !H.isLikelyFloatingIconControl) return;
         if (isChromeRepaintDisabledForHost()) return;
         if (isAdThemingSkipped(el)) return;
+        if (layerPaints.has(el)) return;
         if (H.isLikelyFloatingIconControl(el, getComputedStyle, { vh, vw })) {
             el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
             el.style.setProperty('background-image', 'none', 'important');
@@ -2484,26 +2381,6 @@
             return;
         }
         if (floatingIconControlModified.has(el)) revertFloatingIconControlPaint(el);
-    }
-
-    function reopaqueStickyFixed(root) {
-        if (!root || !currentTheme || !H) return;
-        if (isChromeRepaintDisabledForHost()) return;
-        const { vh, vw } = passViewport();
-        // Re-check prior paints first — they may have grown into covering sheets
-        // without being re-visited by the sliced walk this frame.
-        Array.from(stickyModified).forEach(el => {
-            if (!el || !el.isConnected) {
-                stickyModified.delete(el);
-                return;
-            }
-            safeVisit(e => visitStickyElement(e, vh, vw), el);
-        });
-        const elements = collectElements(root);
-        const limit = Math.min(elements.length, WALK_SLICE);
-        for (let i = 0; i < limit; i++) {
-            safeVisit(e => visitStickyElement(e, vh, vw), elements[i]);
-        }
     }
 
     // Google-only, narrowly-scoped low-latency repaint for two elements
@@ -3059,32 +2936,6 @@
             }
         });
 
-        // Same undo for fixed/sticky inner bars (see chromeFixedInnerModified
-        // above) — isTopChromeBar doesn't recognize a plain fixed div, so
-        // check the thing that actually made it special: is it still
-        // fixed/sticky, and hasn't grown into a curtain.
-        Array.from(chromeFixedInnerModified).forEach(el => {
-            if (!el || !el.isConnected) {
-                chromeFixedInnerModified.delete(el);
-                return;
-            }
-            let stillFixed = false;
-            try {
-                const pos = getComputedStyle(el).position;
-                stillFixed = pos === 'fixed' || pos === 'sticky';
-            } catch (e) {}
-            let rect;
-            try { rect = el.getBoundingClientRect(); } catch (e2) {
-                revertChromeOuterPaint(el);
-                chromeFixedInnerModified.delete(el);
-                return;
-            }
-            if (!stillFixed || isOverlayCoveringSheet(rect, vh, vw) || isChromePaintHostSkipped(el)) {
-                revertChromeOuterPaint(el);
-                chromeFixedInnerModified.delete(el);
-            }
-        });
-
         function outermost(el) {
             let best = null;
             let node = el;
@@ -3102,9 +2953,28 @@
             return best;
         }
 
+        // Fixed/sticky bars and everything inside them belong to the
+        // layer engine (visitStickyElement), which paints by authored
+        // paint. Painting or clearing them here too would fight it.
+        function isPinned(node) {
+            try {
+                const pos = getComputedStyle(node).position;
+                return pos === 'fixed' || pos === 'sticky';
+            } catch (e) { return false; }
+        }
+
         function paintChrome(el) {
             if (!el || painted.has(el)) return;
             if (isAdThemingSkipped(el) || isChromePaintHostSkipped(el)) return;
+            if (isPinned(el) || layerPaints.has(el)) {
+                if (layerPaints.has(el)) {
+                    chromeOuterModified.delete(el);
+                    chromeModified.delete(el);
+                } else if (chromeOuterModified.has(el)) {
+                    revertChromeOuterPaint(el);
+                }
+                return;
+            }
             let rect;
             try { rect = el.getBoundingClientRect(); } catch (e) { return; }
             // Never paint a covering sheet as top chrome — same curtain class.
@@ -3146,6 +3016,7 @@
                 );
             }
             let n = 0;
+            const pinnedInners = [];
             for (const inner of inners) {
                 if (!inner || inner.nodeType !== 1) continue;
                 if (++n > 250) break;
@@ -3164,23 +3035,12 @@
                 if (H.isOverlayChrome && H.isOverlayChrome(inner)) continue;
                 if (isUniversalTransparencyHostExcluded(inner)) continue;
                 // A fixed/sticky descendant renders in its own layer,
-                // detached from this element's box (e.g. a <header> that
-                // stays in normal flow while an inner .header-bar div is
-                // the actual position:fixed sticky surface). Clearing its
-                // background would make the surface that's really on screen
-                // transparent while the opaque paint above lands on a
-                // possibly zero-height, off-screen ancestor — paint it
-                // opaque too instead.
-                let innerPos = '';
-                try { innerPos = getComputedStyle(inner).position; } catch (ePos) {}
-                if (innerPos === 'fixed' || innerPos === 'sticky') {
-                    if (!painted.has(inner)) {
-                        inner.style.setProperty('background-color', 'var(--aura-bg)', 'important');
-                        inner.style.setProperty('background-image', 'none', 'important');
-                        chromeModified.add(inner);
-                        chromeFixedInnerModified.add(inner);
-                        painted.add(inner);
-                    }
+                // detached from this element's box: it and its subtree are
+                // the layer engine's.
+                if (layerPaints.has(inner)) continue;
+                if (pinnedInners.length && pinnedInners.some(p => p.contains(inner))) continue;
+                if (isPinned(inner)) {
+                    pinnedInners.push(inner);
                     continue;
                 }
                 if (authoredOpaqueDescendants && authoredOpaqueDescendants.has(inner)
@@ -3210,38 +3070,6 @@
             }
         }
 
-        // Fallback for a semantic wrapper that itself never qualifies as top
-        // chrome: a <header>/[role=banner] whose only real content is a
-        // position:fixed inner bar (e.g. UC Davis's .header__bar) never
-        // gains height from that child in normal flow, so the wrapper can
-        // collapse under isTopChromeBar's minimum-height requirement even
-        // though the fixed inner bar is clearly a real, visible header.
-        // Look inside the semantic wrapper for that fixed descendant
-        // directly rather than requiring the wrapper to qualify first.
-        function findFixedChromeDescendant(el) {
-            let candidates;
-            try {
-                candidates = el.querySelectorAll('div, nav, header, section');
-            } catch (e) {
-                return null;
-            }
-            for (let i = 0; i < candidates.length; i++) {
-                const c = candidates[i];
-                let style;
-                try { style = getComputedStyle(c); } catch (e2) { continue; }
-                if (style.position !== 'fixed' && style.position !== 'sticky') continue;
-                if (style.visibility === 'hidden' || style.opacity === '0') continue;
-                let rect;
-                try { rect = c.getBoundingClientRect(); } catch (e3) { continue; }
-                if (rect.width < vw * 0.6) continue;
-                if (rect.height < 20) continue;
-                if (rect.top < -20 || rect.top > 80) continue;
-                if (isOverlayCoveringSheet(rect, vh, vw)) continue;
-                return c;
-            }
-            return null;
-        }
-
         let seeds;
         try {
             // Search/combobox fields are seeded directly too, not just their
@@ -3265,23 +3093,12 @@
         } catch (e) {
             return;
         }
+        // A semantic wrapper whose real bar is a position:fixed child (UC
+        // Davis's .header__bar) needs nothing here: the fixed child is a
+        // layer root of its own.
         seeds.forEach(el => {
             const rootEl = outermost(el);
-            if (rootEl) {
-                paintChrome(rootEl);
-                return;
-            }
-            const fixedInner = findFixedChromeDescendant(el);
-            if (fixedInner && !painted.has(fixedInner)) {
-                paintChrome(fixedInner);
-                // isTopChromeBar can't recognize a plain fixed div — this
-                // needs chromeFixedInnerModified's revert check (still
-                // fixed, not grown into a curtain), not chromeOuterModified's
-                // (which would revert it on the very next pass since a
-                // bare div never passes isTopChromeBar).
-                chromeOuterModified.delete(fixedInner);
-                chromeFixedInnerModified.add(fixedInner);
-            }
+            if (rootEl) paintChrome(rootEl);
         });
     }
 
@@ -3463,8 +3280,8 @@
             return;
         }
         if (navState === 'collapsed') {
-            // Same "don't flicker on one disagreeing sample" protection as
-            // navDrawerStateHistory — see notePendingRevert's doc comment.
+            // "Don't flicker on one disagreeing sample" — see
+            // notePendingRevert's doc comment.
             if (navMenuPanelStateHistory.get(el) === 'expanded') {
                 if (notePendingRevert(navMenuPanelPendingCollapse, el, REVERT_CONFIRM_READINGS)) {
                     navMenuPanelStateHistory.set(el, 'collapsed');
@@ -3636,7 +3453,7 @@
     function visitShellElement(el, vh, vw) {
         if (!el || el.nodeType !== 1 || !H || !H.shouldClearShellBackground) return;
         if (el === document.documentElement || el === document.body) return;
-        if (overlayModified.has(el)) return;
+        if (overlayModified.has(el) || layerPaints.has(el)) return;
         // shellModified is never reverted per-element anywhere (only wiped
         // entirely by removeTheme()) — this pass runs twice per safety-pass
         // invocation (once via the explicit rethemeOpaqueShells pre-pass,
@@ -3886,7 +3703,7 @@
 
     function clearLoaderBackgroundImages(root, precollected) {
         if (!root || !currentTheme || !H) return;
-        // Re-check prior clears first — same pattern as reopaqueStickyFixed /
+        // Re-check prior clears first — same pattern as
         // rethemeLogoContrast, so an element outside this frame's sliced walk
         // still gets revisited.
         Array.from(loaderBgModified).forEach(el => {
@@ -4057,7 +3874,7 @@
         if (!root || !currentTheme || !H) return;
         // Re-check prior inverts first — they may have grown past the
         // logo-candidate size window without being re-visited by the sliced
-        // walk this frame (same pattern as reopaqueStickyFixed).
+        // walk this frame.
         Array.from(logoContrastModified).forEach(el => {
             if (!el || !el.isConnected) {
                 logoContrastModified.delete(el);
@@ -4208,7 +4025,7 @@
         const elements = collectElements(root);
         DBG?.passElements(elements.length);
         // Shared across every isLikelyModalCard call this invocation makes
-        // (revertGrownModalCards below, plus visitOverlayModalWalk/
+        // (visitOverlayModalWalk/
         // visitBrightElement/visitStickyElement in the element walk)
         // — see isLikelyModalCardCached's doc comment.
         const modalCardCache = new WeakMap();
@@ -4242,6 +4059,14 @@
         // Shadow roots and same-origin iframes first, as before (each one is
         // its own step, expanded by shadowRootSteps into sliced sub-steps).
         const steps = [];
+        // Tracked layer roots the mutations landed inside of (a late donate
+        // banner in a drawer, a class flip on a header's inner row) are
+        // re-evaluated even when this pass is scoped below them.
+        if (pendingLayerRecheck.size) {
+            const recheck = Array.from(pendingLayerRecheck).filter(r => !root.contains(r));
+            pendingLayerRecheck.clear();
+            if (recheck.length) steps.push(() => recheckLayerRoots(recheck));
+        }
         for (let i = 0; i < elements.length; i++) {
             const el = elements[i];
             if (el.shadowRoot) steps.push(() => shadowRootSteps(el));
@@ -4266,7 +4091,6 @@
             () => rethemeLogoContrast(root, elements),
             () => rethemeInlineHighlights(root, elements),
             () => reopaqueOverlays(root),
-            () => revertGrownModalCards(vh, vw, modalCardCache),
             () => paintGoogleImagesViewer(root),
             () => reopaqueTopChrome(root),
             () => restoreAuthoredChromeOpacity(root),
@@ -4564,15 +4388,12 @@
             document.body.style.removeProperty('background');
             document.body.style.removeProperty('background-image');
         }
-        // Revert any sticky/fixed elements we forced opaque
-        stickyModified.forEach(el => {
-            try {
-                el.style.removeProperty('background-color');
-                el.style.removeProperty('color');
-            } catch (e) {}
-        });
-        stickyModified.clear();
-        stickyPendingRevert = new WeakMap();
+        // Revert every layer/overlay paint (restores the site's own inline
+        // values).
+        Array.from(layerPaints.keys()).forEach(releaseLayerPaint);
+        layerPaints.clear();
+        layerRoots.clear();
+        pendingLayerRecheck.clear();
         // Revert near-white surfaces we cleared
         brightModified.forEach(el => {
             try {
@@ -4591,13 +4412,6 @@
             } catch (e) {}
         });
         overlayModified.clear();
-        modalCardOpaqueModified.clear();
-        modalCardPendingRevert = new WeakMap();
-        // Reset so a drawer already open at re-apply time is treated as a
-        // fresh baseline (no paint) rather than reading 'expanded' as its
-        // own prior state and never registering a transition.
-        navDrawerStateHistory = new WeakMap();
-        navDrawerPendingCollapse = new WeakMap();
         navMenuPanelOpaqueModified.forEach(el => {
             try {
                 el.style.removeProperty('background-color');
@@ -4635,7 +4449,6 @@
         });
         chromeModified.clear();
         chromeOuterModified.clear();
-        chromeFixedInnerModified.clear();
         chromeAuthoredModified.forEach(el => {
             try {
                 el.style.removeProperty('background-color');
@@ -5058,6 +4871,9 @@
         const records = pendingMutationRecords;
         pendingMutationRecords = [];
         if (!currentTheme || !records.length) return;
+        try {
+            markDirtyLayerRoots(records).forEach(r => pendingLayerRecheck.add(r));
+        } catch (e) {}
         let root = document.documentElement;
         try {
             let addedNodeCount = 0;
@@ -5100,10 +4916,10 @@
     async function init() {
         DBG?.registerEngine({
             sets: {
-                sticky: stickyModified, bright: brightModified, contrast: contrastModified,
-                overlay: overlayModified, modalCard: modalCardOpaqueModified, shell: shellModified,
+                layer: layerPaints, layerRoot: layerRoots, bright: brightModified, contrast: contrastModified,
+                overlay: overlayModified, shell: shellModified,
                 chrome: chromeModified, chromeOuter: chromeOuterModified,
-                chromeFixedInner: chromeFixedInnerModified, chromeAuthored: chromeAuthoredModified,
+                chromeAuthored: chromeAuthoredModified,
                 navMenuPanel: navMenuPanelOpaqueModified,
                 floatingIcon: floatingIconControlModified, askAnything: askAnythingModified,
                 pseudoBgCleared, pseudoBgNavPanel: pseudoBgNavPanelHosts, loaderBg: loaderBgModified,
@@ -5152,6 +4968,7 @@
                     // after the pass's cooldown ends. Cheap — array push,
                     // no DOM work.
                     DBG?.mutations(mutationsList);
+                    if (layerPaints.size) repairRewrittenLayerPaints(mutationsList);
                     for (let i = 0; i < mutationsList.length; i++) {
                         pendingMutationRecords.push(mutationsList[i]);
                     }
@@ -5172,11 +4989,15 @@
                 });
             }
 
-            // Shopping / SERP headers often become sticky only after scroll, or
-            // clone a second bar. Re-paint chrome without waiting for a mutation.
+            // Scroll / resize: re-check only the tracked layer and overlay
+            // roots (cached probes — a handful of rect reads, no document
+            // walk). A header that becomes sticky on scroll does so through a
+            // class/style change, which the observer already turns into a
+            // pass; iOS toolbar collapse resizes the visual viewport, which
+            // can flip a sheet's overlay/layer mode.
             if (!scrollListenerAttached) {
                 scrollListenerAttached = true;
-                window.addEventListener('scroll', () => {
+                const onViewportChange = () => {
                     if (!currentTheme || ignoreMutations) return;
                     if (scrollPassTimer) return;
                     scrollPassTimer = setTimeout(() => {
@@ -5184,10 +5005,9 @@
                         if (!currentTheme) return;
                         DBG?.scrollPass();
                         pendingRevertReading++;
-                        const { vh, vw } = passViewport();
-                        safePass(() => revertGrownModalCards(vh, vw));
-                        safePass(() => reopaqueTopChrome(document.documentElement));
-                        safePass(() => reopaqueStickyFixed(document.documentElement));
+                        if (!isChromeRepaintDisabledForHost()) {
+                            safePass(() => recheckLayerRoots(Array.from(layerRoots.keys())));
+                        }
                         if (isGoogleImagesPage()) {
                             safePass(() => paintGoogleImagesViewer(document.documentElement));
                         }
@@ -5195,7 +5015,10 @@
                         // mutation batch and trigger a full pass.
                         discardOwnMutationRecords();
                     }, 200);
-                }, { passive: true });
+                };
+                window.addEventListener('scroll', onViewportChange, { passive: true });
+                window.addEventListener('resize', onViewportChange, { passive: true });
+                if (window.visualViewport) window.visualViewport.addEventListener('resize', onViewportChange, { passive: true });
             }
 
             // CSS-only reveals (checkbox/radio-hack menus, :target/:hover/

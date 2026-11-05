@@ -474,105 +474,6 @@ describe('shouldSkipStickyElement', () => {
     })).toBe(false);
   });
 
-  test('skips full-viewport curtains and overlay chrome', () => {
-    expect(H.shouldSkipStickyElement({
-      position: 'fixed',
-      mask: 'none',
-      visibility: 'visible',
-      opacity: '1',
-      width: 400,
-      height: 800,
-      vh: 800,
-      vw: 400,
-    })).toBe(true);
-    expect(H.shouldSkipStickyElement({
-      position: 'fixed',
-      mask: 'none',
-      visibility: 'visible',
-      opacity: '1',
-      width: 300,
-      height: 80,
-      vh: 800,
-      vw: 400,
-      overlayChrome: true,
-    })).toBe(true);
-  });
-
-  test('skips covering sheets below the 85% fullscreen gate', () => {
-    // 100% × 80% — fox5 / CMP wrapper class of curtain
-    expect(H.shouldSkipStickyElement({
-      position: 'fixed',
-      mask: 'none',
-      visibility: 'visible',
-      opacity: '1',
-      width: 400,
-      height: 640,
-      top: 0,
-      left: 0,
-      vh: 800,
-      vw: 400,
-    })).toBe(true);
-    // Visible intersection of a tall sticky hero still covering the fold
-    expect(H.shouldSkipStickyElement({
-      position: 'sticky',
-      mask: 'none',
-      visibility: 'visible',
-      opacity: '1',
-      width: 400,
-      height: 1600,
-      top: -200,
-      left: 0,
-      vh: 800,
-      vw: 400,
-    })).toBe(true);
-  });
-
-  test('skips taller-than-chrome fixed layers and overlay-tier z-index', () => {
-    // Video float / mid-size promo (~40% vh) — under covering-sheet gate but
-    // taller than top-chrome; must not be painted as --aura-bg.
-    expect(H.shouldSkipStickyElement({
-      position: 'fixed',
-      mask: 'none',
-      visibility: 'visible',
-      opacity: '1',
-      width: 390,
-      height: 344,
-      top: 64,
-      left: 0,
-      vh: 844,
-      vw: 390,
-      zIndex: '1000',
-    })).toBe(true);
-    // OneSignal / OneTrust tier
-    expect(H.shouldSkipStickyElement({
-      position: 'fixed',
-      mask: 'none',
-      visibility: 'visible',
-      opacity: '1',
-      width: 390,
-      height: 178,
-      top: 0,
-      left: 0,
-      vh: 844,
-      vw: 390,
-      zIndex: '2147483647',
-    })).toBe(true);
-    // Real chrome bar still paints
-    expect(H.shouldSkipStickyElement({
-      position: 'sticky',
-      mask: 'none',
-      visibility: 'visible',
-      opacity: '1',
-      width: 390,
-      height: 130,
-      top: 0,
-      left: 0,
-      vh: 844,
-      vw: 390,
-      zIndex: '7',
-    })).toBe(false);
-  });
-
   test('modest z-index (1000-1999) no longer trips the overlay-tier gate — real chrome commonly uses this range', () => {
     // Confirmed real false positives at the old z>=1000 threshold:
     // bbc.com's live-match tab bar (role="tablist", z-index:1003) and
@@ -591,55 +492,6 @@ describe('shouldSkipStickyElement', () => {
       width: 390, height: 62, top: 616, left: 0, vh: 678, vw: 390,
       zIndex: '1016', hasTablistRole: false,
     })).toBe(false);
-  });
-
-  test('a role="tablist" sticky sub-nav is exempted even at a z-index well past the raised 2000 threshold', () => {
-    expect(H.shouldSkipStickyElement({
-      position: 'sticky', mask: 'none', visibility: 'visible', opacity: '1',
-      width: 390, height: 45, top: 0, left: 0, vh: 664, vw: 390,
-      zIndex: '5000', hasTablistRole: true,
-    })).toBe(false);
-    // Without the tablist signal, this extreme z-index still (correctly)
-    // skips — confirms the gate still catches real notification tiers.
-    expect(H.shouldSkipStickyElement({
-      position: 'sticky', mask: 'none', visibility: 'visible', opacity: '1',
-      width: 390, height: 45, top: 0, left: 0, vh: 664, vw: 390,
-      zIndex: '5000', hasTablistRole: false,
-    })).toBe(true);
-  });
-
-  test('semantic header/nav tags get the taller TOP_CHROME_MAX_VH_SEMANTIC allowance', () => {
-    // Same ~41% vh height as the video-float case above, but tagged HEADER —
-    // a multi-row university/publisher header, not a curtain. Must paint.
-    expect(H.shouldSkipStickyElement({
-      tag: 'HEADER',
-      position: 'fixed',
-      mask: 'none',
-      visibility: 'visible',
-      opacity: '1',
-      width: 390,
-      height: 344,
-      top: 0,
-      left: 0,
-      vh: 844,
-      vw: 390,
-      zIndex: '7',
-    })).toBe(false);
-    // Beyond even the relaxed 0.55 cap — still skipped regardless of tag.
-    expect(H.shouldSkipStickyElement({
-      tag: 'HEADER',
-      position: 'fixed',
-      mask: 'none',
-      visibility: 'visible',
-      opacity: '1',
-      width: 390,
-      height: 500,
-      top: 0,
-      left: 0,
-      vh: 844,
-      vw: 390,
-      zIndex: '7',
-    })).toBe(true);
   });
 
   test('skips AMP consent / sticky-ad / popupOverlay chrome', () => {
@@ -715,25 +567,6 @@ describe('shouldSkipStickyElement', () => {
     })).toBe(true);
   });
 
-  test('a wide/short sticky wrapper whose children barely cover it (github.com .BackToTop shape) is skipped', () => {
-    // position:sticky, display:flex, justify-content:flex-end hosting one
-    // small 36px button in a 390px-wide box with no background of its own.
-    expect(H.shouldSkipStickyElement({
-      position: 'sticky',
-      mask: 'none',
-      visibility: 'visible',
-      opacity: '1',
-      width: 390,
-      height: 36,
-      top: 612,
-      left: 0,
-      vh: 844,
-      vw: 390,
-      zIndex: '98',
-      childCoverageFrac: 36 / 390,
-    })).toBe(true);
-  });
-
   test('a genuine wide chrome bar whose content spans most of its width still paints', () => {
     expect(H.shouldSkipStickyElement({
       position: 'sticky',
@@ -761,60 +594,6 @@ describe('shouldSkipStickyElement', () => {
     expect(H.shouldSkipStickyElement({
       position: 'fixed', width: 60, height: 24, vh: 844, vw: 390, zIndex: '7',
       childCoverageFrac: 0.1,
-    })).toBe(false);
-  });
-
-  test('a sticky bottom bar whose buttons already have their own opaque background is skipped (sky.coflnet.com shape)', () => {
-    // Notify / copy / scroll-to-top buttons filling most of the bar's
-    // width, each with its own authored fill — the wrapper itself has
-    // no background and shouldn't be painted just because the buttons
-    // cover most of its width.
-    expect(H.shouldSkipStickyElement({
-      position: 'fixed',
-      mask: 'none',
-      visibility: 'visible',
-      opacity: '1',
-      width: 390,
-      height: 56,
-      top: 788,
-      left: 0,
-      vh: 844,
-      vw: 390,
-      zIndex: '10',
-      childCoverageFrac: 0.9,
-      childOpaqueCoverageFrac: 0.9,
-    })).toBe(true);
-  });
-
-  test('moderate opaque coverage (padded/spaced-out buttons) is enough to skip — threshold is 0.35, not 0.5', () => {
-    // Same coflnet-style bar, but with generous padding/gaps around compact
-    // buttons so they only cover ~40% of the bar's width. The buttons being
-    // self-opaque is a strong enough signal on its own; requiring them to
-    // also dominate the width would miss bars with roomy layout.
-    expect(H.shouldSkipStickyElement({
-      position: 'fixed',
-      mask: 'none',
-      visibility: 'visible',
-      opacity: '1',
-      width: 390,
-      height: 56,
-      top: 788,
-      left: 0,
-      vh: 844,
-      vw: 390,
-      zIndex: '10',
-      childCoverageFrac: 0.4,
-      childOpaqueCoverageFrac: 0.4,
-    })).toBe(true);
-    // But not so low that it's basically nothing — below 0.35 still paints.
-    expect(H.shouldSkipStickyElement({
-      position: 'fixed',
-      width: 390,
-      height: 56,
-      vh: 844,
-      vw: 390,
-      zIndex: '10',
-      childOpaqueCoverageFrac: 0.2,
     })).toBe(false);
   });
 
@@ -2541,14 +2320,48 @@ describe('stickySkipReason', () => {
     ['overlay-chrome', { ...bar, overlayChrome: true }],
     ['amp-overlay-chrome', { ...bar, tag: 'AMP-STICKY-AD' }],
     ['zero-size', { ...bar, height: 0 }],
-    ['full-viewport', { ...bar, height: 800 }],
-    ['covering-sheet', { ...bar, height: 400 }],
-    ['too-tall', { ...bar, width: 200, height: 300 }],
-    ['z-index>=2000', { ...bar, zIndex: '2000' }],
-    ['child-coverage<0.5', { ...bar, childCoverageFrac: 0.3 }],
-    ['child-opaque-coverage>=0.35', { ...bar, childCoverageFrac: 0.9, childOpaqueCoverageFrac: 0.8 }],
   ])('names the %s veto', (reason, info) => {
     expect(H.stickySkipReason(info)).toBe(reason);
     expect(H.shouldSkipStickyElement(info)).toBe(true);
+  });
+
+  // Session 4: size, z-index and child coverage were guesses at whether the
+  // site's layer was opaque. content.js decides that from the authored
+  // paint now (classifyAuthoredPaint), so none of these veto any more:
+  // a curtain stays unpainted because its authored paint is transparent.
+  test.each([
+    ['full-viewport (routed to the overlay rule)', { ...bar, position: 'fixed', height: 800 }],
+    ['covering sheet: Wikipedia drawer, Airbnb cookie card', { ...bar, position: 'fixed', width: 340, height: 460 }],
+    ['taller than top chrome: a side drawer', { ...bar, width: 200, height: 300 }],
+    ['z-index >= 2000', { ...bar, zIndex: '2147483647' }],
+    ['children cover < 50%: Airbnb 3-item tab bar', { ...bar, childCoverageFrac: 0.3 }],
+    ['opaque children >= 35%: Airbnb header + search pill', { ...bar, childCoverageFrac: 0.9, childOpaqueCoverageFrac: 0.8 }],
+  ])('geometry no longer vetoes: %s', (_label, info) => {
+    expect(H.stickySkipReason(info)).toBeNull();
+  });
+});
+
+describe('classifyAuthoredPaint', () => {
+  const p = (bg, backdrop = 'none') => ({ bg, backdrop });
+
+  test.each([
+    // [label, paint, layer verdict, overlay verdict]
+    ['nothing readable', null, 'clear', 'clear'],
+    ['transparent', p('rgba(0, 0, 0, 0)'), 'clear', 'clear'],
+    ['the keyword transparent', p('transparent'), 'clear', 'clear'],
+    ['white bar / drawer / card', p('rgb(255, 255, 255)'), 'opaque', 'opaque'],
+    ['Minerva drawer gray', p('rgb(248, 249, 250)'), 'opaque', 'opaque'],
+    ['near-opaque white', p('rgba(255, 255, 255, 0.92)'), 'opaque', 'opaque'],
+    ['frosted bar: light tint + blur', p('rgba(255, 255, 255, 0.3)', 'blur(20px)'), 'opaque', 'opaque'],
+    ['faint tint without blur', p('rgba(255, 255, 255, 0.3)'), 'clear', 'clear'],
+    ['dark backdrop (Airbnb cookie scrim)', p('rgba(0, 0, 0, 0.45)'), 'clear', 'scrim'],
+    ['heavy dark backdrop', p('rgba(0, 0, 0, 0.8)'), 'opaque', 'scrim'],
+    ['solid black sheet is a card, not a scrim', p('rgb(0, 0, 0)'), 'opaque', 'opaque'],
+    ['dark backdrop with blur is a frosted card', p('rgba(0, 0, 0, 0.4)', 'blur(8px)'), 'opaque', 'opaque'],
+    ['almost invisible wash', p('rgba(0, 0, 0, 0.04)'), 'clear', 'clear'],
+    ['space-separated rgb()', p('rgb(255 255 255 / 0.9)'), 'opaque', 'opaque'],
+  ])('%s', (_label, paint, layer, overlay) => {
+    expect(H.classifyAuthoredPaint(paint, 'layer')).toBe(layer);
+    expect(H.classifyAuthoredPaint(paint, 'overlay')).toBe(overlay);
   });
 });
