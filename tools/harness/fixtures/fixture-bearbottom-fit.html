@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bearbottom fit fixture</title>
+<!--
+  Regression guard for bearbottomclothing.com's "Find my size" panel
+  (TEST_SITES B-2; Nov 5 phone findings). Shape, not content:
+    - .ff-backdrop: role-less, position:fixed, inset 0, z-index 100000,
+      rgba(0,0,0,.55). Contains
+    - .ff-modal: [role=dialog][aria-modal], white, full width x 76% of the
+      viewport height, pinned to the bottom.
+  The page behind has color swatches; before Session 4 the covering-sheet
+  "scrim" path cleared both layers and the swatches showed through.
+  The panel opens 1 s after load (the "Find my size" tap).
+-->
+<style>
+  body { margin: 0; font: 15px -apple-system, system-ui, sans-serif; background: #fff; color: #222; }
+  .pdp { padding: 16px; }
+  .img { height: 320px; background: #ddd; border-radius: 6px; }
+  .swatches { display: flex; gap: 10px; margin: 16px 0; }
+  .swatches span { width: 44px; height: 44px; border-radius: 50%; }
+  .ff-backdrop { position: fixed; inset: 0; z-index: 100000; background: rgba(0,0,0,.55); display: none; }
+  .ff-backdrop.open { display: block; }
+  .ff-modal { position: absolute; left: 0; right: 0; bottom: 0; height: 76vh; background: #fff; border-radius: 14px 14px 0 0; padding: 18px; box-sizing: border-box; }
+  .ff-modal h2 { margin: 0 0 12px; }
+  .ff-modal .q { padding: 12px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<div class="pdp">
+  <div class="img"></div>
+  <div class="swatches"><span style="background:#c0392b"></span><span style="background:#2980b9"></span><span style="background:#27ae60"></span><span style="background:#8e44ad"></span><span style="background:#f39c12"></span></div>
+  <h1>Pocket Tee</h1>
+  <p>Soft cotton, relaxed fit. Find your size in three questions.</p>
+  <p id="more"></p>
+</div>
+<div class="ff-backdrop">
+  <div class="ff-modal" role="dialog" aria-modal="true" aria-label="Find my size">
+    <h2>Find my size</h2>
+    <div class="q">How tall are you?</div>
+    <div class="q">How much do you weigh?</div>
+    <div class="q">How do you like your fit?</div>
+  </div>
+</div>
+<script>
+  var more = document.getElementById('more');
+  for (var i = 0; i < 30; i++) more.insertAdjacentHTML('beforeend', 'Details line ' + i + '. ');
+  setTimeout(function () { document.querySelector('.ff-backdrop').classList.add('open'); }, 1000);
+</script>
+</body>
+</html>

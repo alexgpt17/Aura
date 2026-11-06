@@ -225,7 +225,10 @@ async function runLoad(browser, opts) {
         });
     }
     const themed = theme !== 'none';
-    await ctx.addInitScript({ content: 'window.__AH_CONFIG = ' + JSON.stringify({ themed, themeData: themed ? themeData(THEMES[theme]) : null }) + ';' });
+    // AURA_HARNESS_STORAGE_MS simulates a slow storage.local read (a cold
+    // extension process); the default is 5 ms, a warm cache.
+    const storageDelayMs = process.env.AURA_HARNESS_STORAGE_MS ? Number(process.env.AURA_HARNESS_STORAGE_MS) : undefined;
+    await ctx.addInitScript({ content: 'window.__AH_CONFIG = ' + JSON.stringify({ themed, themeData: themed ? themeData(THEMES[theme]) : null, storageDelayMs }) + ';' });
     await ctx.addInitScript({ path: path.join(HERE, 'probe.js') });
     if (themed) for (const s of auraScripts()) await ctx.addInitScript({ content: s });
 
@@ -295,7 +298,10 @@ async function runLoad(browser, opts) {
                     const p = early[i], nx = early[i + 1];
                     if (p.end != null && (!nx || nx.start - p.end > 1000)) { settled = p.end; break; }
                 }
-                return { storageResolved: AH.marks.storageResolved, cssApplied: AH.marks.cssApplied, firstPassEnd: ends.length ? ends[0] : null, settled };
+                // First paint vs CSS applied: how long the page was on screen
+                // before Aura's stylesheet landed (the load flash).
+                const fp = performance.getEntriesByType('paint').find(e => e.name === 'first-paint');
+                return { firstPaint: fp ? fp.startTime : null, storageResolved: AH.marks.storageResolved, cssApplied: AH.marks.cssApplied, firstPassEnd: ends.length ? ends[0] : null, settled };
             });
             Object.keys(res.themeTiming).forEach(k => { res.themeTiming[k] = r1(res.themeTiming[k]); });
         }

@@ -63,3 +63,9 @@ Replays use the same DOM every time, so paint diffs and timings compare like for
   - `fixture-airbnb-explore`: fixed header + full-width search pill + chips, and a 3-item bottom tab bar; a class flip and a full `style` rewrite test persistence (A-2, A-3).
   - `fixture-airbnb-login`: login form, dark translucent backdrop, and a role-less 87% × 57% cookie card (A-1, A-3).
   - `fixture-shadow-bars`: Reddit-shaped sticky custom elements whose painted surface is a plain div inside their shadow root (R-1, R-2).
+  - `fixture-airbnb-chips`: `a[role=tab]` > transparent 28×28 absolute span > emoji `<video>` (A-4); a chat launcher (transparent square wrapper around a round button); photo controls with a dark scrim and a white disc.
+  - `fixture-popover`: a role-less, absolute, z-indexed white tooltip with an arrow over an order timeline, inserted after 1 s (X-6); a transparent caption and badge row as controls.
+  - `fixture-bearbottom-fit`: `.ff-backdrop` (fixed, 55% black) > `.ff-modal` (`role=dialog`, white, 76vh), opened after 1 s (B-2 regression guard).
+
+## Load flash
+`AURA_HARNESS_STORAGE_MS=<ms>` delays the stubbed `storage.local.get` (default 5 ms, a warm cache) to model a cold extension process. `results.json` → `themeTiming` has `firstPaint`, `storageResolved` and `cssApplied`; `cssApplied − firstPaint` is how long the page showed without Aura's stylesheet.

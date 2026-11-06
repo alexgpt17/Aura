@@ -27,14 +27,14 @@ Repo: `~/Developer/Aura` is the only copy (the iCloud Desktop copy was retired O
 DOM read live in Chrome where noted. "Pre-S4" means the screenshot was taken before the Session 4 build.
 - **Bearbottom "Find my size"** (pre-S4): the page's color swatches show through the panel.
   - DOM: `.ff-backdrop` (role-less, fixed, z-index 100000, `rgba(0,0,0,.55)`) contains `.ff-modal` (`[role=dialog][aria-modal]`, white, full width × 76% of the height).
-  - The old covering-sheet "scrim" path cleared both. **Expected fixed by Session 4**; re-check (B-2).
+  - The old covering-sheet "scrim" path cleared both. **Fixed by Session 4**; B-2 passed on the phone Nov 5.
 - **Airbnb category chips** (on the S4 build): a square theme-colored box around each emoji.
   - DOM: the emoji `<video>` sits in a transparent 28×28 `position:absolute` span inside a clickable `a[role=tab]`. `isLikelyFloatingIconControl` matches it, so `visitFloatingIconControlElement` paints `--aura-overlay`.
-  - A remaining paint-by-shape pass. **Open → Session 5B.**
-- **Bearbottom chat launcher** (pre-S4): a square box around a round button. Same category; re-check after 5B.
-- **Wikipedia "Banner logo"**: a bordered alt-text box where the banner image should be. Cause unconfirmed. **Open → Session 5B** (compare with Aura off first).
+  - A remaining paint-by-shape pass. **Fixed in 5B**; A-4 passed on the phone Nov 5.
+- **Bearbottom chat launcher** (pre-S4): a square box around a round button. Same category. **Fixed in 5B**; passed on the phone Nov 5.
+- **Wikipedia "Banner logo"**: a bordered alt-text box where the banner image should be. Not reproduced in 5B; W-4 passed on the phone Nov 5.
 - **Walmart "Spanish/Español now available" tooltip** (pre-S4): transparent body over the order timeline.
-  - A non-ARIA, absolutely positioned popover; no pass handles that shape. **Open → Session 5B.**
+  - A non-ARIA, absolutely positioned popover; no pass handled that shape. **Fixed in 5B**; X-6 passed on the phone Nov 5.
 - **Walmart "See more shipping activity" and "Give feedback"** (pre-S4): a full-width white `<button>` strip and a white button with light text. Buttons. **Open → Session 6.**
 - **Google Forms checkboxes** (pre-S4): `div[role=checkbox|radio]` show their state through the box's background, which the universal rule strips. Unchecked boxes show white; a checked box blends into the background. **Open → Session 6.**
 - **Google Forms "Autosave your work" dialog** (pre-S4): only the top of the card is painted, and the text overlaps the form.
@@ -61,8 +61,8 @@ DOM read live in Chrome where noted. "Pre-S4" means the screenshot was taken bef
 | 2 | Oct 23 ✓ | Debug HUD + inspect + quick wins (committed Nov 4 as `57b516a`) |
 | 3 | Nov 4 ✓ | Test harness + input lag |
 | 4 | Nov 4–5 ✓ | **Layer & overlay engine**: absorbs the old Session 6 Wikipedia/Reddit items (code + harness done; on-device check pending) |
-| 5 | Nov 6 | Load flash + light-theme base |
-| 6 | Nov 7 | Google AI lag/looks + buttons |
+| 5 | Nov 5 ✓ | Small surfaces (5B) + load flash / light base (5A); phone check passed Nov 5; commit at the start of Session 6 |
+| 6 | Nov 7 | Theme cache + old-theme back layer + late text colors (load) + buttons + Google AI lag/looks |
 | 7 | Nov 8 | Regression + App Store submission |
 | — | Nov 9 | Buffer / resubmission |
 | — | Nov 10 | Deadline |
@@ -213,33 +213,102 @@ DOM read live in Chrome where noted. "Pre-S4" means the screenshot was taken bef
 - Test: TEST_SITES A-1..A-3, R-1, R-2, W-1, W-3, X-2 (curtain must not return), dark + light; HUD layout diff = 0 on Airbnb explore. HUD inspect now shows `authoredLayer` (opaque/scrim/clear), `layerRoot` (mode/source) and `layerPaint`.
 - **On-device check Nov 5: all Session 4 rows pass.**
 
-## Session 5 — Small surfaces + load flash + light-theme base (Blocker 2, 7)
-### 5B — Small surfaces (do first; see "Nov 5 phone findings")
-- [ ] `visitFloatingIconControlElement` decides by authored paint:
-  - Restore an authored translucent scrim.
-  - Paint `--aura-overlay` only when the site painted the element opaque.
-  - Never paint an element the site left transparent.
-  - Reuse `readAuthoredPaint` / `classifyAuthoredPaint` (content.js 3c-bis, themeHeuristics.js).
-  - Fixes the Airbnb emoji boxes.
-- [ ] Audit every other shape-based "paint opaque" write for the same flaw: `restoreAuthoredChromeOpacity` (`isLikelyAuthoredSurface`), `visitNavMenuPanelElement`, `reopaqueTopChrome`'s outer paint, and the `paintOverlaySheet` path for small ARIA overlays. Move each one to authored paint, or write down why it can't be.
-- [ ] Non-ARIA positioned popovers:
-  - An absolutely positioned element with a z-index (not auto) that the site painted opaque goes through `evaluateAuthoredLayer(el, 'overlay', 'overlay')`.
-  - Limit the cost: only elements the walk already reads, with cached probes.
-  - Fixes Walmart's language tooltip.
-- [ ] Wikipedia "Banner logo" box: confirm with Aura off; find the pass via HUD inspect or a fixture; fix it for the category, not the site.
-- [ ] Fixtures:
-  - `fixture-airbnb-chips`: `a[role=tab]` > an absolute 28×28 span > `<video>`.
-  - `fixture-popover`: a Walmart-style tooltip with an arrow.
-  - `fixture-bearbottom-fit`: `.ff-backdrop` > `.ff-modal`, as a regression guard.
-### 5A — Theme load flash + light-theme base (was Session 4)
-- [ ] Use Session 2 HUD data to confirm the cause: late injection vs slow storage vs cold-cache fallback.
-- [ ] Ship a static `aura-base.css` via manifest `content_scripts.css` (Safari applies it before first paint). It holds the theme-agnostic structure keyed on `html[data-aura]` plus a neutral shield. injected.js sets the vars + attribute as soon as its single storage read resolves.
-- [ ] Light-theme shield: follow `prefers-color-scheme` until the theme is known (or remember the last theme's lightness). Final choice depends on Session 2 data.
-- [ ] Cold cache: background writes storage on install/startup; content falls back once, with no 100 ms timer.
-- [ ] Make the `--aura-border`/elevation tokens theme-aware (light themes get dark-alpha borders).
-- Test: TEST_SITES "Load" rows (cold-launch Safari, Preload Top Hit), dark + light.
+## Session 5 — Small surfaces + load flash + light-theme base (Blocker 2, 7) — done Nov 5, on-device check passed
+Session 4 committed first as `9c5f68f` (the A/B baseline). Session 5 is **not committed yet**; Session 6 commits it as its first step.
+- **On-device check Nov 5: all Session 5 rows pass** — A-4, B-2, X-6, W-4, Load-1/2/3, dark + light, plus the light-theme borders and photo close/share scrims. No HUD load timings were recorded, because no load flashed during the check.
+### 5B — Small surfaces
+- [x] Floating icon controls decide by authored paint (content.js 3d-bis):
+  - `isLikelyFloatingIconControl` only nominates. The element goes through `evaluateAuthoredLayer(el, 'overlay', 'icon')`:
+    - a dark translucent scrim keeps its authored color
+    - an opaque fill becomes `--aura-overlay`
+    - a transparent element is never painted; an authored-opaque child (a round button) is painted instead
+  - A fixed/sticky element the layer rule already owns is left to it. That was the chat launcher's square: the sticky rule left the transparent wrapper alone, then the icon pass painted it.
+  - Fixes the Airbnb emoji boxes. The old inline-write path and `floatingIconControlModified` are gone.
+- [x] Non-ARIA positioned popovers (`visitPopoverElement` → `smallSurfaceSteps`):
+  - Nominated: `position:absolute`, z-index not `auto`, at least 40×24, not a covering sheet, not ARIA/search chrome/ad.
+  - Decided: a root the site painted opaque or with a dark scrim goes through the overlay rule. A transparent one is never painted (caption and badge wrappers stay as they are).
+  - Cost: the walk's existing style read; one batched probe per pass for all nominees (icons + popovers), cached by class. Light DOM and shadow roots both.
+  - Tooltip arrows: in overlay mode, a small (≤ 24 px) absolute, empty child painted the **same authored color** as the card it sits on is painted with the card (`addOverlayNubs`). A pseudo-element (`::before` border triangle) arrow is not reachable and stays the site's color.
+- [x] Engine: `evaluateAuthoredLayer` probes the root first and skips the descendant walk when the root is authored-opaque (same result, fewer probes). Icon/popover roots that paint nothing aren't kept in `layerRoots`, so scroll re-checks stay small.
+- [x] Audit of the other shape-based opaque paints:
+  - `reopaqueTopChrome` outer paint: a non-fixed top bar is painted only when the site painted it opaque. A header the site left transparent (laid over a hero) stays transparent, and its insides are left to the universal rule. The inner `!important`-surface paint also needs the probe to agree.
+  - `restoreAuthoredChromeOpacity`: the `!important` stylesheet scan only nominates; one batched probe per pass confirms. It catches `background: url(…) !important` (a transparent color that passed the text filter) and later or more-specific site rules that win.
+  - `visitNavMenuPanelElement` (in-place menus): the collapsed → expanded gate still decides when the panel counts as open. What gets painted is the overlay rule's call (source `navpanel`), like a drawer. A panel that is already a fixed/sticky root is left to that rule.
+  - `paintOverlaySheet` for small ARIA menus/listboxes/popovers: **kept**. Their real surface is often an unstyled popup ancestor outside the ARIA root. Moving them would leave a stripped popup with only a highlighted row painted (the Google suggestions risk; same reason as Session 4). The covering-ARIA path already uses the rule.
+- [~] Wikipedia "Banner logo" box: **not reproduced.** In Chrome (where Aura doesn't run), I forced both mobile fundraising banners live in the US on Nov 5 (`B2627_110303_en6C_m_p1_lg`, `B2627_110502_en6C_m_p2_sm`, campaign `WMF_FR_FY2627_en6C_m_0701`). Neither has an element labeled "Banner logo"; their Wikimedia logo is an inline `<svg class="frb-wmf-identity-logo skin-invert">`, and the donate-drawer gif has `alt=""`. Needs from the phone: HUD inspect of the box (tag, class, src), and whether it also shows with Aura off for that site. New TEST_SITES row W-4. **W-4 passed on the phone Nov 5** (no box). Keep W-4 in the Session 7 regression pass in case the banner campaign rotates back.
+- [x] Fixtures: `fixture-airbnb-chips`, `fixture-popover`, `fixture-bearbottom-fit` (see tools/harness/README.md).
+- **Paint diff vs `9c5f68f`** (all 8 fixtures, dark + light, +5 s and after scroll). Every element that paints differently:
+  - chips `span.ico` ×4: theme bg → transparent (the A-4 fix).
+  - chips `div.chat` (transparent square wrapper): theme bg → transparent. Its round `div.bubble` is painted in both.
+  - chips `span.close` (authored `rgba(0,0,0,.5)` scrim): theme bg → authored scrim, white text.
+  - chips `span.share` (light only): text `#222` → theme text. The background is the same in both: before, the shape pass painted the background without the text.
+  - popover `div.tip`: transparent → theme overlay; `span.arrow`: white → theme overlay (the X-6 fix).
+  - wiki `nav.navigation-drawer` (+5 s only): theme bg → transparent. It's an in-flow wrapper the site leaves transparent, which the top-chrome pass painted by shape; it sits on the themed page either way. The drawer itself is unchanged.
+  - Everything else: 0 differences (hydration 7417 elements, explore, login, shadow-bars, bearbottom). Bearbottom B-2 was already correct on `9c5f68f`.
+- **Timing:** the Mac was busy during every run (Safari + WindowServer; load average 7–13), so these are noisy.
+  - Order-alternated hydration, median of 4: longest Aura task dark 22.5 → 18.7 ms, light 21.1 → 15.6 ms; Aura ms dark 201 → 232, light 194 → 162. Both engines had single 42–63 ms outliers. Tasks ≥ 50 ms: 1 in 24 new-engine loads, 0 in 24 old-engine loads; same pattern as the Session 4 note.
+  - Small fixtures: longest task 9–14 ms on both engines; scroll re-check 0.5–4.5 ms on both.
+  - Layout Δ 0 on every load.
+  - **Rerun the A/B on an idle Mac before Session 7.**
+### 5A — Theme load flash + light-theme base
+- [x] Cause, as far as the harness can measure. Harness addition: `AURA_HARNESS_STORAGE_MS` delays storage; `firstPaint` is recorded.
+  | Storage latency | 5 ms | 50 ms | 200 ms | 500 ms |
+  |---|---|---|---|---|
+  | Storage resolved → CSS applied (Aura's own work) | 0.7–1.2 ms | 1.5–2.3 ms | 2.1–4.3 ms | 2.0–4.1 ms |
+  | Page on screen without Aura CSS (hydration, explore) | 0 ms | 0–9 ms | 151–159 ms | 444–461 ms |
+  - Aura's own work after storage is ≤ 4 ms. The flash is the time before storage resolves (or before injection), and that's only visible on the phone.
+  - **Phone check (Debug build, `#aura-debug`)**: on a flashing load, read the HUD's script-start vs `responseEnd`, storage-resolved and CSS-applied.
+    - Late script start → late injection (Preload Top Hit / extension wake); nothing in-page can fix it.
+    - Long script-start → storage gap → slow storage; only a synchronous theme source fixes it (decision below).
+- [ ] ~~Static `aura-base.css`~~ → **not done.** It still waits for the theme from storage, so per the table it saves at most ~4 ms. Worth doing only together with a synchronous theme source (decision below).
+- [x] Light-theme shield → **decided Nov 5: option (c), a per-site theme cache in the page's `localStorage`.** Built in Session 6 (item 6-0).
+  - Rejected: (a) keep the shield dark (light-theme users flash dark); (b) follow `prefers-color-scheme` (worse for dark-theme users on a light OS).
+  - Accepted costs:
+    - a site's first visit behaves like today
+    - after a theme change, each site shows the old theme once, on its first load
+    - stale keys stay in sites' storage
+  - The "site can read the key" concern doesn't matter in practice: Aura's injected styles and `data-aura-*` attributes already show sites that Aura is running.
+- [x] Cold cache: background already syncs on its own load (`background.js:253`). content.js's fixed 100 ms `requestThemeUpdate()` timer is gone. content now asks once, right after its storage read, only when storage is empty. A slow read, or a site with the theme turned off, no longer costs a native round trip.
+- [x] `--aura-border` is black-alpha (`rgba(0,0,0,.15)`) on light themes. Elevation tokens were already flat `var(--aura-bg)`, so they're theme-aware.
+- Test: TEST_SITES "Load" rows (cold-launch Safari, Preload Top Hit), dark + light, with the HUD numbers above. A-4, B-2, X-6, W-4.
 
-## Session 6 — Google AI Overview / AI Mode (Blocker 3) + buttons (Blocker 5) (was Sessions 5 + 6)
+## Session 6 — Theme cache (Blocker 2) + Google AI Overview / AI Mode (Blocker 3) + buttons (Blocker 5)
+Order: 6-0 first (theme cache + old-theme back layer), then 6-1 (text colors late), then buttons, then Google. If time runs short, buttons go before Google parity, and the Google SITE_FIX scoping waits for Session 7 regression.
+- [ ] Before starting: commit Session 5 (its phone check passed Nov 5) as the A/B baseline for 6-0.
+- **What the user actually sees on load (clarified Nov 5).** The new theme's main colors apply right away. Two things remain:
+  1. **Old theme in the back layer.** After a theme change, the previous theme stays visible "under everything". It's usually seen only in the strip at the bottom of the screen: the root/canvas background, the overscroll/safe area, or Safari's toolbar tint.
+     - Suspects: the injected.js shield, the html/body inline or root background, `<meta name="theme-color">`, or a stale cached copy. Some layer keeps the old colors while the content layer updates.
+     - 6-0 must not make this worse: its reconcile has to update every surface Aura writes, not only the main stylesheet.
+  2. **Text colors catch up 1–2 s late.** This isn't storage latency (the theme itself arrives on time). It's the JS passes that set text/contrast colors running after load and hydration. 6-0 doesn't fix it → item 6-1.
+- [ ] **6-0 Per-site theme cache** (decision Nov 5, option (c)):
+  - injected.js at document_start, synchronously:
+    - read one `localStorage` key (e.g. `__aura`) holding `{v, bg, text, link, scheme, split/gradient fields}`, validated and size-capped
+    - if present, set the shield to those colors with the right `color-scheme` (no dark shield on light themes)
+    - apply the full engine stylesheet immediately, without waiting for storage
+  - When storage resolves:
+    - same theme → nothing to do
+    - different theme (changed in the app) → apply the new one, which overwrites the cache
+    - theme off for this site → remove the stylesheet and delete the key
+  - Write the key after each successful apply, only when it changed. Wrap all access in try/catch: storage can be blocked, sandboxed iframes throw, and Safari can evict it.
+  - Never write in ad/SafeFrame frames, AMP consent frames, or sites with the theme off.
+  - With no key (first visit): today's path, with the shield following `prefers-color-scheme` instead of hard-coded dark.
+  - Probably needs the stylesheet builder callable from injected.js (or a small shared module) so the early apply and content.js produce the same CSS. Verify with the paint diff: early-applied vs storage-applied must be 0 differences.
+  - Measure with the harness: `AURA_HARNESS_STORAGE_MS=200/500`, second load of the same fixture (cache warm). Target: unthemed window 0 ms (today ~155/450 ms). Add a harness option to keep `localStorage` between loads.
+  - Phone: Load-1/Load-2 on a site visited before; Load-3 (expect one old-theme frame per site right after a theme change, then never again).
+  - **Old-theme back layer (do this first within 6-0):**
+    - List every surface that carries theme color: the shield, the html/body backgrounds (inline and sheet), the canvas/overscroll color, `<meta name="theme-color">`, split-theme `html::before`, and shadow/iframe copies.
+    - Reproduce in the harness: load with theme A, switch storage to theme B (simulating a change in the app), reload and also apply live. Then dump the computed colors of each surface and the bottom strip of the screenshot.
+    - Fix: one apply/reconcile function that updates all of them. Test: after a theme change, no surface keeps theme A's colors.
+- [ ] **6-1 Time to fully themed (text colors 1–2 s late):**
+  - Measure first.
+    - Add a harness metric: the time of the last change to any visible element's computed color/background in the viewport (paint-dump sampling every ~100 ms for the first 3 s), compared with `cssApplied`.
+    - Attribute each late change to the pass that wrote it (the sub-pass timings + the per-element write).
+  - Fix by category:
+    - move rules that depend only on static facts into the stylesheet applied at document start
+    - run viewport text/contrast fixes first, ahead of off-screen work, inside `runSteps`
+    - check whether debounce/idle delays hold back the first full pass
+  - Target: no visible color change after the first full pass. The longest Aura task must not regress.
+  - Phone: on a cold load of Reddit, Wikipedia and Google, text colors are right at the first themed frame.
 - [ ] Replace `body:has(...)` / unscoped `div:has(~ div ...)` SITE_FIX rules with JS-toggled classes or scoped selectors.
 - [ ] Dedicated observers: stop rewriting every div/p/li/span of the AI answer card on each Google mutation. Paint the card root once and add a CSS rule scoped by a data-attribute we set.
 - [ ] Ask-anything / AI-chat passes: run only when their containers changed, never on keystrokes inside the composer.
@@ -301,7 +370,12 @@ DOM read live in Chrome where noted. "Pre-S4" means the screenshot was taken bef
 - **Session 4 (Nov 4):**
   - Built the authored-paint probe and the layer & overlay engine, with persistence on scroll, resize, class change, style rewrite and new nodes. Added the layout-invariance test.
   - Folded in both deferred Session 3 items.
-  - Measured on four new offline fixtures (no HAR snapshots exist yet), A/B against `c23baa1`. Not committed.
+  - Measured on four new offline fixtures (no HAR snapshots exist yet), A/B against `c23baa1`. Committed Nov 5 as `9c5f68f` after the on-device check passed.
+- **Session 5 (Nov 5):**
+  - 5B: floating icon controls and non-ARIA popovers moved onto the authored-paint rule, plus tooltip arrows. Audited the remaining shape-based paints: three moved, and the small-ARIA flat sheet is kept with a reason. Three new fixtures. A/B against `9c5f68f`; every paint difference is explained in Session 5.
+  - 5A: measured that Aura's own work from storage to CSS applied is ≤ 4 ms. The flash is storage/injection latency, which needs the phone HUD. Removed the 100 ms fallback timer; light themes get a dark-alpha border. Shield/cache decision made: option (c), scheduled as Session 6 item 6-0.
+  - Wikipedia "Banner logo": not reproducible from Chrome; W-4 then passed on the phone.
+  - Phone check passed Nov 5 (all Session 5 rows, dark + light). Not committed yet; Session 6 commits it first.
 
 ## Root-cause details (Session 1 audit)
 Line numbers are from baseline commit `0d47537`. Paths are relative to `ios/TintExtension Extension/Resources/`. Confidence levels are stated per item. "Hypothesis" means the HUD (Session 2) must confirm it.

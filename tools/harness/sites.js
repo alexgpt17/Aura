@@ -69,4 +69,8 @@ module.exports = [
     { id: 'fixture-airbnb-explore', rows: ['A-2', 'A-3 (synthetic)'], fixture: true },
     { id: 'fixture-airbnb-login', rows: ['A-1', 'A-3 (synthetic)'], fixture: true },
     { id: 'fixture-shadow-bars', rows: ['R-1', 'R-2 (synthetic)'], fixture: true },
+    // Session 5B small surfaces.
+    { id: 'fixture-airbnb-chips', rows: ['A-4 (synthetic)'], fixture: true },
+    { id: 'fixture-popover', rows: ['X-6 (synthetic)'], fixture: true },
+    { id: 'fixture-bearbottom-fit', rows: ['B-2 (synthetic)'], fixture: true },
 ];

@@ -59,16 +59,10 @@
     // Pending-revert streak for navMenuPanelStateHistory's collapsed
     // direction, via notePendingRevert.
     let navMenuPanelPendingCollapse = new WeakMap();
-    // Elements forced opaque by reopaqueExpandedNavMenuPanels. Tracked
-    // separately from the layer engine's paints (a different mechanism/gate)
-    // so their revert paths never interfere with each other.
+    // In-place nav panels reopaqueExpandedNavMenuPanels saw open (state
+    // only: the authored-paint rule does the painting, as layer root
+    // source 'navpanel').
     const navMenuPanelOpaqueModified = new Set();
-    // Elements forced opaque by visitFloatingIconControlElement — small
-    // icon-only controls (close/share/kebab-menu) pinned via position:fixed/
-    // absolute to float over media (a photo, a map) whose own translucent
-    // scrim backing the universal transparency rule stripped. See
-    // isLikelyFloatingIconControl in themeHeuristics.js.
-    const floatingIconControlModified = new Set();
     // Google Ask-anything pill ancestors / decorative siblings we cleared.
     const askAnythingModified = new Set();
     // Elements whose ::before/::after we identified as a full-bleed
@@ -102,18 +96,6 @@
     let transitionendListenerAttached = false;
     let toggleListenerAttached = false;
     let userInputListenersAttached = false;
-    // Set inside init() once a theme was successfully applied from an
-    // already-warm browser.storage.local cache — lets the fixed 100ms
-    // startup requestThemeUpdate() (see bottom of file) skip itself on the
-    // common path, where it would otherwise be a guaranteed, redundant
-    // native-messaging round trip on every single page load for no visible
-    // benefit (the page is already correctly themed). Left false if init()
-    // found no cached data (or hasn't resolved yet by the time the 100ms
-    // timer fires) so that path still gets its one real fallback attempt —
-    // the periodic background sync and the visibilitychange-triggered
-    // requestThemeUpdate() below remain the ongoing freshness mechanism
-    // either way, so this only removes one redundant *extra* early check.
-    let initAppliedFromCache = false;
     // Reveal-animation properties worth forcing a repaint pass over —
     // opacity is deliberately excluded: opacity-only hover/focus micro-
     // transitions (buttons, cards, tooltips) are extremely common and would
@@ -846,9 +828,13 @@
                 ? Split.liveSplitLayerCss(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START)
                 : '';
 
+        // A hairline that reads on the theme's own background: white-alpha
+        // vanishes on a light theme, so light themes get black-alpha.
         const border = isSplit
             ? 'rgba(128, 128, 128, 0.35)'
-            : 'rgba(255, 255, 255, 0.15)';
+            : (H && H.isThemeBackgroundLight && H.isThemeBackgroundLight(bgColor))
+                ? 'rgba(0, 0, 0, 0.15)'
+                : 'rgba(255, 255, 255, 0.15)';
 
         const layoutTags = `
                 div, main, section, article, header, nav, aside,
@@ -1570,7 +1556,6 @@
     function auraWroteInlineBg(el) {
         return overlayModified.has(el) || brightModified.has(el) || shellModified.has(el)
             || chromeModified.has(el) || chromeAuthoredModified.has(el)
-            || navMenuPanelOpaqueModified.has(el) || floatingIconControlModified.has(el)
             || askAnythingModified.has(el) || googleAiChatModified.has(el)
             || inlineHighlightModified.has(el);
     }
@@ -1775,8 +1760,12 @@
         const force = entry.dirty;
         entry.dirty = false;
 
-        const { nodes, parent } = collectLayerCandidates(root, mode);
-        const paints = readAuthoredPaint(nodes, force);
+        // An authored-opaque root covers everything under it: no need to
+        // walk or probe its descendants.
+        const rootPaint = readAuthoredPaint([root], force)[0];
+        const rootOpaque = H.classifyAuthoredPaint(rootPaint, mode) === 'opaque';
+        const { nodes, parent } = rootOpaque ? { nodes: [root], parent: [-1] } : collectLayerCandidates(root, mode);
+        const paints = [rootPaint].concat(nodes.length > 1 ? readAuthoredPaint(nodes.slice(1), force) : []);
         const token = mode === 'overlay' ? 'var(--aura-overlay)' : 'var(--aura-bg)';
         const covered = new Array(nodes.length);
         const wanted = new Map();
@@ -1802,8 +1791,46 @@
             if (anyOpaque) wanted.set(root, ['transparent', false]);
             else wanted.set(root, [token, true]);
         }
+        if (mode === 'overlay' && anyOpaque) addOverlayNubs(nodes, paints, wanted, token);
         Array.from(entry.painted).forEach(el => { if (!wanted.has(el)) releaseLayerPaint(el); });
         wanted.forEach(([bg, opaque], el) => writeLayerPaint(el, entry, root, bg, opaque));
+        // Small-surface roots (icon controls, popovers) are re-found by
+        // every pass's walk, so one that painted nothing isn't tracked for
+        // scroll re-checks.
+        if (SMALL_SURFACE_SOURCES[source] && !entry.painted.size) layerRoots.delete(root);
+    }
+
+    const SMALL_SURFACE_SOURCES = { icon: 1, popover: 1 };
+
+    // A tooltip/popover arrow is a small absolutely positioned child
+    // (usually a rotated square) painted the card's own color. It's far
+    // narrower than the card, so it's never a layer candidate, and a white
+    // nub would be left on a theme-painted card. Same authored color as
+    // the card it sits on = part of that surface: paint it with the card.
+    const NUB_MAX_SIZE = 24;
+    function addOverlayNubs(nodes, paints, wanted, token) {
+        const nubs = [];
+        const cardBg = [];
+        for (let i = 0; i < nodes.length; i++) {
+            const w = wanted.get(nodes[i]);
+            if (!w || !w[1]) continue;
+            const kids = nodes[i].children;
+            for (let k = 0; kids && k < kids.length && nubs.length < 16; k++) {
+                const kid = kids[k];
+                if (wanted.has(kid) || (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[kid.tagName])) continue;
+                if (kid.childElementCount || String(kid.textContent || '').trim()) continue;
+                let r, pos;
+                try { r = kid.getBoundingClientRect(); pos = getComputedStyle(kid).position; } catch (e) { continue; }
+                if (pos !== 'absolute' || r.width < 1 || r.height < 1 || r.width > NUB_MAX_SIZE || r.height > NUB_MAX_SIZE) continue;
+                nubs.push(kid);
+                cardBg.push(paints[i] && paints[i].bg);
+            }
+        }
+        if (!nubs.length) return;
+        const nubPaints = readAuthoredPaint(nubs);
+        for (let n = 0; n < nubs.length; n++) {
+            if (nubPaints[n] && nubPaints[n].bg === cardBg[n]) wanted.set(nubs[n], [token, true]);
+        }
     }
 
     // Overlay entry point shared by reopaqueOverlays, visitOverlayModalWalk
@@ -2350,37 +2377,79 @@
         return out;
     }
 
+    // 3d-bis. SMALL SURFACES — floating icon controls and positioned
+    // popovers, through the same authored-paint rule (overlay mode).
+    //
     // Small icon-only controls (close/share/kebab-menu) pinned via
     // position:fixed/absolute to float over media — a product photo, a map
-    // — routinely carry their own translucent scrim so the icon stays
-    // legible over whatever's underneath. The universal transparency rule
-    // strips that scrim like any other div/a background, leaving a bare
-    // icon glyph with nothing behind it (confirmed via screenshot on Google
-    // Shopping's item-photo share/kebab-menu/close cluster). Idempotent,
-    // no transition-gating needed (unlike the expand-in-place panels
-    // above) — these controls don't toggle open/closed, they're just
-    // present or not, so re-checking the current shape every pass and
-    // reverting the moment it stops matching is sufficient.
-    function revertFloatingIconControlPaint(el) {
-        try {
-            el.style.removeProperty('background-color');
-            el.style.removeProperty('background-image');
-        } catch (e) {}
-        floatingIconControlModified.delete(el);
-    }
-
-    function visitFloatingIconControlElement(el, vh, vw) {
+    // — often carry their own translucent scrim so the icon stays legible
+    // (Google Shopping's item-photo share/kebab-menu/close cluster). The
+    // shape alone doesn't say whether the site painted one: Airbnb's
+    // category chips match it with a transparent 28x28 span around an
+    // emoji <video>, and a chat launcher's square wrapper matches it around
+    // a round button. So the shape only nominates; the rule decides: a
+    // dark scrim keeps its authored color, an opaque fill becomes
+    // --aura-overlay, a transparent element is never painted (its opaque
+    // child, e.g. the round button, is). A fixed/sticky element the layer
+    // rule already owns is left to it.
+    function visitFloatingIconControlElement(el, vh, vw, out) {
         if (!el || el.nodeType !== 1 || !H || !H.isLikelyFloatingIconControl) return;
-        if (isChromeRepaintDisabledForHost()) return;
-        if (isAdThemingSkipped(el)) return;
-        if (layerPaints.has(el)) return;
-        if (H.isLikelyFloatingIconControl(el, getComputedStyle, { vh, vw })) {
-            el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
-            el.style.setProperty('background-image', 'none', 'important');
-            floatingIconControlModified.add(el);
+        const entry = layerRoots.get(el);
+        if (entry && entry.source !== 'icon') return;
+        if (layerPaints.has(el) && !entry) return;
+        if (!isChromeRepaintDisabledForHost() && !isAdThemingSkipped(el)
+            && H.isLikelyFloatingIconControl(el, getComputedStyle, { vh, vw })) {
+            out.push(el);
             return;
         }
-        if (floatingIconControlModified.has(el)) revertFloatingIconControlPaint(el);
+        if (entry) releaseLayerRoot(el, 'icon');
+    }
+
+    // Positioned popovers with no ARIA role (Walmart's "Spanish/Español
+    // now available" tooltip): position:absolute with an explicit z-index,
+    // so it stacks over the page, but not fixed, not a covering sheet and
+    // not a modal card, so no other overlay path sees it. The shape only
+    // nominates (size-bounded, cheap reads the walk already makes); the
+    // site's own paint decides, so an absolute caption or badge row the
+    // site left transparent stays transparent.
+    const POPOVER_MIN_WIDTH = 40;
+    const POPOVER_MIN_HEIGHT = 24;
+    function visitPopoverElement(el, vh, vw, out) {
+        if (!el || el.nodeType !== 1 || !H) return;
+        const entry = layerRoots.get(el);
+        if (entry && entry.source !== 'popover') return;
+        let style;
+        try { style = getComputedStyle(el); } catch (e) { return; }
+        let nominated = style.position === 'absolute' && style.zIndex !== 'auto'
+            && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'
+            && !(H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[el.tagName])
+            && !H.isOverlayChrome(el) && !(H.isSearchChrome && H.isSearchChrome(el))
+            && !(layerPaints.has(el) && !entry) && !isAdThemingSkipped(el);
+        if (nominated) {
+            let rect;
+            try { rect = el.getBoundingClientRect(); } catch (e) { rect = null; }
+            nominated = !!rect && rect.width >= POPOVER_MIN_WIDTH && rect.height >= POPOVER_MIN_HEIGHT
+                && !isOverlayCoveringSheet(rect, vh, vw);
+        }
+        if (nominated) out.push(el);
+        else if (entry) releaseLayerRoot(el, 'popover');
+    }
+
+    // Steps that settle what the walk nominated: one batched probe for all
+    // of them (one style recalc), then the rule per element, sliced.
+    function smallSurfaceSteps(icons, popovers) {
+        return [
+            () => { if (icons.length || popovers.length) readAuthoredPaint(icons.concat(popovers)); },
+            { items: icons, visit: el => evaluateAuthoredLayer(el, 'overlay', 'icon') },
+            {
+                items: popovers,
+                visit: function (el) {
+                    const v = H.classifyAuthoredPaint(readAuthoredPaint([el])[0], 'overlay');
+                    if (v === 'clear') releaseLayerRoot(el, 'popover');
+                    else evaluateAuthoredLayer(el, 'overlay', 'popover');
+                },
+            },
+        ];
     }
 
     // Google-only, narrowly-scoped low-latency repaint for two elements
@@ -2979,6 +3048,14 @@
             try { rect = el.getBoundingClientRect(); } catch (e) { return; }
             // Never paint a covering sheet as top chrome — same curtain class.
             if (isOverlayCoveringSheet(rect, vh, vw)) return;
+            // Shape says "top bar"; the site's own paint says whether it's
+            // a surface. A bar the site left transparent (a header laid
+            // over a hero image) stays transparent, and so do its insides:
+            // the universal rule already clears them.
+            if (H.classifyAuthoredPaint(readAuthoredPaint([el])[0], 'layer') !== 'opaque') {
+                if (chromeOuterModified.has(el)) revertChromeOuterPaint(el);
+                return;
+            }
             painted.add(el);
             el.style.setProperty('background-color', 'var(--aura-bg)', 'important');
             el.style.setProperty('background-image', 'none', 'important');
@@ -3046,7 +3123,8 @@
                 if (authoredOpaqueDescendants && authoredOpaqueDescendants.has(inner)
                     && !isAdThemingSkipped(inner) && !isChromePaintHostSkipped(inner)
                     && (H.isLikelyNavMenu(inner, getComputedStyle, { vh, vw })
-                        || (H.isLikelyAuthoredSurface && H.isLikelyAuthoredSurface(inner, getComputedStyle, { vh, vw })))) {
+                        || (H.isLikelyAuthoredSurface && H.isLikelyAuthoredSurface(inner, getComputedStyle, { vh, vw })))
+                    && H.classifyAuthoredPaint(readAuthoredPaint([inner])[0], 'layer') === 'opaque') {
                     if (!painted.has(inner)) {
                         // --aura-overlay, not --aura-bg: matches what
                         // restoreAuthoredChromeOpacity and the floating-icon-
@@ -3223,11 +3301,12 @@
     // Same collapsed -> expanded transition gate as the drawer path, via the
     // same isNavDrawerOpenTransition function (its logic is generic to any
     // two state strings, not specific to drawers).
+    // The transition gate decides WHEN a panel counts as open; what gets
+    // painted is the authored-paint rule's call (overlay mode), like a
+    // drawer: the panel's own surface if the site painted it, else its
+    // authored-opaque inner list, never a transparent wrapper.
     function revertNavMenuPanelPaint(el) {
-        try {
-            el.style.removeProperty('background-color');
-            el.style.removeProperty('background-image');
-        } catch (e) {}
+        releaseLayerRoot(el, 'navpanel');
         navMenuPanelOpaqueModified.delete(el);
     }
 
@@ -3273,8 +3352,9 @@
                 try { rect = el.getBoundingClientRect(); } catch (e2) { return; }
                 if (rect.width < 1 || rect.height < 1) return;
                 navMenuPanelStateHistory.set(el, 'expanded');
-                el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
-                el.style.setProperty('background-image', 'none', 'important');
+                // A fixed/sticky panel is already a drawer/layer root.
+                const owner = layerRoots.get(el);
+                if (!owner || owner.source === 'navpanel') evaluateAuthoredLayer(el, 'overlay', 'navpanel');
                 navMenuPanelOpaqueModified.add(el);
             }
             return;
@@ -3329,8 +3409,12 @@
         // for in the first place. See isLikelyAuthoredSurface below.
         const candidates = findAuthoredOpaqueElements(scope, selectors);
         const { vh, vw } = passViewport();
-        let n = 0;
-        for (let ci = 0; ci < candidates.length && n <= 200; ci++) {
+        // A matching !important rule is only a nomination: a later or more
+        // specific site rule can still win, and `background: url(...)
+        // !important` passes the text filter with a transparent color. The
+        // probe (one batch) says what the site actually paints.
+        const accepted = [];
+        for (let ci = 0; ci < candidates.length && accepted.length <= 200; ci++) {
             const el = candidates[ci];
             if (chromeAuthoredModified.has(el)) continue;
             if (isAdThemingSkipped(el) || isChromePaintHostSkipped(el)) continue;
@@ -3340,10 +3424,17 @@
             const parsed = H.parseCssRgb && H.parseCssRgb(style.backgroundColor);
             const currentlyTransparent = !parsed || parsed.a < 0.5;
             if (!currentlyTransparent) continue;
-            const accepted = H.isLikelyNavMenu(el, getComputedStyle, { vh, vw })
-                || (H.isLikelyAuthoredSurface && H.isLikelyAuthoredSurface(el, getComputedStyle, { vh, vw }));
-            if (!accepted) continue;
-            n++;
+            if (layerPaints.has(el)) continue;
+            if (H.isLikelyNavMenu(el, getComputedStyle, { vh, vw })
+                || (H.isLikelyAuthoredSurface && H.isLikelyAuthoredSurface(el, getComputedStyle, { vh, vw }))) {
+                accepted.push(el);
+            }
+        }
+        if (!accepted.length) return;
+        const paints = readAuthoredPaint(accepted);
+        for (let i = 0; i < accepted.length; i++) {
+            if (H.classifyAuthoredPaint(paints[i], 'layer') !== 'opaque') continue;
+            const el = accepted[i];
             el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
             el.style.setProperty('background-image', 'none', 'important');
             chromeAuthoredModified.add(el);
@@ -4031,6 +4122,8 @@
         const modalCardCache = new WeakMap();
         const { vh, vw } = passViewport();
         const overlaySeen = new Set();
+        const iconCandidates = [];
+        const popoverCandidates = [];
         const skipContrast = isActiveSplitTheme(currentTheme);
         let effectiveBgCache = null;
 
@@ -4104,9 +4197,11 @@
                     visitOverlayModalWalk(el, vh, vw, overlaySeen, modalCardCache);
                     visitBrightElement(el, vh, vw, modalCardCache);
                     visitStickyElement(el, vh, vw, modalCardCache);
-                    visitFloatingIconControlElement(el, vh, vw);
+                    visitPopoverElement(el, vh, vw, popoverCandidates);
+                    visitFloatingIconControlElement(el, vh, vw, iconCandidates);
                 },
-            }
+            },
+            ...smallSurfaceSteps(iconCandidates, popoverCandidates)
         );
         // Contrast must run after bright/shell clears so muted spans are
         // judged against the theme background, not a still-white ancestor.
@@ -4412,22 +4507,9 @@
             } catch (e) {}
         });
         overlayModified.clear();
-        navMenuPanelOpaqueModified.forEach(el => {
-            try {
-                el.style.removeProperty('background-color');
-                el.style.removeProperty('background-image');
-            } catch (e) {}
-        });
         navMenuPanelOpaqueModified.clear();
         navMenuPanelStateHistory = new WeakMap();
         navMenuPanelPendingCollapse = new WeakMap();
-        floatingIconControlModified.forEach(el => {
-            try {
-                el.style.removeProperty('background-color');
-                el.style.removeProperty('background-image');
-            } catch (e) {}
-        });
-        floatingIconControlModified.clear();
         revertGoogleImagesMosaic();
         contrastModified.forEach(el => {
             try { el.style.removeProperty('color'); } catch (e) {}
@@ -4590,6 +4672,8 @@
         // just not shared across the whole page's shadow roots).
         const shadowOverlaySeen = new Set();
         const shadowModalCardCache = new WeakMap();
+        const shadowIcons = [];
+        const shadowPopovers = [];
         return [
             {
                 items: shadowElements,
@@ -4605,8 +4689,11 @@
                     // nothing to ever repaint it opaque — confirmed on
                     // depop.com's #transcend-consent-manager cookie banner.
                     safeVisit(e => visitOverlayModalWalk(e, vh, vw, shadowOverlaySeen, shadowModalCardCache), shadowEl);
+                    safeVisit(e => visitPopoverElement(e, vh, vw, shadowPopovers), shadowEl);
+                    safeVisit(e => visitFloatingIconControlElement(e, vh, vw, shadowIcons), shadowEl);
                 },
             },
+            ...smallSurfaceSteps(shadowIcons, shadowPopovers),
             // ARIA-role overlay roots (dialog/menu/listbox/aria-modal)
             // get their own direct pass too — visitOverlayModalWalk
             // above only handles the position:fixed/nav-drawer shapes,
@@ -4921,7 +5008,7 @@
                 chrome: chromeModified, chromeOuter: chromeOuterModified,
                 chromeAuthored: chromeAuthoredModified,
                 navMenuPanel: navMenuPanelOpaqueModified,
-                floatingIcon: floatingIconControlModified, askAnything: askAnythingModified,
+                askAnything: askAnythingModified,
                 pseudoBgCleared, pseudoBgNavPanel: pseudoBgNavPanelHosts, loaderBg: loaderBgModified,
                 googleAiChat: googleAiChatModified, logoContrast: logoContrastModified,
                 inlineHighlight: inlineHighlightModified,
@@ -4947,8 +5034,14 @@
                 window.__TINT_THEME_DATA__._ready = true;
                 window.__TINT_THEME__ = theme;
                 applyTheme(theme);
-                initAppliedFromCache = true;
             }
+        } else {
+            // Cold cache (fresh install, or the background page hasn't
+            // written yet): ask it once, now. background.js also syncs on
+            // its own load; the storage write that follows applies the theme
+            // through onChanged. A merely slow read never gets here, so it
+            // no longer triggers an extra native round trip.
+            requestThemeUpdate();
         }
 
         // Attach custom event listener (only once)
@@ -5123,18 +5216,4 @@
     });
 
     init();
-
-    // Fallback sync for a cold/empty browser.storage.local cache (e.g. the
-    // extension's background process was suspended and hasn't written
-    // anything yet) — ensures we get fresh theme data even if background.js
-    // hasn't run yet. Skipped when init() already applied a theme from a
-    // warm cache (initAppliedFromCache): in that case the page is already
-    // correctly themed and this would just be a redundant native-messaging
-    // round trip on every page load for no visible benefit. The periodic
-    // background sync and the visibilitychange listener above still keep
-    // an already-loaded page in sync with any later theme change either way.
-    setTimeout(() => {
-        if (initAppliedFromCache) return;
-        requestThemeUpdate();
-    }, 100);
 })();

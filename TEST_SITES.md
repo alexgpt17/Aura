@@ -19,6 +19,7 @@ Before testing, force-quit Safari once (cold start). In debug builds, add `#aura
 | W-1 | en.m.wikipedia.org article → open ☰ menu, wait 3 s | Menu stays opaque, including after the donate banner appears. HUD inspect on `#mw-mf-page-left` shows it painted | | |
 | W-2 | Wikipedia infobox + tables + search field | Readable, no white boxes | | |
 | W-3 | Another MediaWiki/Fandom wiki → open menu | Menu opaque | | |
+| W-4 | en.m.wikipedia.org article with the fundraising banner showing | No bordered "Banner logo" alt-text box. If it appears, check with Aura off for that site, then HUD inspect the box (tag/class/src) | | |
 | A-1 | airbnb.com → Log in (cookie popup appears) | Whole card opaque; nothing shows through or sticks out at its edges; "Accept all" / "Only necessary" readable; backdrop dimmed, not solid | | |
 | A-2 | airbnb.com explore page, scroll slowly then fast | Header, search bar and category chips stay opaque; no content shows through; spacing between header and search bar matches Aura-off (HUD layout diff = 0) | | |
 | A-3 | airbnb.com bottom tab bar, on login and explore, while scrolling | Bar opaque; Explore/Wishlists/… labels readable | | |

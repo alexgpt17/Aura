@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Popover fixture</title>
+<!--
+  Offline stand-in for walmart.com's order page "Spanish/Español now
+  available" tooltip (TEST_SITES X-6; Nov 5 phone findings). Shape, not
+  content:
+    - a role-less, position:absolute, z-index:20 white tooltip with an
+      arrow (a rotated white square child) inside a position:relative
+      header, sitting over the order timeline. No ARIA role, not fixed, not
+      a modal card, so no pass painted it: transparent body over the text.
+      It appears 1 s after load (Walmart shows it after hydration).
+  Controls that must stay transparent:
+    - an absolute, z-indexed caption wrapper over a photo that the site
+      left transparent (text over the image).
+    - an absolute z-index:1 badge row whose wrapper is transparent.
+-->
+<style>
+  body { margin: 0; font: 15px -apple-system, system-ui, sans-serif; background: #fff; color: #222; }
+  .top { position: relative; padding: 14px 16px; border-bottom: 1px solid #e5e5e5; display: flex; justify-content: space-between; }
+  .lang { font-size: 14px; color: #0071dc; }
+  .tip { position: absolute; top: 46px; right: 10px; width: 240px; padding: 14px 16px; z-index: 20; background: #fff; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,.25); font-size: 14px; }
+  .tip .arrow { position: absolute; top: -6px; right: 28px; width: 12px; height: 12px; background: #fff; transform: rotate(45deg); }
+  .tip b { display: block; margin-bottom: 4px; }
+  .timeline { padding: 16px; }
+  .step { padding: 14px 0 14px 22px; border-left: 2px solid #0071dc; margin-left: 6px; }
+  .step h4 { margin: 0 0 4px; }
+  .step p { margin: 0; color: #555; }
+  .hero { position: relative; height: 220px; margin: 16px; border-radius: 10px; background: linear-gradient(135deg, #4b6cb7, #182848); }
+  .hero .cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px; z-index: 2; color: #fff; }
+  .hero .badges { position: absolute; top: 10px; left: 10px; z-index: 1; display: flex; gap: 6px; }
+  .hero .badges span { padding: 2px 8px; border-radius: 10px; background: #ffc220; color: #222; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="top">
+  <strong>Order details</strong>
+  <span class="lang">Español</span>
+</div>
+<div class="timeline" id="tl"></div>
+<div class="hero"><div class="badges"><span>Best seller</span><span>Rollback</span></div><div class="cap"><h3>Delivered to your door</h3></div></div>
+<script>
+  var tl = document.getElementById('tl');
+  var steps = ['Order placed', 'Preparing', 'Shipped', 'Out for delivery', 'Delivered'];
+  for (var i = 0; i < steps.length; i++) tl.insertAdjacentHTML('beforeend', '<div class="step"><h4>' + steps[i] + '</h4><p>Nov ' + (1 + i) + ', 10:0' + i + ' am · San Diego, CA</p></div>');
+  setTimeout(function () {
+    document.querySelector('.top').insertAdjacentHTML('beforeend', '<div class="tip"><span class="arrow"></span><b>Spanish/Español now available</b>Switch the language of the site at any time.</div>');
+  }, 1000);
+</script>
+</body>
+</html>
