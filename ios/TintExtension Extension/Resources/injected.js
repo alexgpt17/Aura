@@ -1,7 +1,8 @@
 // Runs at document_start, before content.js.
-// Paints a sync dark shield so the first frame is never the site's white page,
-// then applies real html/body colors as soon as storage returns — without
-// waiting for content.js safety passes.
+// Reads the per-site theme cache and paints a sync html/body shield so the
+// first frame is never the site's own page, and starts the storage read
+// content.js shares. Every theme surface after that is content.js's
+// applyTheme/removeTheme.
 
 (function() {
     'use strict';
@@ -39,110 +40,70 @@
         _ready: false
     };
 
-    injectEarlyShield();
+    var cachedTheme = readThemeCache();
+    // content.js (same isolated world, runs right after this file) applies
+    // it synchronously through its own applyTheme, so the first frame
+    // already has the full stylesheet; storage reconciles later.
+    window.__AURA_CACHED_THEME__ = cachedTheme;
+    whenDocumentElement(function () { injectEarlyShield(cachedTheme); });
     loadFromStorage();
 
-    function injectEarlyShield() {
+    // Safari runs document_start scripts after <html> exists; other engines
+    // (and the harness's Chromium) can run them before it.
+    function whenDocumentElement(fn) {
+        if (document.documentElement) return fn();
+        try {
+            var mo = new MutationObserver(function () {
+                if (!document.documentElement) return;
+                mo.disconnect();
+                fn();
+            });
+            mo.observe(document, { childList: true });
+        } catch (e) {}
+    }
+
+    // Per-site theme cache (see themeResolve.js). Top frame only: a frame's
+    // ad/SafeFrame status is only known after its own scripts run, and an
+    // iframe shares the key with every page of its origin.
+    function readThemeCache() {
+        try {
+            if (window.top !== window) return null;
+            var Resolve = typeof AuraThemeResolve !== 'undefined' ? AuraThemeResolve : null;
+            if (!Resolve || !Resolve.parseThemeCache) return null;
+            return Resolve.parseThemeCache(window.localStorage.getItem(Resolve.THEME_CACHE_KEY));
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // Covers html/body until content.js applies the theme. With a cached
+    // theme that's the same task; without one (a site's first visit) it
+    // holds until storage resolves, in the OS appearance's colors.
+    function injectEarlyShield(theme) {
         try {
             if (document.getElementById(SHIELD_ID)) return;
+            var bg;
+            if (theme && theme.background) {
+                bg = theme.background;
+            } else {
+                var prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+                bg = prefersLight ? '#F2F2F7' : '#121212';
+            }
+            var scheme = (H && H.isThemeBackgroundLight && H.isThemeBackgroundLight(bg)) ? 'light' : 'dark';
             var style = document.createElement('style');
             style.id = SHIELD_ID;
             style.textContent =
-                'html{background-color:#121212!important;color-scheme:dark!important;}' +
-                'body{background-color:#121212!important;}';
+                'html{background-color:' + bg + '!important;color-scheme:' + scheme + '!important;}' +
+                'body{background-color:' + bg + '!important;}';
             (document.documentElement || document.head).appendChild(style);
         } catch (e) {}
-    }
-
-    function resolveEarlyTheme(themeData) {
-        if (!themeData) return null;
-        var Resolve = typeof AuraThemeResolve !== 'undefined' ? AuraThemeResolve : null;
-        if (Resolve && Resolve.resolveTheme) {
-            try {
-                return Resolve.resolveTheme(
-                    themeData,
-                    typeof location !== 'undefined' ? location.hostname : ''
-                );
-            } catch (e) {}
-        }
-        return themeData.globalTheme || null;
-    }
-
-    function paintEarlyTheme(theme) {
-        if (!theme || theme.enabled === false) return;
-        var bg = theme.background || '#121212';
-        var Split = typeof AuraSplitTheme !== 'undefined' ? AuraSplitTheme : null;
-        var splitColors = Split && Split.isSplitTheme(theme)
-            ? Split.parseSplitColors(theme.backgroundGradient || theme)
-            : null;
-        var isSplit = !!(splitColors && splitColors.dark && splitColors.light);
-        var isGradient = !isSplit && theme.backgroundType === 'gradient' && !!theme.backgroundGradient;
-        var bodyTransparent = isSplit || isGradient;
-        var splitLayerCss = (isSplit && Split && Split.liveSplitPaintCss)
-            ? Split.liveSplitPaintCss(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START)
-            : (isSplit && Split && Split.liveSplitLayerCss)
-                ? Split.liveSplitLayerCss(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START)
-                : '';
-        var H = typeof AuraThemeHeuristics !== 'undefined' ? AuraThemeHeuristics : null;
-        var scheme = (H && H.isThemeBackgroundLight && H.isThemeBackgroundLight(bg))
-            ? 'light'
-            : 'dark';
-        injectThemeColorMeta(isSplit ? splitColors.dark : bg);
-        try {
-            var de = document.documentElement && document.documentElement.style;
-            if (de) {
-                de.setProperty('color-scheme', scheme, 'important');
-                if (isSplit) {
-                    var paint = Split.liveSplitBackground
-                        ? Split.liveSplitBackground(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START)
-                        : null;
-                    var grad = paint
-                        ? paint.image
-                        : Split.buildSplitGradient(splitColors.dark, splitColors.light, Split.SPLIT_PCT_START);
-                    de.setProperty('background-color', splitColors.dark, 'important');
-                    de.setProperty('background-image', grad, 'important');
-                    de.setProperty('background-repeat', 'no-repeat', 'important');
-                    de.setProperty('background-attachment', 'fixed', 'important');
-                    de.setProperty('background-position', '0 0', 'important');
-                    de.setProperty('background-size', paint && paint.size ? paint.size : '100vw 100lvh', 'important');
-                } else {
-                    de.setProperty('background-color', bg, 'important');
-                    if (isGradient) {
-                        de.setProperty('background-image', theme.backgroundGradient, 'important');
-                        de.setProperty('background-attachment', 'fixed', 'important');
-                        de.setProperty('background-repeat', 'no-repeat', 'important');
-                        de.setProperty('background-size', 'cover', 'important');
-                    }
-                }
-            }
-            if (document.body) {
-                if (bodyTransparent) {
-                    document.body.style.setProperty('background-color', 'transparent', 'important');
-                } else {
-                    document.body.style.setProperty('background-color', bg, 'important');
-                    document.body.style.setProperty('background', bg, 'important');
-                }
-            }
-        } catch (e) {}
-        var shield = document.getElementById(SHIELD_ID);
-        if (shield) {
-            if (isSplit) {
-                shield.textContent =
-                    'html{background-color:' + splitColors.dark + '!important;color-scheme:' + scheme + '!important;}' +
-                    splitLayerCss +
-                    'body{background-color:transparent!important;}';
-            } else {
-                shield.textContent =
-                    'html{background-color:' + bg + '!important;color-scheme:' + scheme + '!important;}' +
-                    'body{background-color:' + (bodyTransparent ? 'transparent' : bg) + '!important;}';
-            }
-        }
     }
 
     function loadFromStorage() {
         if (typeof browser !== 'undefined' && browser.storage) {
             // Shared with content.js (same isolated world) so the page makes
-            // one storage read instead of two.
+            // one storage read instead of two. content.js applies the theme
+            // (and every root surface) when it resolves.
             var storagePromise = browser.storage.local.get('tintThemeData');
             window.__AURA_STORAGE_PROMISE__ = storagePromise;
             storagePromise.then(function (result) {
@@ -154,53 +115,17 @@
                 if (H && H.isAdSafeFrameContext && H.isAdSafeFrameContext()) {
                     var earlyShield = document.getElementById(SHIELD_ID);
                     if (earlyShield) earlyShield.remove();
-                    window.__TINT_THEME_DATA__._ready = true;
-                    return;
                 }
-                if (result.tintThemeData) {
+                if (result && result.tintThemeData) {
                     window.__TINT_THEME_DATA__ = result.tintThemeData;
-                    window.__TINT_THEME_DATA__._ready = true;
-                    paintEarlyTheme(resolveEarlyTheme(result.tintThemeData));
-                } else {
-                    window.__TINT_THEME_DATA__._ready = true;
                 }
+                window.__TINT_THEME_DATA__._ready = true;
             }).catch(function () {
                 window.__TINT_THEME_DATA__._ready = true;
             });
         } else {
             window.__TINT_THEME_DATA__._ready = true;
         }
-    }
-
-    if (typeof browser !== 'undefined' && browser.storage && browser.storage.onChanged) {
-        browser.storage.onChanged.addListener(function (changes, areaName) {
-            if (areaName === 'local' && changes.tintThemeData && changes.tintThemeData.newValue) {
-                window.__TINT_THEME_DATA__ = changes.tintThemeData.newValue;
-                window.__TINT_THEME_DATA__._ready = true;
-                paintEarlyTheme(resolveEarlyTheme(changes.tintThemeData.newValue));
-                var event = new CustomEvent('aura-theme-updated', {
-                    detail: { themeData: changes.tintThemeData.newValue }
-                });
-                window.dispatchEvent(event);
-            }
-        });
-    }
-
-    function injectThemeColorMeta(bgColor) {
-        if (!bgColor) return;
-        try {
-            var head = document.head || document.documentElement;
-            if (!head) return;
-            var themeColorMeta = document.querySelector('meta[name="theme-color"]');
-            if (themeColorMeta) {
-                themeColorMeta.setAttribute('content', bgColor);
-            } else {
-                themeColorMeta = document.createElement('meta');
-                themeColorMeta.setAttribute('name', 'theme-color');
-                themeColorMeta.setAttribute('content', bgColor);
-                head.appendChild(themeColorMeta);
-            }
-        } catch (e) {}
     }
 
     function injectViewportMeta() {

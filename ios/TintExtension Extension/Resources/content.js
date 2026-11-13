@@ -12,6 +12,13 @@
     // themed <style data-aura-iframe> into (see shadowRootSteps /
     // visitSameOriginIframe) — tracked only for removeTheme() cleanup.
     const sameOriginIframeModified = new Set();
+    // Every copy of the engine sheet outside the document (one per open
+    // shadow root, one per same-origin iframe). A theme change rewrites
+    // them in the same task as the main sheet; removing the theme removes
+    // them. document.querySelectorAll can't reach the shadow-root ones.
+    const auraSheetCopies = new Set();
+    // Site theme-color metas we overwrote: meta -> original content.
+    const themeColorMetaOriginals = new Map();
     // Set when the opt-in Dark Mode toggle (nativeDarkModeEnabled) has
     // successfully flipped the site's own native dark-mode convention (see
     // applyNativeDarkModeIfEnabled) — records exactly what was changed on
@@ -248,9 +255,12 @@
     // Mosaic tiles hidden while the Images viewer is open (reverted each pass).
     const googleImagesMosaicHidden = new Set();
 
+    // Google Search / Images / AI Mode (not Google's apps on google.com
+    // subdomains; see Resolve.GOOGLE_APP_HOSTS).
     function isGoogleHost() {
         try {
             const host = String(window.location.hostname || '').toLowerCase();
+            if (Resolve && Resolve.isGoogleSearchHost) return Resolve.isGoogleSearchHost(host);
             return host === 'google.com' || host.endsWith('.google.com');
         } catch (e) {
             return false;
@@ -293,6 +303,15 @@
             document.body.style.removeProperty('position');
             bodyPositionForced = false;
         }
+    }
+
+    // Re-visit elements a pass painted earlier (they may have changed
+    // outside this pass's scope); drop the disconnected ones.
+    function recheckTracked(set, visit) {
+        Array.from(set).forEach(el => {
+            if (!el || !el.isConnected) { set.delete(el); return; }
+            safeVisit(visit, el);
+        });
     }
 
     function cancelWalkSlices() {
@@ -391,6 +410,9 @@
     const SITE_FIXES = [
         {
             match: ['google.com'],
+            // Search, Images and AI Mode only: Forms (docs.google.com)
+            // matched these rules and isGoogleHost before Session 6.
+            exclude: Resolve ? Resolve.GOOGLE_APP_HOSTS : [],
             css: `
                 /* The universal 'a { color: link }' rule recolors the Sign-in
                    pill's text to match its own light background, making it
@@ -438,28 +460,26 @@
                 #islsp {
                     background-color: var(--aura-bg) !important;
                 }
-                body:has([aria-modal="true"]) #islrg,
-                body:has([role="dialog"] [aria-label="Close"]) #islrg,
-                body:has(.tvh9oe:not([aria-hidden="true"])) #islrg,
-                body:has([aria-modal="true"]) #islmp {
+                /* Set by paintGoogleImagesViewer while a viewer covers the
+                   page (was body:has(...), which WebKit re-checks on almost
+                   every DOM change: typing cost). */
+                html[data-aura-gimg-viewer] #islrg,
+                html[data-aura-gimg-viewer] #islmp {
                     visibility: hidden !important;
                 }
 
-                /* AI Overview collapse-fade: empty overlay whose following
-                   sibling (source chips may sit in between on mobile) contains
-                   the expander. Adjacent `+` misses that stack. SITE_FIX only
-                   — do not restore this gradient in the shared JS walk. */
-                div:has(~ div [aria-controls="m-x-content"]):empty,
-                div:has(~ div [aria-label*="Show more AI" i]):empty,
-                #rso div:has(~ div [aria-controls="m-x-content"]):empty,
-                #rso div:has(~ div [aria-label*="Show more AI" i]):empty {
+                /* AI Overview collapse-fade: an empty div whose following
+                   sibling (source chips may sit in between on mobile)
+                   contains the expander. Marked by markGoogleAiOverview (was
+                   an unscoped div:has(~ div ...):empty, re-checked on every
+                   DOM change). */
+                [data-aura-ai-fade] {
                     background-color: transparent !important;
                     background-image: linear-gradient(transparent, var(--aura-bg)) !important;
                 }
-                div:has(> [aria-controls="m-x-content"]),
+                [data-aura-ai-more],
                 [aria-controls="m-x-content"],
                 [aria-label*="Show more AI" i],
-                #rso div:has(> [aria-controls="m-x-content"]),
                 #rso [aria-controls="m-x-content"],
                 #rso [aria-label*="Show more AI" i] {
                     background-color: var(--aura-bg) !important;
@@ -474,6 +494,21 @@
                 }
                 #m-x-content div:has(> span[role="heading"]) span {
                     color: var(--aura-text) !important;
+                }
+
+                /* AI answer card (found by its disclaimer, marked once by
+                   rethemeGoogleAiChatSurface): its blocks stay clear,
+                   including content streamed in later, without per-element
+                   inline writes. */
+                [data-aura-ai-card] :is(div, p, li, span):not(button, [role="button"], button *, [role="button"] *) {
+                    background-color: transparent !important;
+                    background-image: none !important;
+                }
+                /* Ask-anything composer shell + field (marked by
+                   rethemeAskAnythingComposer). */
+                [data-aura-composer] {
+                    background-color: var(--aura-overlay) !important;
+                    background-image: none !important;
                 }
 
                 /* Ask-anything field only — outer chip/icon buttons still
@@ -857,6 +892,12 @@
             ':not([role="alert"]):not([role="status"]):not([aria-live="assertive"]):not([aria-live="polite"])' +
             getUniversalTransparencyExcludeNot(window.location.hostname);
         const probeNot = ':where(:not([data-aura-probe]))';
+        // Checkbox/radio/switch and selected controls keep their own state
+        // fill; JS maps it (settleStateControls), and restores the parts
+        // inside one from the authored-paint probe (a descendant clause
+        // here would make every element's match walk its ancestors on
+        // every style recalc). Zero specificity, like probeNot.
+        const stateNot = ':where(:not([role="checkbox"], [role="radio"], [role="switch"], [aria-checked], [aria-selected="true"]))';
         const textBlend = 'normal';
         const splitTextFill = (isSplit && Split && Split.liveSplitTextFillCss && Split.liveSplitTextGradient)
             ? Split.liveSplitTextFillCss(Split.liveSplitTextGradient(Split.SPLIT_PCT_START))
@@ -958,7 +999,7 @@
                every rule that strips or repaints a background:
                readAuthoredPaint sets data-aura-probe to read what the site
                itself painted. */
-            :is(${layoutTags})${overlayNot}${probeNot} {
+            :is(${layoutTags})${overlayNot}${probeNot}${stateNot} {
                 background-color: transparent !important;
                 backdrop-filter: none !important;
                 -webkit-backdrop-filter: none !important;
@@ -1030,34 +1071,13 @@
                 background-clip: border-box !important;
                 -webkit-background-clip: border-box !important;
             }
-            /* Buttons (and their descendants) inside a dialog/sheet/menu
-               are exempted from the blanket descendant text-color force
-               above. visitBrightElement already leaves a button's own
-               background alone everywhere (BUTTON is skip-tagged) —
-               authored CTA buttons are out of scope for background
-               repainting — but the blanket rule above still force-recolors
-               their TEXT to the theme's light color regardless, which can
-               override a button's own well-contrasted authored color and
-               land light-on-light against its still-untouched light
-               background (confirmed on reddit.com's "Save" button in a
-               bottom sheet — general pattern, not site-specific). The CSS
-               'revert' keyword rolls the value back to whatever the site's
-               own CSS/inheritance would produce, rather than hardcoding a
-               color, so it can't itself introduce a new contrast problem.
-               visitContrastElement already special-cases BUTTON and
-               remains the safety net for any button whose real background
-               genuinely needs light text. */
-            dialog :is(button, [role="button"], button *, [role="button"] *),
-            [popover] :is(button, [role="button"], button *, [role="button"] *),
-            [role="dialog"] :is(button, [role="button"], button *, [role="button"] *),
-            [role="alertdialog"] :is(button, [role="button"], button *, [role="button"] *),
-            [role="menu"] :is(button, [role="button"], button *, [role="button"] *),
-            [role="listbox"] :is(button, [role="button"], button *, [role="button"] *),
-            [role="tooltip"] :is(button, [role="button"], button *, [role="button"] *),
-            [aria-modal="true"] :is(button, [role="button"], button *, [role="button"] *) {
-                color: revert !important;
-                -webkit-text-fill-color: revert !important;
-            }
+            /* Buttons inside dialogs/sheets/menus take the theme text
+               color from the rule above like everything else; the button
+               pass (settleButtons) then sets a readable color against each
+               button's own fill. The old 'color: revert' here reverted to
+               the user-agent ButtonText, which is light under a forced
+               dark color-scheme: light text on light buttons (Reddit's
+               "Save"). */
             dialog::backdrop {
                 background-color: rgba(0, 0, 0, 0.45) !important;
             }
@@ -1416,6 +1436,10 @@
         if (!el || el.nodeType !== 1 || !H || overlayModified.has(el) || layerPaints.has(el)) return;
         if (el === document.documentElement || el === document.body) return;
         if (el.id === 'aura-core-engine') return;
+        // State controls and the parts inside them belong to
+        // settleStateControls (their fill is their state).
+        if (isStateControlElement(el) || stateControlModified.has(el)
+            || (el.closest && el.closest(STATE_CONTROL_SELECTOR))) return;
 
         let style;
         try { style = getComputedStyle(el); } catch (e) { return; }
@@ -2074,9 +2098,16 @@
      * the close button / dialog to a large ancestor and paint it opaque, then
      * hide mosaic siblings so the original grid cannot show through.
      */
+    function setGoogleImagesViewerOpen(open) {
+        const html = document.documentElement;
+        if (!html || html.hasAttribute('data-aura-gimg-viewer') === open) return;
+        if (open) html.setAttribute('data-aura-gimg-viewer', '');
+        else html.removeAttribute('data-aura-gimg-viewer');
+    }
+
     function paintGoogleImagesViewer(root) {
         revertGoogleImagesMosaic();
-        if (!isGoogleImagesPage() || !H) return;
+        if (!isGoogleImagesPage() || !H) { setGoogleImagesViewerOpen(false); return; }
 
         const { vh, vw } = passViewport();
         const scope = root && root.nodeType === 1 ? root : document.documentElement;
@@ -2151,6 +2182,7 @@
                 mosaic.forEach(hideGoogleImagesMosaicEl);
             }
         } catch (e3) {}
+        setGoogleImagesViewerOpen(covers.size > 0);
     }
 
     // 3d. STICKY/FIXED LAYERS
@@ -2452,90 +2484,6 @@
         ];
     }
 
-    // Google-only, narrowly-scoped low-latency repaint for two elements
-    // found by runtime geometry/text-content scanning (the Ask-anything
-    // chip ancestor, the AI-answer-card container) rather than a stable CSS
-    // selector — so unlike everything painted via getFullStyleSheet/
-    // SITE_FIXES, a static CSS rule can't reach them, and they only get
-    // repainted when the shared, document-wide mutationObserver's 150ms
-    // debounce (dispatchSafetyPasses) fires. If Google's own re-render
-    // resets these elements at or faster than that cadence, the override
-    // loses the race every time, producing a continuous flicker. This
-    // attaches a SECOND MutationObserver directly to one already-identified
-    // element (not document-wide) so it reacts within one microtask of
-    // Google's own write instead. Do NOT generalize this to other elements
-    // or sites — a prior attempt to shorten/remove the shared debounce for
-    // the whole document was abandoned as too expensive to risk repeating;
-    // this stays cheap specifically by being confined to two call sites.
-    //
-    // Element -> its dedicated observer. A plain Map, not a WeakMap:
-    // revert*() must synchronously .disconnect() every live instance so a
-    // disabled theme stops repainting immediately, not whenever GC gets to
-    // it; the Map is also the "already has one attached" check.
-    const googleDedicatedRepaintObservers = new Map();
-
-    function attachDedicatedGoogleRepaintObserver(target, repaintFn) {
-        if (!target || target.nodeType !== 1) return;
-        if (googleDedicatedRepaintObservers.has(target)) return; // one per element, across passes
-        let writing = false; // mirrors ignoreMutations's shape, scoped to this instance
-        const observer = new MutationObserver(() => {
-            if (writing) return; // defensive; takeRecords() below should make this unreachable
-            if (!target.isConnected) {
-                observer.disconnect();
-                googleDedicatedRepaintObservers.delete(target);
-                return;
-            }
-            writing = true;
-            try { repaintFn(target); } catch (e) {}
-            // Drain the records repaintFn's own writes just queued,
-            // synchronously, before returning — this runs in the same task,
-            // so no microtask checkpoint can have fired this callback again
-            // yet. Without this, our own write would schedule another
-            // callback invocation on the next microtask checkpoint with no
-            // way to tell it apart from a real Google-driven change,
-            // looping forever.
-            observer.takeRecords();
-            writing = false;
-        });
-        try {
-            observer.observe(target, {
-                childList: true,
-                subtree: true,
-                attributes: true,
-                attributeFilter: ['style', 'class'],
-            });
-        } catch (e) {
-            return;
-        }
-        googleDedicatedRepaintObservers.set(target, observer);
-    }
-
-    function disconnectGoogleDedicatedRepaintObserver(target) {
-        const observer = googleDedicatedRepaintObservers.get(target);
-        if (!observer) return; // no-op for elements that never had one (field/siblings/shapes)
-        try { observer.disconnect(); } catch (e) {}
-        googleDedicatedRepaintObservers.delete(target);
-    }
-
-    // Prunes observers whose target was removed from the DOM without ever
-    // firing a mutation ON the target itself again (a node's own removal is
-    // a childList record on its PARENT, which this mechanism does not watch
-    // — so a detached target's dedicated observer just goes quiet rather
-    // than self-disconnecting via the isConnected check inside its
-    // callback). Without this, googleDedicatedRepaintObservers keeps a
-    // strong reference to detached subtrees indefinitely on SPA-style pages
-    // where Google creates/destroys the chip or answer card repeatedly
-    // without a full page reload. Cheap (map is bounded to a handful of
-    // entries) — safe to call every pass from both call sites.
-    function pruneDisconnectedGoogleRepaintObservers() {
-        googleDedicatedRepaintObservers.forEach((observer, el) => {
-            if (!el || !el.isConnected) {
-                try { observer.disconnect(); } catch (e) {}
-                googleDedicatedRepaintObservers.delete(el);
-            }
-        });
-    }
-
     // Google-only: clear dark Ask-anything pill shells that CSS :has misses.
     // Walk ancestors of the Ask field and empty previous siblings with an
     // opaque fill (decorative chip layers). Never paint --aura-bg / surface.
@@ -2694,7 +2642,10 @@
 
     function rethemeAskAnythingComposer(root) {
         if (!root || !currentTheme || !isGoogleHost()) return;
-        pruneDisconnectedGoogleRepaintObservers();
+        // Typing mutates the composer; once it's marked, passes during
+        // typing leave it alone (the marks are CSS, they don't need
+        // re-applying).
+        if (isUserTyping() && document.querySelector('[data-aura-composer]')) return;
         const scope = root.nodeType === 1 ? root : document.documentElement;
         let fields;
         try {
@@ -2782,16 +2733,13 @@
             // to transparent. clearAskAnythingFill is intentionally not
             // used here anymore; it's still used elsewhere for genuinely
             // decorative empty siblings, where transparent is correct.
+            // The fill is a scoped sheet rule on [data-aura-composer]
+            // (SITE_FIXES), so Google rewriting the shell's inline style or
+            // classes can't undo it; this used to be an inline write plus a
+            // dedicated MutationObserver re-applying it on every change.
             const paintComposerShell = el => {
-                el.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
-                el.style.setProperty('background-image', 'none', 'important');
-                askAnythingModified.add(el);
+                markGoogleNode(el, 'data-aura-composer');
                 clearAskAnythingIconButtons(el);
-                attachDedicatedGoogleRepaintObserver(el, e => {
-                    e.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
-                    e.style.setProperty('background-image', 'none', 'important');
-                    clearAskAnythingIconButtons(e);
-                });
             };
             if (sizedAncestors.length) {
                 paintComposerShell(sizedAncestors[0]);
@@ -2805,15 +2753,53 @@
             if (floatingAncestor && floatingAncestor !== sizedAncestors[0]) {
                 paintComposerShell(floatingAncestor);
             }
-            field.style.setProperty('background-color', 'var(--aura-overlay)', 'important');
-            field.style.setProperty('background-image', 'none', 'important');
-            askAnythingModified.add(field);
+            markGoogleNode(field, 'data-aura-composer');
         });
     }
 
+    // Marks (data-aura-*) Aura puts on Google's own nodes for scoped
+    // SITE_FIXES rules. Not in the observer's attributeFilter, so setting
+    // them causes no pass.
+    const googleMarkedNodes = new Set();
+    function markGoogleNode(el, attr) {
+        if (!el.hasAttribute(attr)) el.setAttribute(attr, '');
+        googleMarkedNodes.add(el);
+    }
+    function unmarkGoogleNodes() {
+        googleMarkedNodes.forEach(el => {
+            try {
+                el.removeAttribute('data-aura-composer');
+                el.removeAttribute('data-aura-ai-card');
+                el.removeAttribute('data-aura-ai-fade');
+                el.removeAttribute('data-aura-ai-more');
+            } catch (e) {}
+        });
+        googleMarkedNodes.clear();
+    }
+
+    // AI Overview "Show more": the expander's parent, and the empty divs
+    // before any ancestor of it (the collapse fade; source chips may sit in
+    // between on mobile). Replaces two unscoped :has() rules.
+    const GOOGLE_AI_EXPANDER_SELECTOR = '[aria-controls="m-x-content"], [aria-label*="Show more AI" i]';
+    function markGoogleAiOverview() {
+        let expanders;
+        try { expanders = document.querySelectorAll(GOOGLE_AI_EXPANDER_SELECTOR); } catch (e) { return; }
+        for (let i = 0; i < expanders.length && i < 10; i++) {
+            const x = expanders[i];
+            if (x.parentElement && x.parentElement.tagName === 'DIV') markGoogleNode(x.parentElement, 'data-aura-ai-more');
+            let node = x.parentElement;
+            for (let depth = 0; node && node !== document.body && depth < 8; depth++, node = node.parentElement) {
+                if (node.tagName !== 'DIV') continue;
+                for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) {
+                    if (sib.tagName === 'DIV' && !sib.firstChild) markGoogleNode(sib, 'data-aura-ai-fade');
+                }
+            }
+        }
+    }
+
     function revertAskAnythingComposer() {
+        unmarkGoogleNodes();
         askAnythingModified.forEach(el => {
-            disconnectGoogleDedicatedRepaintObserver(el); // no-op for elements that never had one
             try {
                 el.style.removeProperty('background-color');
                 el.style.removeProperty('background-image');
@@ -2852,10 +2838,18 @@
     let googleAiAnswerRootsCacheAt = 0;
     const GOOGLE_AI_ANSWER_ROOT_RESCAN_MS = 1500;
 
+    // An ancestor that also holds the Ask-anything composer is the page
+    // column, not the card: marking it cleared every icon button on the
+    // page, and the card's repaint observer and the composer's fed each
+    // other's mutations forever (a runaway on the AI Mode fixture with the
+    // Session 5 engine too).
+    const ASK_FIELD_SELECTOR = 'textarea[aria-label*="ask" i], textarea[placeholder*="ask" i], [contenteditable="true"][aria-label*="ask" i]';
     function findGoogleAiAnswerRoot(el) {
         let node = el;
         let best = null;
         for (let depth = 0; node && depth < 10; depth++) {
+            if (node === document.body || node === document.documentElement) break;
+            try { if (node.querySelector(ASK_FIELD_SELECTOR)) break; } catch (e) {}
             let rect;
             try { rect = node.getBoundingClientRect(); } catch (e) { break; }
             if (rect.width >= AI_ANSWER_ROOT_MIN_WIDTH && rect.height >= AI_ANSWER_ROOT_MIN_HEIGHT) {
@@ -2891,26 +2885,18 @@
         return Array.from(roots);
     }
 
-    // Factored out of rethemeGoogleAiChatSurface so the dedicated
-    // low-latency observer below (attached per-container) can re-run
-    // exactly this same repaint without going through the disclaimer-text
-    // rescan/cache logic that wraps it in the normal pass.
+    // The card's blocks are cleared by a scoped sheet rule on
+    // [data-aura-ai-card] (SITE_FIXES), which also covers streamed-in
+    // content; this used to rewrite every div/p/li/span inline from a
+    // dedicated observer on each mutation while the answer streamed.
     function repaintGoogleAiAnswerContainer(container) {
-        let blocks;
-        try { blocks = container.querySelectorAll('div, p, li, span'); } catch (e) { return; }
-        for (let i = 0; i < blocks.length; i++) {
-            const b = blocks[i];
-            if (b.closest && b.closest('button, [role="button"]')) continue;
-            b.style.setProperty('background-color', 'transparent', 'important');
-            b.style.setProperty('background-image', 'none', 'important');
-            googleAiChatModified.add(b);
-        }
+        markGoogleNode(container, 'data-aura-ai-card');
         clearAskAnythingIconButtons(container);
     }
 
     function rethemeGoogleAiChatSurface(root) {
         if (!root || !currentTheme || !isGoogleHost()) return;
-        pruneDisconnectedGoogleRepaintObservers();
+        markGoogleAiOverview();
         // Re-check prior clears first — same pattern as every other
         // modified-Set pass — so a card outside this frame's scoped walk
         // (see Problem 1's mutation scoping) still gets revisited.
@@ -2938,14 +2924,10 @@
             googleAiAnswerRootsCache = findGoogleAiAnswerRoots(document.documentElement);
             googleAiAnswerRootsCacheAt = now;
         }
-        googleAiAnswerRootsCache.forEach(container => {
-            repaintGoogleAiAnswerContainer(container);
-            attachDedicatedGoogleRepaintObserver(container, repaintGoogleAiAnswerContainer);
-        });
+        googleAiAnswerRootsCache.forEach(repaintGoogleAiAnswerContainer);
     }
 
     function revertGoogleAiChatSurface() {
-        googleAiAnswerRootsCache.forEach(disconnectGoogleDedicatedRepaintObserver);
         googleAiChatModified.forEach(el => {
             try {
                 el.style.removeProperty('background-color');
@@ -3446,8 +3428,78 @@
     // Painted aria-hidden copies (Airbnb host stats, currentColor icons) are
     // rewritten; unused stacked Google Images labels are still skipped.
     function visitContrastElement(el, effectiveBgCache) {
-        if (!el || el.nodeType !== 1 || !H || !H.hasPoorContrast || !currentTheme) return;
-        if (isActiveSplitTheme(currentTheme)) return;
+        const picked = contrastDecision(el, effectiveBgCache);
+        if (picked != null) writeContrastColor(el, picked);
+    }
+
+    function writeContrastColor(el, picked) {
+        el.style.setProperty('color', picked, 'important');
+        contrastModified.add(el);
+    }
+
+    // Read-only half of the contrast pass: the color to write, or null.
+    // contrastAddedNodes decides a whole batch before writing any of it.
+    // Per-pass cache for H.isStackedDuplicateLabel (parent -> child text
+    // counts); reset with the effective-background cache.
+    let duplicateLabelCache = new WeakMap();
+
+    // Text in nodes the site just added (hydration, infinite scroll,
+    // streamed answers) is fixed here, in the observer callback before the
+    // next frame, instead of at the next pass's contrast step. Only text
+    // that sits straight on the theme background is decided: under an
+    // authored surface the pass's bright/shell steps may still change the
+    // background, so that text waits for the pass (one change, not two).
+    // Off until the first full-document pass has collected its elements:
+    // everything parsed before then is in that pass, and running here on
+    // every parser batch of a cache-applied load forced style recalcs of
+    // the half-built page (a 25-30 ms task).
+    const FAST_CONTRAST_MAX_ELEMENTS = 300;
+    let fullPassCollected = false;
+    function contrastAddedNodes(records) {
+        if (!fullPassCollected || !currentTheme || !H || !H.effectiveBackground || isUserTyping() || isActiveSplitTheme(currentTheme)) return;
+        const els = [];
+        for (let r = 0; r < records.length; r++) {
+            const rec = records[r];
+            if (rec.type !== 'childList') continue;
+            for (let n = 0; n < rec.addedNodes.length; n++) {
+                const node = rec.addedNodes[n];
+                if (node.nodeType !== 1 || !node.isConnected || isOwnNode(node)) continue;
+                els.push(node);
+                const inner = node.getElementsByTagName('*');
+                if (els.length + inner.length > FAST_CONTRAST_MAX_ELEMENTS) return;
+                for (let k = 0; k < inner.length; k++) els.push(inner[k]);
+            }
+        }
+        if (!els.length) return;
+        const themeBg = H.parseHexColor && H.parseHexColor(currentTheme.background);
+        if (!themeBg) return;
+        const bgCache = new WeakMap();
+        const dupCache = new WeakMap();
+        const out = [];
+        for (let i = 0; i < els.length; i++) {
+            const el = els[i];
+            let picked = null;
+            try { picked = contrastDecision(el, bgCache, dupCache); } catch (e) {}
+            if (picked == null) continue;
+            const bg = H.effectiveBackground(el, getComputedStyle, currentTheme.background, bgCache);
+            if (!bg || bg.r !== themeBg.r || bg.g !== themeBg.g || bg.b !== themeBg.b) continue;
+            out.push(el, picked);
+        }
+        for (let i = 0; i < out.length; i += 2) {
+            try { writeContrastColor(out[i], out[i + 1]); } catch (e) {}
+        }
+        // Our writes must not come back as the next batch.
+        if (out.length) discardOwnMutationRecords();
+    }
+
+    function isOwnNode(node) {
+        const id = node.id || '';
+        return id.indexOf('aura-') === 0 || node.hasAttribute('data-aura-shadow') || node.hasAttribute('data-aura-iframe');
+    }
+
+    function contrastDecision(el, effectiveBgCache, dupCache) {
+        if (!el || el.nodeType !== 1 || !H || !H.hasPoorContrast || !currentTheme) return null;
+        if (isActiveSplitTheme(currentTheme)) return null;
         const tag = el.tagName;
         // BRIGHT_SKIP_TAGS exists to protect native form-control CHROME
         // (the browser's own checkbox/select/OS-rendered appearance) from
@@ -3465,11 +3517,12 @@
         // TEXTAREA/OPTION and friends): those carry native, OS-rendered, or
         // user-typed content where forcing a color is more likely to look
         // broken than helpful.
-        if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[tag] && tag !== 'BUTTON') return;
-        if (typeof el.className === 'string' && /icon/i.test(el.className)) return;
-        if (H.isStackedDuplicateLabel && H.isStackedDuplicateLabel(el)) return;
+        if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[tag] && tag !== 'BUTTON') return null;
+        if (buttonPaints.has(el)) return null;
+        if (typeof el.className === 'string' && /icon/i.test(el.className)) return null;
+        if (H.isStackedDuplicateLabel && H.isStackedDuplicateLabel(el, dupCache || duplicateLabelCache)) return null;
         let style;
-        try { style = getComputedStyle(el); } catch (e) { return; }
+        try { style = getComputedStyle(el); } catch (e) { return null; }
         // A button whose own visible surface comes from a background-image
         // (a solid-color-simulating gradient — a common flat-button
         // technique) rather than backgroundColor is invisible to
@@ -3491,7 +3544,7 @@
         // elements only, matching the reported bug.
         const isButtonLike = tag === 'BUTTON' || (el.getAttribute && el.getAttribute('role') === 'button');
         if (isButtonLike && H.isGradientBackgroundImage && H.isGradientBackgroundImage(style.backgroundImage)) {
-            return;
+            return null;
         }
         // A decorative shape whose visible fill IS its own `color` via
         // `background-color: currentColor` (a common technique for
@@ -3510,23 +3563,23 @@
         if (rawColor && rawBg
             && rawColor.r === rawBg.r && rawColor.g === rawBg.g && rawColor.b === rawBg.b
             && Math.abs((rawColor.a == null ? 1 : rawColor.a) - (rawBg.a == null ? 1 : rawBg.a)) < 0.01) {
-            return;
+            return null;
         }
         let rect;
-        try { rect = el.getBoundingClientRect(); } catch (e2) { return; }
+        try { rect = el.getBoundingClientRect(); } catch (e2) { return null; }
         if (H.isUnpaintedForContrast && H.isUnpaintedForContrast({
             visibility: style.visibility,
             opacity: style.opacity,
             display: style.display,
             width: rect.width,
             height: rect.height,
-        })) return;
+        })) return null;
         const fg = H.parseCssRgb(style.color);
         const bgParsed = H.effectiveBackground
             ? H.effectiveBackground(el, getComputedStyle, currentTheme.background, effectiveBgCache)
             : (H.parseHexColor && H.parseHexColor(currentTheme.background));
-        if (!fg || !bgParsed) return;
-        if (!H.hasPoorContrast(fg, bgParsed, 3.0)) return;
+        if (!fg || !bgParsed) return null;
+        if (!H.hasPoorContrast(fg, bgParsed, 3.0)) return null;
         const themeText = currentTheme.text || '#ffffff';
         const themeLink = currentTheme.link || '#8ab4f8';
         const isLink = tag === 'A' || (el.closest && el.closest('a'));
@@ -3534,8 +3587,196 @@
         const picked = H.pickReadableAgainstSurface
             ? H.pickReadableAgainstSurface(bgParsed, preferred, 3.0)
             : preferred;
-        el.style.setProperty('color', picked, 'important');
-        contrastModified.add(el);
+        return picked;
+    }
+
+    // 3d-ter. BUTTONS AND STATEFUL CONTROLS
+    // Buttons keep their own fill; their text is made readable against it
+    // (H.buttonPaintDecision). A full-width neutral strip against the theme
+    // is painted as a theme surface instead. Checkbox/radio/switch and
+    // selected controls show their state with their own fill, which the
+    // universal strip leaves alone for them (see stateNot in
+    // getFullStyleSheet); H.stateControlDecision maps a neutral one so on
+    // and off stay distinct. Light DOM and shadow roots both.
+    // button -> { els: [written elements], surface: bool }
+    const buttonPaints = new Map();
+    // element -> true (inline background written by settleStateControls)
+    const stateControlModified = new Set();
+    const BUTTON_MAX_PER_PASS = 400;
+    const BUTTON_MAX_DESCENDANTS = 20;
+    const STATE_CONTROL_MAX_NODES = 40;
+    const STATE_HIGHLIGHT = 'color-mix(in srgb, var(--aura-text) 18%, var(--aura-bg))';
+    const STATE_CONTROL_SELECTOR = '[role="checkbox"], [role="radio"], [role="switch"]';
+
+    function isButtonLikeElement(el) {
+        const tag = el.tagName;
+        if (tag === 'BUTTON') return true;
+        if (tag === 'INPUT') {
+            const t = (el.getAttribute('type') || '').toLowerCase();
+            return t === 'button' || t === 'submit' || t === 'reset';
+        }
+        return el.getAttribute('role') === 'button';
+    }
+
+    function isStateControlElement(el) {
+        const role = el.getAttribute('role');
+        if (role === 'checkbox' || role === 'radio' || role === 'switch') return true;
+        return el.hasAttribute('aria-checked') || el.getAttribute('aria-selected') === 'true';
+    }
+
+    // Walk visitor: nominates only (cheap attribute reads).
+    function visitControlElement(el, buttons, states) {
+        if (!el || el.nodeType !== 1) return;
+        if (isButtonLikeElement(el) || buttonPaints.has(el)) {
+            if (buttons.length < BUTTON_MAX_PER_PASS) buttons.push(el);
+        }
+        if (isStateControlElement(el) || stateControlModified.has(el)) states.push(el);
+    }
+
+    function releaseButtonPaint(btn) {
+        const entry = buttonPaints.get(btn);
+        if (!entry) return;
+        for (let i = 0; i < entry.els.length; i++) {
+            const el = entry.els[i];
+            try {
+                el.style.removeProperty('color');
+                el.style.removeProperty('-webkit-text-fill-color');
+                if (entry.surface && el === btn) {
+                    el.style.removeProperty('background-color');
+                }
+            } catch (e) {}
+        }
+        buttonPaints.delete(btn);
+    }
+
+    function settleButtons(buttons) {
+        if (!buttons.length || !currentTheme || !H || !H.buttonPaintDecision) return;
+        // Lift our previous writes so every read below sees the site's own
+        // paint and text, then decide again (a button's fill can change).
+        for (let i = 0; i < buttons.length; i++) {
+            if (buttonPaints.has(buttons[i])) releaseButtonPaint(buttons[i]);
+        }
+        const paints = readAuthoredPaint(buttons);
+        const vw = passViewport().vw || 1;
+        const decisions = [];
+        for (let i = 0; i < buttons.length; i++) {
+            const b = buttons[i];
+            if (!b.isConnected) continue;
+            let style, rect;
+            try { style = getComputedStyle(b); rect = b.getBoundingClientRect(); } catch (e) { continue; }
+            if (style.display === 'none' || style.visibility === 'hidden' || rect.width < 1 || rect.height < 1) continue;
+            const parent = b.parentElement || (b.getRootNode() && b.getRootNode().host);
+            let pw = vw;
+            try { if (parent) pw = parent.getBoundingClientRect().width || vw; } catch (e) {}
+            const d = H.buttonPaintDecision({
+                fill: H.parseCssRgb(paints[i] && paints[i].bg),
+                gradientStop: H.firstGradientStop(style.backgroundImage),
+                text: H.parseCssRgb(style.color),
+                themeBg: currentTheme.background || '#121212',
+                themeText: currentTheme.text || '#ffffff',
+                widthFrac: rect.width / pw,
+            });
+            if (d.mode === 'none') continue;
+            // Descendants keep their own color (a muted subtitle) unless it
+            // fails against the fill the button ends up with.
+            const fill = d.mode === 'surface'
+                ? H.parseHexColor(currentTheme.background || '#121212')
+                : (H.firstGradientStop(style.backgroundImage) || H.parseCssRgb(paints[i] && paints[i].bg));
+            const els = [b];
+            const inner = b.querySelectorAll('*');
+            for (let k = 0, n = 0; k < inner.length && n < BUTTON_MAX_DESCENDANTS; k++) {
+                if (inner[k] instanceof SVGElement) continue;
+                n++;
+                let c = null;
+                try { c = H.parseCssRgb(getComputedStyle(inner[k]).color); } catch (e) {}
+                if (!c || !fill || H.hasPoorContrast(c, fill, 3.0)) els.push(inner[k]);
+            }
+            decisions.push(b, d, els);
+        }
+        // Writes after all reads (one style recalc).
+        for (let i = 0; i < decisions.length; i += 3) {
+            const b = decisions[i];
+            const d = decisions[i + 1];
+            const els = decisions[i + 2];
+            const surface = d.mode === 'surface';
+            if (surface) b.style.setProperty('background-color', 'var(--aura-elevated)', 'important');
+            for (let k = 0; k < els.length; k++) {
+                els[k].style.setProperty('color', d.color, 'important');
+                els[k].style.setProperty('-webkit-text-fill-color', d.color, 'important');
+            }
+            buttonPaints.set(b, { els, surface });
+        }
+    }
+
+    function revertButtonPaints() {
+        Array.from(buttonPaints.keys()).forEach(releaseButtonPaint);
+        buttonPaints.clear();
+    }
+
+    function settleStateControls(controls) {
+        if (!controls.length || !currentTheme || !H || !H.stateControlDecision) return;
+        const themeBg = currentTheme.background || '#121212';
+        const groups = [];
+        const parts = [];
+        for (let c = 0; c < controls.length; c++) {
+            const ctrl = controls[c];
+            if (!ctrl.isConnected) continue;
+            const nodes = [ctrl];
+            const inner = ctrl.querySelectorAll('*');
+            for (let k = 0; k < inner.length && nodes.length < STATE_CONTROL_MAX_NODES; k++) nodes.push(inner[k]);
+            // Lift our own earlier writes first: the state may have flipped.
+            for (let k = 0; k < nodes.length; k++) {
+                if (stateControlModified.has(nodes[k])) {
+                    nodes[k].style.removeProperty('background-color');
+                    stateControlModified.delete(nodes[k]);
+                }
+            }
+            if (!isStateControlElement(ctrl)) continue;
+            groups.push([ctrl, nodes, parts.length]);
+            for (let k = 1; k < nodes.length; k++) parts.push(nodes[k]);
+        }
+        // The control itself isn't stripped (stateNot); the parts inside it
+        // are, so their fill comes from the authored-paint probe (one batch).
+        const partPaints = parts.length ? readAuthoredPaint(parts) : [];
+        const writes = [];
+        for (let g = 0; g < groups.length; g++) {
+            const [ctrl, nodes, offset] = groups[g];
+            const checked = ctrl.getAttribute('aria-checked');
+            const on = checked === 'true' || checked === 'mixed' || ctrl.getAttribute('aria-selected') === 'true';
+            // Inside a kept (brand) fill the site's own paint stays: a white
+            // check mark on a purple box.
+            const kept = [];
+            for (let k = 0; k < nodes.length; k++) {
+                const el = nodes[k];
+                if (kept.some(x => x !== el && x.contains(el))) continue;
+                let fill;
+                try {
+                    fill = H.parseCssRgb(k === 0 ? getComputedStyle(el).backgroundColor : (partPaints[offset + k - 1] || {}).bg);
+                } catch (e) { continue; }
+                if (!fill || fill.a < 0.5) continue;
+                const d = H.stateControlDecision({ fill, on, themeBg });
+                if (d === 'keep') {
+                    kept.push(el);
+                    // A part's own fill was stripped: put the authored one back.
+                    if (k > 0) writes.push(el, 'rgba(' + fill.r + ', ' + fill.g + ', ' + fill.b + ', ' + fill.a + ')');
+                } else if (d === 'highlight') {
+                    writes.push(el, STATE_HIGHLIGHT);
+                } else if (k === 0) {
+                    writes.push(el, 'transparent');
+                }
+            }
+        }
+        for (let k = 0; k < writes.length; k += 2) {
+            writes[k].style.setProperty('background-color', writes[k + 1], 'important');
+            stateControlModified.add(writes[k]);
+        }
+    }
+
+    function revertStateControls() {
+        stateControlModified.forEach(el => {
+            try { el.style.removeProperty('background-color'); } catch (e) {}
+        });
+        stateControlModified.clear();
     }
 
     // 3e. SPA SHELL / GRADIENT SAFETY NET
@@ -4102,6 +4343,7 @@
         const gen = walkGeneration;
         ignoreMutations = true;
         safePass(() => promoteEngineStylesheet());
+        safePass(() => syncRootSurfaces());
 
         // Collected once and shared across every step below (previously each
         // of the 7 full-element walks re-queried `root.querySelectorAll('*')`
@@ -4113,7 +4355,16 @@
         // engine's own <style>, ensurePseudoBgStyleEl appending an
         // #aura-pseudo-overrides <style> to <head>) never touch elements any
         // pass below cares about.
+        // A full-document pass covers every mutation queued before it
+        // collects its elements (parser records from before the theme was
+        // applied, for one): they must not start another pass.
+        if (root === document.documentElement) {
+            pendingMutationRecords = [];
+            if (mutationDebounceTimer) { clearTimeout(mutationDebounceTimer); mutationDebounceTimer = null; }
+        }
         const elements = collectElements(root);
+        if (root === document.documentElement) fullPassCollected = true;
+        const capped = elements.length > WALK_SLICE ? elements.slice(0, WALK_SLICE) : elements;
         DBG?.passElements(elements.length);
         // Shared across every isLikelyModalCard call this invocation makes
         // (visitOverlayModalWalk/
@@ -4124,6 +4375,8 @@
         const overlaySeen = new Set();
         const iconCandidates = [];
         const popoverCandidates = [];
+        const buttonCandidates = [];
+        const stateCandidates = [];
         const skipContrast = isActiveSplitTheme(currentTheme);
         let effectiveBgCache = null;
 
@@ -4178,16 +4431,23 @@
             // white) fill on one of these wrappers sits on top of the
             // correctly-themed html/body and reads as "the whole page is
             // white".
-            () => rethemeOpaqueShells(root, elements),
-            () => clearFullBleedPseudoBackgrounds(root, elements),
-            () => clearLoaderBackgroundImages(root, elements),
-            () => rethemeLogoContrast(root, elements),
-            () => rethemeInlineHighlights(root, elements),
+            // The per-element pre-passes run as sliced item steps (they
+            // were single functions looping over every element: a 40-100 ms
+            // task on a 4600-element page, the longest Aura task).
+            { items: capped, visit: el => visitShellElement(el, vh, vw) },
+            { items: capped, visit: el => visitPseudoBgElement(el, vh, vw) },
+            () => recheckTracked(loaderBgModified, visitLoaderBgElement),
+            { items: capped, visit: visitLoaderBgElement },
+            () => recheckTracked(logoContrastModified, visitLogoContrastElement),
+            { items: capped, visit: visitLogoContrastElement },
+            () => recheckTracked(inlineHighlightModified, visitInlineHighlightElement),
+            { items: capped, visit: visitInlineHighlightElement },
             () => reopaqueOverlays(root),
             () => paintGoogleImagesViewer(root),
             () => reopaqueTopChrome(root),
             () => restoreAuthoredChromeOpacity(root),
-            () => reopaqueExpandedNavMenuPanels(root, elements),
+            () => recheckTracked(navMenuPanelOpaqueModified, el => visitNavMenuPanelElement(el, vh, vw)),
+            { items: capped, visit: el => visitNavMenuPanelElement(el, vh, vw) },
             () => rethemeAskAnythingComposer(root),
             () => rethemeGoogleAiChatSurface(root),
             {
@@ -4199,9 +4459,12 @@
                     visitStickyElement(el, vh, vw, modalCardCache);
                     visitPopoverElement(el, vh, vw, popoverCandidates);
                     visitFloatingIconControlElement(el, vh, vw, iconCandidates);
+                    visitControlElement(el, buttonCandidates, stateCandidates);
                 },
             },
-            ...smallSurfaceSteps(iconCandidates, popoverCandidates)
+            ...smallSurfaceSteps(iconCandidates, popoverCandidates),
+            () => settleButtons(buttonCandidates),
+            () => settleStateControls(stateCandidates)
         );
         // Contrast must run after bright/shell clears so muted spans are
         // judged against the theme background, not a still-white ancestor.
@@ -4211,7 +4474,7 @@
                 // background-mutating step above has already run — see
                 // effectiveBackground's doc comment in themeHeuristics.js
                 // for why that ordering is what makes caching safe here.
-                () => { effectiveBgCache = new WeakMap(); },
+                () => { effectiveBgCache = new WeakMap(); duplicateLabelCache = new WeakMap(); },
                 { items: elements, visit: el => visitContrastElement(el, effectiveBgCache) }
             );
         }
@@ -4359,7 +4622,9 @@
         } catch (eSafeFrame) {}
         if (!theme || theme.enabled === false) {
             lastAppliedThemeKey = '';
-            return removeTheme();
+            removeTheme();
+            writeThemeCache(null);
+            return;
         }
         const themeKey = [
             theme.background, theme.text, theme.link,
@@ -4375,11 +4640,12 @@
         // native-dark-mode flip — before deciding what this call should do.
         // The two modes are mutually exclusive and must never blend
         // leftover state from one into the other.
-        removeTheme();
+        removeTheme(true);
 
         lastAppliedThemeKey = themeKey;
         currentTheme = theme;
         cancelWalkSlices();
+        writeThemeCache(theme);
 
         // Opt-in Dark Mode toggle: prefer the site's own native dark mode
         // over Aura's palette where one is confidently detected (AMP has
@@ -4392,6 +4658,7 @@
             if (applyNativeDarkModeIfEnabled()) {
                 const earlyShield = document.getElementById('aura-early-shield');
                 if (earlyShield) earlyShield.remove();
+                removeSheetCopies();
                 return;
             }
         }
@@ -4407,14 +4674,21 @@
             (document.head || document.documentElement).appendChild(styleEl);
             const earlyShield = document.getElementById('aura-early-shield');
             if (earlyShield) earlyShield.remove();
+            removeSheetCopies();
             return;
         }
 
-        styleEl.textContent = getFullStyleSheetCached(theme, themeKey)
-            + (IS_AMP_DOCUMENT ? getAmpDocumentOverrideCss() : '');
+        const css = getFullStyleSheetCached(theme, themeKey);
+        styleEl.textContent = css + (IS_AMP_DOCUMENT ? getAmpDocumentOverrideCss() : '');
         (document.head || document.documentElement).appendChild(styleEl);
+        rewriteSheetCopies(css);
 
         applyBackgroundColors(theme);
+        syncThemeColorMetas();
+        // The records queued now are this apply's own writes (sheet, root
+        // styles, meta), plus parser records the full pass scheduled below
+        // covers anyway; they must not start a second full pass.
+        discardOwnMutationRecords();
         DBG?.cssApplied();
         const earlyShield = document.getElementById('aura-early-shield');
         if (earlyShield) earlyShield.remove();
@@ -4425,6 +4699,16 @@
             return;
         }
         scheduleSafetyPasses();
+    }
+
+    // A cached theme is applied at document_start, before <body> and the
+    // site's theme-color metas exist; every pass finishes those.
+    function syncRootSurfaces() {
+        if (!currentTheme || nativeDarkModeApplied) return;
+        syncThemeColorMetas();
+        if (document.body && !document.body.style.getPropertyValue('background-color')) {
+            applyBackgroundColors(currentTheme);
+        }
     }
 
     function scheduleSafetyPasses() {
@@ -4447,9 +4731,18 @@
         }
     }
 
-    function removeTheme() {
+    // keepSheetCopies: applyTheme is about to rewrite the shadow/iframe
+    // copies with the new theme's sheet, so they aren't removed (removing
+    // them would leave those roots unthemed until a pass re-adds them).
+    function removeTheme(keepSheetCopies) {
         lastAppliedThemeKey = '';
         styleSheetCacheKey = null;
+        // Passes, observers and listeners all stop on a null theme; without
+        // this, mutation-triggered passes kept painting (and re-adding
+        // sheet copies) with the old theme after it was turned off.
+        currentTheme = null;
+        fullPassCollected = false;
+        restoreThemeColorMetas();
         revertNativeDarkMode();
         cancelWalkSlices();
         if (safetyPassesRaf) {
@@ -4570,17 +4863,125 @@
         inlineHighlightModified.clear();
         revertAskAnythingComposer();
         revertGoogleAiChatSurface();
-        document.querySelectorAll('style[data-aura-shadow]').forEach(s => {
+        revertButtonPaints();
+        revertStateControls();
+        if (!keepSheetCopies) removeSheetCopies();
+    }
+
+    function removeSheetCopies() {
+        shadowCopyWatchers.forEach(mo => { try { mo.disconnect(); } catch (e) {} });
+        shadowCopyWatchers.clear();
+        auraSheetCopies.forEach(s => {
             try { s.remove(); } catch (e) {}
         });
-        sameOriginIframeModified.forEach(el => {
+        auraSheetCopies.clear();
+        sameOriginIframeModified.clear();
+    }
+
+    // A component that re-renders with shadowRoot.innerHTML (or
+    // replaceChildren) deletes our sheet copy along with its old content,
+    // and the document observer never sees inside shadow roots, so the
+    // content stayed unthemed (Reddit's draft sheet). Watch each shadow
+    // root's direct children; put the copy back in the same microtask and
+    // queue a pass scoped to the host for the new content.
+    const shadowCopyWatchers = new Map();
+    function watchShadowCopy(host, shadow) {
+        if (shadowCopyWatchers.has(shadow)) return;
+        // SPAs drop shadow hosts all the time; don't keep them alive.
+        if (shadowCopyWatchers.size > 500) {
+            shadowCopyWatchers.forEach((mo, sr) => {
+                if (!sr.host || !sr.host.isConnected) { mo.disconnect(); shadowCopyWatchers.delete(sr); }
+            });
+        }
+        try {
+            const mo = new MutationObserver(() => {
+                if (!currentTheme || !host.isConnected) return;
+                if (shadow.querySelector(':scope > style[data-aura-shadow]')) return;
+                const style = document.createElement('style');
+                style.setAttribute('data-aura-shadow', 'true');
+                style.textContent = getFullStyleSheetCached(currentTheme, lastAppliedThemeKey);
+                shadow.appendChild(style);
+                auraSheetCopies.add(style);
+                mo.takeRecords();
+                pendingMutationRecords.push({ target: host, addedNodes: [], removedNodes: [] });
+                scheduleSafetyPassDispatch();
+            });
+            mo.observe(shadow, { childList: true });
+            shadowCopyWatchers.set(shadow, mo);
+        } catch (e) {}
+    }
+
+    // A theme change rewrites every copy in the same task as the main sheet
+    // (it used to wait for the next pass to reach each shadow root).
+    function rewriteSheetCopies(css) {
+        auraSheetCopies.forEach(s => {
+            if (!s.isConnected) { auraSheetCopies.delete(s); return; }
+            try { if (s.textContent !== css) s.textContent = css; } catch (e) {}
+        });
+    }
+
+    // Safari tints its toolbar, the status bar and the area around the page
+    // from the first theme-color meta whose media matches. Sites often ship
+    // a pair split by prefers-color-scheme; each one gets the theme color,
+    // or the one matching the OS appearance keeps the site's color under
+    // Aura's theme (the "old theme in the bottom strip" after a switch).
+    // Runs on apply and at the start of every pass (site metas parse after
+    // document_start).
+    function syncThemeColorMetas() {
+        if (!currentTheme || nativeDarkModeApplied) return;
+        const color = themeColorFor(currentTheme);
+        try {
+            const metas = document.querySelectorAll('meta[name="theme-color"]');
+            let own = null;
+            for (let i = 0; i < metas.length; i++) {
+                const m = metas[i];
+                if (m.id === 'aura-theme-color') { own = m; continue; }
+                if (!themeColorMetaOriginals.has(m)) themeColorMetaOriginals.set(m, m.getAttribute('content'));
+                if (m.getAttribute('content') !== color) m.setAttribute('content', color);
+            }
+            if (!own) {
+                own = document.createElement('meta');
+                own.id = 'aura-theme-color';
+                own.setAttribute('name', 'theme-color');
+                (document.head || document.documentElement).appendChild(own);
+            }
+            if (own.getAttribute('content') !== color) own.setAttribute('content', color);
+        } catch (e) {}
+    }
+
+    function restoreThemeColorMetas() {
+        themeColorMetaOriginals.forEach((value, m) => {
             try {
-                const doc = el.contentDocument;
-                const s = doc && doc.querySelector('style[data-aura-iframe]');
-                if (s) s.remove();
+                if (value == null) m.removeAttribute('content');
+                else m.setAttribute('content', value);
             } catch (e) {}
         });
-        sameOriginIframeModified.clear();
+        themeColorMetaOriginals.clear();
+        const own = document.getElementById('aura-theme-color');
+        if (own) own.remove();
+    }
+
+    function themeColorFor(theme) {
+        if (isActiveSplitTheme(theme)) {
+            return Split.parseSplitColors(theme.backgroundGradient || theme).dark;
+        }
+        return theme.background || '#121212';
+    }
+
+    // Per-site theme cache (themeResolve.js): written after every apply so
+    // the next load of this site applies at document_start. Top frame only
+    // (see injected.js readThemeCache).
+    function writeThemeCache(theme) {
+        if (window.top !== window || IS_AMP_CONSENT_FRAME || !Resolve || !Resolve.serializeThemeCache) return;
+        try {
+            const value = Resolve.serializeThemeCache(theme);
+            const key = Resolve.THEME_CACHE_KEY;
+            if (value == null) {
+                if (window.localStorage.getItem(key) != null) window.localStorage.removeItem(key);
+            } else if (window.localStorage.getItem(key) !== value) {
+                window.localStorage.setItem(key, value);
+            }
+        } catch (e) {}
     }
 
     // Same-origin iframes (help panels, embedded settings, same-origin
@@ -4612,6 +5013,7 @@
             }
             style.textContent = getFullStyleSheetCached(currentTheme, lastAppliedThemeKey);
             sameOriginIframeModified.add(iframeEl);
+            auraSheetCopies.add(style);
             // Deliberately just the stylesheet — an earlier version also
             // re-ran the sticky/overlay/nav-menu/top-chrome JS passes
             // against the iframe's own document here (mirroring the shadow-
@@ -4645,12 +5047,15 @@
             // case, since most passes are triggered by content
             // mutations, not a theme change.
             if (existingStyle.textContent !== css) existingStyle.textContent = css;
+            auraSheetCopies.add(existingStyle);
         } else {
             const style = document.createElement('style');
             style.setAttribute('data-aura-shadow', 'true');
             style.textContent = css;
             shadow.appendChild(style);
+            auraSheetCopies.add(style);
         }
+        watchShadowCopy(host, shadow);
 
         // The universal stylesheet just injected strips background-color
         // from every layout tag inside this shadow root too — but none
@@ -4674,6 +5079,8 @@
         const shadowModalCardCache = new WeakMap();
         const shadowIcons = [];
         const shadowPopovers = [];
+        const shadowButtons = [];
+        const shadowStates = [];
         return [
             {
                 items: shadowElements,
@@ -4691,9 +5098,12 @@
                     safeVisit(e => visitOverlayModalWalk(e, vh, vw, shadowOverlaySeen, shadowModalCardCache), shadowEl);
                     safeVisit(e => visitPopoverElement(e, vh, vw, shadowPopovers), shadowEl);
                     safeVisit(e => visitFloatingIconControlElement(e, vh, vw, shadowIcons), shadowEl);
+                    safeVisit(e => visitControlElement(e, shadowButtons, shadowStates), shadowEl);
                 },
             },
             ...smallSurfaceSteps(shadowIcons, shadowPopovers),
+            () => settleButtons(shadowButtons),
+            () => settleStateControls(shadowStates),
             // ARIA-role overlay roots (dialog/menu/listbox/aria-modal)
             // get their own direct pass too — visitOverlayModalWalk
             // above only handles the position:fixed/nav-drawer shapes,
@@ -5012,6 +5422,7 @@
                 pseudoBgCleared, pseudoBgNavPanel: pseudoBgNavPanelHosts, loaderBg: loaderBgModified,
                 googleAiChat: googleAiChatModified, logoContrast: logoContrastModified,
                 inlineHighlight: inlineHighlightModified,
+                button: buttonPaints, stateControl: stateControlModified,
             },
             explain: explainLayer,
         });
@@ -5021,27 +5432,26 @@
             if (H && H.isAdNetworkHost && H.isAdNetworkHost(host)) return;
         } catch (eHost) {}
 
-        let data = null;
-        try {
-            data = await (window.__AURA_STORAGE_PROMISE__ || browser.storage.local.get('tintThemeData'));
-        } catch (eStorage) {}
-        DBG?.storageResolved();
-        const td = data?.tintThemeData;
-        if (td) {
-            const theme = resolveTheme(td);
-            if (theme) {
-                window.__TINT_THEME_DATA__ = td;
-                window.__TINT_THEME_DATA__._ready = true;
-                window.__TINT_THEME__ = theme;
-                applyTheme(theme);
-            }
-        } else {
-            // Cold cache (fresh install, or the background page hasn't
-            // written yet): ask it once, now. background.js also syncs on
-            // its own load; the storage write that follows applies the theme
-            // through onChanged. A merely slow read never gets here, so it
-            // no longer triggers an extra native round trip.
-            requestThemeUpdate();
+        // Safari runs document_start scripts after <html> exists; other
+        // engines (and the harness's Chromium) can run them before it.
+        if (!document.documentElement) {
+            await new Promise(resolve => {
+                const mo = new MutationObserver(() => {
+                    if (!document.documentElement) return;
+                    mo.disconnect();
+                    resolve();
+                });
+                mo.observe(document, { childList: true });
+            });
+        }
+
+        // Per-site theme cache (read by injected.js): apply it now, at
+        // document_start, through the same applyTheme the storage read uses
+        // below, so the first frame is already themed.
+        const cachedTheme = window.__AURA_CACHED_THEME__;
+        if (cachedTheme) {
+            window.__TINT_THEME__ = cachedTheme;
+            applyTheme(cachedTheme);
         }
 
         // Attach custom event listener (only once)
@@ -5062,6 +5472,7 @@
                     // no DOM work.
                     DBG?.mutations(mutationsList);
                     if (layerPaints.size) repairRewrittenLayerPaints(mutationsList);
+                    contrastAddedNodes(mutationsList);
                     for (let i = 0; i < mutationsList.length; i++) {
                         pendingMutationRecords.push(mutationsList[i]);
                     }
@@ -5078,7 +5489,7 @@
                     // class, so without it every transition-gated pass
                     // (nav-drawer, nav-menu-panel, overlay) never re-runs
                     // when one of these components opens.
-                    attributeFilter: ['style', 'class', 'hidden', 'open', 'aria-expanded', 'aria-hidden', 'data-state'],
+                    attributeFilter: ['style', 'class', 'hidden', 'open', 'aria-expanded', 'aria-hidden', 'data-state', 'aria-checked', 'aria-selected'],
                 });
             }
 
@@ -5187,6 +5598,30 @@
                     queueScopedSafetyPass(event);
                 }, { capture: true, passive: true });
             }
+        }
+
+        let data = null;
+        try {
+            data = await (window.__AURA_STORAGE_PROMISE__ || browser.storage.local.get('tintThemeData'));
+        } catch (eStorage) {}
+        DBG?.storageResolved();
+        const td = data?.tintThemeData;
+        if (td) {
+            // Reconcile: same theme as the cached apply → applyTheme is a
+            // no-op; changed → reapplied (and the cache rewritten); off or
+            // nothing for this page → removed (and the cache deleted).
+            const theme = resolveTheme(td);
+            window.__TINT_THEME_DATA__ = td;
+            window.__TINT_THEME_DATA__._ready = true;
+            window.__TINT_THEME__ = theme;
+            applyTheme(theme);
+        } else {
+            // Cold cache (fresh install, or the background page hasn't
+            // written yet): ask it once, now. background.js also syncs on
+            // its own load; the storage write that follows applies the theme
+            // through onChanged. A merely slow read never gets here, so it
+            // no longer triggers an extra native round trip.
+            requestThemeUpdate();
         }
 
         // Re-evaluate time-based day/night every minute so themes flip at

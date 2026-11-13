@@ -2052,21 +2052,34 @@
         return !!SPA_SHELL_IDS[String(id)];
     }
 
-    function isStackedDuplicateLabel(el) {
+    // `cache` (optional, a WeakMap kept for one pass): parent -> counts of
+    // its children's short texts, built once per parent. Without it every
+    // child re-reads every sibling's textContent, which is O(n^2) on a wide
+    // list (1500 rows cost the contrast walk seconds).
+    function isStackedDuplicateLabel(el, cache) {
         if (!el || !el.parentElement || el.nodeType !== 1) return false;
         var text = '';
         try { text = String(el.textContent || '').replace(/\s+/g, ' ').trim(); } catch (e) { return false; }
         if (!text || text.length > 96) return false;
-        var kids = el.parentElement.children;
+        var parent = el.parentElement;
+        var kids = parent.children;
         if (!kids || kids.length < 2) return false;
-        var matches = 0;
-        for (var i = 0; i < kids.length; i++) {
-            var t = '';
-            try { t = String(kids[i].textContent || '').replace(/\s+/g, ' ').trim(); } catch (e2) { continue; }
-            if (t === text) matches++;
-            if (matches >= 2) return true;
+        var counts = cache ? cache.get(parent) : null;
+        if (!counts) {
+            counts = new Map();
+            for (var i = 0; i < kids.length; i++) {
+                var t = '';
+                try { t = String(kids[i].textContent || ''); } catch (e2) { continue; }
+                // Only short texts can match (text.length <= 96 above);
+                // skip normalizing long ones.
+                if (t.length > 4096) continue;
+                t = t.replace(/\s+/g, ' ').trim();
+                if (!t || t.length > 96) continue;
+                counts.set(t, (counts.get(t) || 0) + 1);
+            }
+            if (cache) cache.set(parent, counts);
         }
-        return false;
+        return (counts.get(text) || 0) >= 2;
     }
 
     /**
@@ -2118,6 +2131,79 @@
     function isCustomLayoutElement(info) {
         if (!info || !isCustomElementTag(info.tag)) return false;
         return isLargeLayoutShell(info) || isLargeLayoutNode(info);
+    }
+
+    /** First color stop of a CSS gradient (computed rgb()/rgba() or hex), or null. */
+    function firstGradientStop(value) {
+        if (!isGradientBackgroundImage(value)) return null;
+        var s = String(value);
+        var m = /rgba?\([^)]*\)/i.exec(s);
+        if (m) return parseCssRgb(m[0]);
+        var h = /#[0-9a-f]{3,8}\b/i.exec(s);
+        if (h) {
+            var c = parseHexColor(h[0]);
+            return c ? { r: c.r, g: c.g, b: c.b, a: 1 } : null;
+        }
+        return null;
+    }
+
+    // A fill is "against" the theme when it sits on the other side of
+    // light/dark from the theme background (a white button on a dark
+    // theme); "neutral" when it has little color (white/gray/black, or a
+    // pale tonal tint like Material's #e8def8), so it reads as a surface
+    // rather than a brand color (#673ab7 has chroma 125).
+    var CONTROL_NEUTRAL_MAX_CHROMA = 40;
+    function fillAgainstTheme(fill, themeBgHex) {
+        if (!fill) return false;
+        var themeLight = isThemeBackgroundLight(themeBgHex);
+        var L = relativeLuminance(fill.r, fill.g, fill.b);
+        return themeLight ? L < 0.2 : L > 0.45;
+    }
+    function isNeutralFill(fill) {
+        if (!fill) return false;
+        return Math.max(fill.r, fill.g, fill.b) - Math.min(fill.r, fill.g, fill.b) <= CONTROL_NEUTRAL_MAX_CHROMA;
+    }
+
+    /**
+     * Buttons keep their own fill; what changes is decided from it (the
+     * authored background color, or a gradient's first stop):
+     *   'none'    no opaque fill (the text sits on the page: the contrast
+     *             pass owns it), or the text already reads on the fill
+     *   'surface' a full-width neutral fill against the theme (a white
+     *             "See more" strip on a dark theme): paint it as a theme
+     *             surface with theme text
+     *   'text'    keep the fill, set a readable text color (`color`)
+     * info: { fill, gradientStop, text, themeBg, themeText, widthFrac }
+     */
+    function buttonPaintDecision(info) {
+        if (!info) return { mode: 'none' };
+        // A gradient paints over the background color (often the UA's
+        // ButtonFace on a <button>), so its first stop is the visible fill.
+        var stop = info.gradientStop && info.gradientStop.a >= 0.5 ? info.gradientStop : null;
+        var fill = stop || (info.fill && info.fill.a >= 0.5 ? info.fill : null);
+        if (!fill) return { mode: 'none' };
+        if (!stop && info.widthFrac >= 0.8 && isNeutralFill(fill) && fillAgainstTheme(fill, info.themeBg)) {
+            return { mode: 'surface', color: info.themeText };
+        }
+        var text = info.text;
+        if (text && !hasPoorContrast(text, fill, 3.0)) return { mode: 'none' };
+        return { mode: 'text', color: pickReadableAgainstSurface(fill, info.themeText, 3.0) };
+    }
+
+    /**
+     * Checkbox/radio/switch/selected controls show their state with their
+     * own fill, which the universal strip leaves alone for them. A brand
+     * (colored) fill is kept. A neutral fill against the theme (a white
+     * unchecked box, a light-gray selected chip on a dark theme) becomes:
+     *   'highlight' when the control is on (checked/selected): a theme
+     *               highlight, so on and off stay distinct
+     *   'clear'     when it's off: transparent, like any stripped surface
+     *   'keep'      otherwise
+     */
+    function stateControlDecision(info) {
+        if (!info || !info.fill || info.fill.a < 0.5) return 'keep';
+        if (!isNeutralFill(info.fill) || !fillAgainstTheme(info.fill, info.themeBg)) return 'keep';
+        return info.on ? 'highlight' : 'clear';
     }
 
     function isGradientBackgroundImage(value) {
@@ -2435,6 +2521,9 @@
         isLargeLayoutNode: isLargeLayoutNode,
         isCustomElementTag: isCustomElementTag,
         isStackedDuplicateLabel: isStackedDuplicateLabel,
+        firstGradientStop: firstGradientStop,
+        buttonPaintDecision: buttonPaintDecision,
+        stateControlDecision: stateControlDecision,
         isUnpaintedForContrast: isUnpaintedForContrast,
         isThemeBackgroundLight: isThemeBackgroundLight,
         isCustomLayoutElement: isCustomLayoutElement,

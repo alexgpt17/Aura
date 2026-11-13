@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>why is the sky blue - Google Search</title>
+<!--
+  Offline stand-in for Google AI Mode / AI Overview (TEST_SITES Type-2, G-1,
+  G-2). Served as https://www.google.com/… so the google.com SITE_FIXES and
+  Google-only passes run. Shape, not content:
+    - an AI Overview inside #rso: a "Show more" collapse fade (an empty div
+      followed by a sibling holding [aria-controls="m-x-content"]) and the
+      expanded #m-x-content
+    - an AI Mode answer card: hashed-class white surfaces, paragraphs and
+      lists, and the "AI responses may include mistakes." disclaimer leaf
+      the engine anchors on. It streams: a word every 50 ms for 4 s, then a
+      paragraph every 300 ms until 6 s (Google's own streaming render)
+    - a fixed bottom composer: outer fixed bar > rounded pill (#f0f4f9) >
+      42 px inner sliver > textarea[aria-label="Ask anything"], plus
+      +/mic/send icon buttons. Every keystroke auto-grows the textarea
+      (inline height) and toggles classes on the pill and the send button,
+      the way Google's composer mutates on input
+    - an Images-viewer-shaped [aria-modal] sheet, hidden, plus #islrg (the
+      body:has() rules key on these)
+-->
+<style>
+  body { margin: 0; font: 16px arial, sans-serif; background: #fff; color: #1f1f1f; }
+  .hdr { padding: 12px 16px; border-bottom: 1px solid #ecedef; display: flex; gap: 8px; }
+  .hdr .q { flex: 1; padding: 10px 14px; border-radius: 22px; background: #fff; box-shadow: 0 1px 6px rgba(32,33,36,.28); }
+  #rso { padding: 0 16px 140px; }
+  .Kx9p { margin: 12px 0; padding: 14px; border-radius: 16px; background: #fff; border: 1px solid #e3e3e3; }
+  .Kx9p h3 { margin: 0 0 8px; font-size: 18px; }
+  .fade { height: 60px; margin-top: -60px; position: relative; background-image: linear-gradient(rgba(255,255,255,0), #fff); }
+  .more { text-align: center; }
+  .more [aria-controls] { display: inline-block; padding: 8px 18px; border-radius: 18px; background: #f0f4f9; color: #0b57d0; }
+  .mZ3f { margin: 16px 0; padding: 16px; border-radius: 20px; background: #f8fafd; }
+  .mZ3f .bub { margin: 0 0 12px auto; max-width: 70%; padding: 10px 14px; border-radius: 18px; background: #e9eef6; }
+  .mZ3f ul { padding-left: 20px; }
+  .mZ3f .chip { display: inline-block; margin: 4px 4px 0 0; padding: 6px 12px; border-radius: 14px; background: #fff; border: 1px solid #c4c7c5; font-size: 14px; }
+  .mZ3f .disc { margin-top: 12px; font-size: 12px; color: #444746; }
+  .cbar { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 12px 24px; background: #fff; }
+  .pill { display: flex; align-items: flex-end; gap: 6px; padding: 6px 8px; border-radius: 28px; background: #f0f4f9; }
+  .pill.focused { background: #e9eef6; }
+  .sliver { flex: 1; min-height: 42px; display: flex; align-items: center; }
+  .sliver textarea { width: 100%; height: 24px; border: 0; outline: 0; resize: none; font: 16px arial; background: transparent; color: #1f1f1f; }
+  .ib { width: 36px; height: 36px; border: 0; border-radius: 18px; background: transparent; color: #444746; }
+  .ib.send { background: #c2e7ff; color: #001d35; }
+  .ib.send.off { background: transparent; color: #a8abad; }
+  .viewer { position: fixed; inset: 0; background: #fff; display: none; }
+  #islrg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 16px; }
+  #islrg div { height: 80px; border-radius: 8px; background: #dfe3e8; }
+</style>
+</head>
+<body>
+<div class="hdr"><div class="q">why is the sky blue</div></div>
+<div id="rso">
+  <div class="Kx9p">
+    <h3>AI Overview</h3>
+    <div id="m-x-content">
+      <p>The sky is blue because of Rayleigh scattering: air molecules scatter shorter (blue) wavelengths of sunlight much more than longer (red) ones.</p>
+      <p>Violet is scattered even more, but sunlight has less of it and our eyes are less sensitive to it.</p>
+    </div>
+    <div class="fade"></div>
+    <div class="more"><div role="button" aria-controls="m-x-content" aria-expanded="false">Show more</div></div>
+  </div>
+  <div class="mZ3f" id="answer">
+    <div class="bub">why is the sky blue</div>
+    <div class="body"><p id="stream">Sunlight</p></div>
+    <ul><li>Shorter wavelengths scatter more</li><li>Sunsets look red because light crosses more air</li></ul>
+    <span class="chip">Rayleigh scattering</span><span class="chip">Why are sunsets red?</span>
+    <div class="disc">AI responses may include mistakes. Learn more</div>
+  </div>
+  <div id="islrg"><div></div><div></div><div></div><div></div></div>
+</div>
+<div class="viewer" aria-modal="true" role="dialog"><button aria-label="Close">×</button></div>
+<div class="cbar">
+  <div class="pill">
+    <button class="ib" aria-label="Add">+</button>
+    <div class="sliver"><textarea aria-label="Ask anything" placeholder="Ask anything" rows="1"></textarea></div>
+    <button class="ib" aria-label="Voice">🎤</button>
+    <button class="ib send off" aria-label="Send">➤</button>
+  </div>
+</div>
+<script>
+  var words = ' is made of all colors. When it enters the atmosphere, it hits nitrogen and oxygen molecules, which are much smaller than the wavelength of visible light, so they scatter it in every direction; blue light scatters about five times more than red, so the sky looks blue from wherever you stand'.split(' ');
+  var stream = document.getElementById('stream'), body = stream.parentNode, w = 0, t0 = performance.now();
+  var tick = setInterval(function () {
+    if (performance.now() - t0 > 4000 || w >= words.length) {
+      clearInterval(tick);
+      var n = 0;
+      var para = setInterval(function () {
+        body.insertAdjacentHTML('beforeend', '<p><span>Follow-up paragraph ' + (++n) + ' with a <b>bold</b> term and more streamed text.</span></p>');
+        if (performance.now() - t0 > 6000) clearInterval(para);
+      }, 300);
+      return;
+    }
+    var s = document.createElement('span');
+    s.textContent = ' ' + words[w++];
+    stream.appendChild(s);
+  }, 50);
+  var ta = document.querySelector('textarea'), pill = document.querySelector('.pill'), send = document.querySelector('.send');
+  ta.addEventListener('focus', function () { pill.classList.add('focused'); });
+  ta.addEventListener('input', function () {
+    ta.style.height = '24px';
+    ta.style.height = Math.min(120, ta.scrollHeight) + 'px';
+    send.classList.toggle('off', !ta.value);
+    pill.setAttribute('data-len', String(ta.value.length));
+  });
+</script>
+</body>
+</html>

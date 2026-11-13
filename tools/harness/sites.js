@@ -8,6 +8,8 @@
 //             button). First visible match wins; open shadow DOM is pierced.
 //   actions   extra steps after the 5 s screenshot: [{ click }, { wait }]
 //   fixture   true → served offline from fixtures/<id>.html
+//   origin    fixture only: serve it from this origin instead of
+//             https://fixture.aura.test (host-gated engine code runs)
 module.exports = [
     {
         id: 'reddit-post',
@@ -73,4 +75,23 @@ module.exports = [
     { id: 'fixture-airbnb-chips', rows: ['A-4 (synthetic)'], fixture: true },
     { id: 'fixture-popover', rows: ['X-6 (synthetic)'], fixture: true },
     { id: 'fixture-bearbottom-fit', rows: ['B-2 (synthetic)'], fixture: true },
+    // Session 6.
+    { id: 'fixture-theme-color', rows: ['Load-3 (synthetic)'], fixture: true },
+    {
+        id: 'fixture-google-aimode',
+        rows: ['Type-2', 'G-1', 'G-2 (synthetic)'],
+        fixture: true,
+        origin: 'https://www.google.com',
+        type: { selectors: ['textarea[aria-label="Ask anything"]'] },
+    },
+    { id: 'fixture-late-text', rows: ['Load-1 (synthetic, text colors)'], fixture: true },
+    {
+        id: 'fixture-google-aimode-deep',
+        rows: ['Type-2', 'G-2 (synthetic)'],
+        fixture: true,
+        origin: 'https://www.google.com',
+        type: { selectors: ['textarea[aria-label="Ask anything"]'] },
+    },
+    { id: 'fixture-buttons', rows: ['B-1', 'X-6', 'R-3 (synthetic)'], fixture: true },
+    { id: 'fixture-forms', rows: ['F-1 (synthetic)'], fixture: true, origin: 'https://docs.google.com' },
 ];

@@ -39,10 +39,16 @@ The output goes to `out/<timestamp>/`: `report.md`, `results.json`, screenshots 
 --label name         suffix for the output folder
 --no-shots
 --compare out/A out/B   before/after table plus a per-element paint diff
+--keep-storage       localStorage (Aura's per-site theme cache) carries over between
+                     loads of the same site and theme; with --repeat, the first load
+                     is the cold one and medians use the warm loads only
+--scenarios switch   theme-change check (see below)
 ```
 Environment variables:
 - `AURA_EXT_DIR=<Resources dir>` runs another copy of the engine. For A/B runs, point it at a `git worktree` of an older commit.
 - `AURA_HARNESS_BROWSER_PATH` sets a custom browser binary.
+- `AURA_HARNESS_STORAGE_MS=<ms>` delays the stubbed storage read (see Load flash).
+- `AURA_HARNESS_TIMELINE=1` records the color timeline (see below). Off by default: it captures a stack per Aura style write, which slows the engine.
 
 ## Typical session loop
 ```sh
@@ -66,6 +72,22 @@ Replays use the same DOM every time, so paint diffs and timings compare like for
   - `fixture-airbnb-chips`: `a[role=tab]` > transparent 28×28 absolute span > emoji `<video>` (A-4); a chat launcher (transparent square wrapper around a round button); photo controls with a dark scrim and a white disc.
   - `fixture-popover`: a role-less, absolute, z-indexed white tooltip with an arrow over an order timeline, inserted after 1 s (X-6); a transparent caption and badge row as controls.
   - `fixture-bearbottom-fit`: `.ff-backdrop` (fixed, 55% black) > `.ff-modal` (`role=dialog`, white, 76vh), opened after 1 s (B-2 regression guard).
+  - `fixture-theme-color`: two `media=`-split site theme-color metas, inline html + sheet body backgrounds, a short page (the bottom of the screen is the canvas), a shadow host and a same-origin iframe (Load-3, theme switch).
+  - `fixture-late-text`: post cards whose text is in `div`/`span` with authored dark colors, hydrated into the viewport every 100 ms for ~2.5 s, plus 1500 off-screen rows (6-1, text colors catching up).
+  - `fixture-buttons`: Walmart full-width white strip and "Give feedback", Airbnb chips/badge/pill, Amazon gradient "Add to Cart", a Reddit-style draft sheet in a shadow root that re-renders with `innerHTML` (B-1, X-6, R-3).
+  - `fixture-forms`: served as `docs.google.com`. `div[role=checkbox|radio|switch]` whose state is their own fill, `[aria-selected]` tabs, and the "Autosave your work" dialog (F-1).
+  - `fixture-google-aimode`: served as `www.google.com`. AI Overview with the "Show more" fade, an AI Mode answer card that streams, and a fixed composer bar > pill > textarea that mutates on every keystroke (Type-2, G-1, G-2). The Session 5 engine hangs on it (see RELEASE_PLAN Session 6).
+  - `fixture-google-aimode-deep`: the same with the answer card 9 divs deep, like real Google. Use it for typing before/after.
+
+  A fixture can be served from a real site's origin with `origin` in sites.js, so host-gated engine code (SITE_FIXES, Google passes) runs.
+
+## Theme switch (`--scenarios switch`)
+Loads with the run's theme (A), switches storage to the other theme (B) live, reloads with B in storage, then turns the theme off live and reloads. At each step it dumps every surface that can carry a theme color: computed html/body background, `color-scheme`, every theme-color meta, the shield, the main sheet, each shadow-root and iframe sheet copy (by the `--aura-bg` it was built with), the theme cache key, and the mean color of the screen's bottom 60 px. `report.md` has one table per site.
+
+## Color timeline (`AURA_HARNESS_TIMELINE=1`)
+Samples the computed color/background of what's on screen (a 12 × 24 grid of points through `elementsFromPoint`, open shadow roots pierced) every 100 ms for 6 s, and records every Aura inline color/background write with its Aura call chain. `report.md` lists each visible change after the first full pass and the write that caused it ("site" when no Aura write precedes it).
 
 ## Load flash
-`AURA_HARNESS_STORAGE_MS=<ms>` delays the stubbed `storage.local.get` (default 5 ms, a warm cache) to model a cold extension process. `results.json` → `themeTiming` has `firstPaint`, `storageResolved` and `cssApplied`; `cssApplied − firstPaint` is how long the page showed without Aura's stylesheet.
+`AURA_HARNESS_STORAGE_MS=<ms>` delays the stubbed `storage.local.get` (default 5 ms, a warm cache) to model a cold extension process. `results.json` → `themeTiming` has `firstPaint`, `storageResolved` and `cssApplied`; the report's "Unthemed ms" column is `cssApplied − firstPaint` (0 when the sheet landed first): how long the page showed without Aura's stylesheet. With the theme cache, measure the second load: `--keep-storage --repeat 3`.
+
+Note: Chromium runs init scripts before `<html>` exists; Safari runs document_start scripts after it. The engine waits for `<html>` either way.

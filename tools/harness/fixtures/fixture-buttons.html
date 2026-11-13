@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buttons fixture</title>
+<!--
+  Light buttons and pills on a page Aura themes (TEST_SITES B-1, X-6, R-3;
+  RELEASE_PLAN Blocker 5). Shape, not content:
+    - Walmart order page: a full-width white <button> strip ("See more
+      shipping activity", authored dark text) and a white "Give feedback"
+      button whose text is `color: inherit` (it takes the page's text color)
+    - Airbnb: white chip links (<a> pills, link-colored text), a white
+      "Guest favorite" badge (a div) and a "Prices include all fees" pill
+    - Amazon: a gradient "Add to Cart" (the fill is background-image only)
+    - Reddit: a bottom sheet (role=dialog) inside a shadow root with a light
+      "Save" button and a dark "Discard" button, opened after 1 s
+    - a dark authored button (#1f1f1f, white text) that must stay as it is
+-->
+<style>
+  body { margin: 0; font: 15px -apple-system, system-ui, sans-serif; background: #fff; color: #2e2f32; }
+  section { padding: 12px 16px; border-bottom: 1px solid #e5e5e5; }
+  .w-strip { display: block; width: 100%; padding: 14px; border: 0; border-top: 1px solid #e5e5e5; background: #fff; color: #2e2f32; font: inherit; text-align: left; }
+  .fb { padding: 8px 16px; border: 1px solid #74767c; border-radius: 18px; background: #fff; color: inherit; font: inherit; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chips a { padding: 8px 14px; border: 1px solid #ddd; border-radius: 20px; background: #fff; text-decoration: none; }
+  .card { position: relative; height: 160px; border-radius: 12px; background: linear-gradient(135deg, #8e9eab, #eef2f3); }
+  .badge { position: absolute; top: 10px; left: 10px; padding: 4px 10px; border-radius: 12px; background: #fff; color: #222; font-size: 13px; font-weight: 600; }
+  .fees { display: inline-block; margin-top: 10px; padding: 8px 14px; border-radius: 20px; background: #f7f7f7; color: #222; font-size: 14px; }
+  .atc { width: 100%; padding: 10px; border: 0; border-radius: 20px; background-image: linear-gradient(#ffd814, #f7ca00); color: inherit; font: inherit; }
+  .dark-btn { padding: 10px 16px; border: 0; border-radius: 8px; background: #1f1f1f; color: #fff; font: inherit; }
+</style>
+</head>
+<body>
+<section>
+  <h4>Arrives Nov 8</h4>
+  <p>Package 1 of 1</p>
+  <button class="w-strip">See more shipping activity</button>
+</section>
+<section><button class="fb">Give feedback</button></section>
+<section>
+  <div class="chips"><a href="#a">Beachfront</a><a href="#b">Cabins</a><a href="#c">Amazing views</a></div>
+  <div class="card"><div class="badge">Guest favorite</div></div>
+  <div class="fees">Prices include all fees</div>
+</section>
+<section><button class="atc">Add to Cart</button></section>
+<section><button class="dark-btn">Dark authored</button></section>
+<draft-sheet></draft-sheet>
+<script>
+  customElements.define('draft-sheet', class extends HTMLElement {
+    constructor() { super(); this.attachShadow({ mode: 'open' }); }
+    open() {
+      this.shadowRoot.innerHTML =
+        '<style>' +
+        '.sheet{position:fixed;left:0;right:0;bottom:0;padding:16px;border-radius:16px 16px 0 0;background:#fff;box-shadow:0 -2px 12px rgba(0,0,0,.2)}' +
+        '.row{display:flex;gap:8px;margin-top:12px}' +
+        'button{flex:1;padding:10px;border:0;border-radius:20px;font:inherit}' +
+        '.save{background:#e5ebee;color:#0f1a1c}' +
+        '.discard{background:#0a449b;color:#fff}' +
+        '</style>' +
+        '<div class="sheet" role="dialog" aria-modal="true"><b>Save draft?</b><p>You can come back to it later.</p>' +
+        '<div class="row"><button class="save">Save</button><button class="discard">Discard</button></div></div>';
+    }
+  });
+  setTimeout(function () { document.querySelector('draft-sheet').open(); }, 1000);
+</script>
+</body>
+</html>

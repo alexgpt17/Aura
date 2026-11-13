@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en" style="background-color: #fafafa">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1416">
+<title>Theme color fixture</title>
+<!--
+  Every root surface that can carry a theme color, for the theme-switch
+  check (Session 6, "old theme in the back layer"). Shape, not content:
+    - two site theme-color metas split by prefers-color-scheme (Reddit,
+      GitHub and Wikipedia ship this pair); Safari tints its toolbar and the
+      area around the page from the matching one
+    - an inline html background and a sheet body background, both white
+    - short content, so the bottom of the screen is the canvas (html
+      background), like the strip under a short page or the overscroll area
+    - a shadow host with a white card (gets a shadow copy of Aura's sheet)
+    - a same-origin iframe (gets an iframe copy, and runs Aura itself)
+-->
+<style>
+  body { margin: 0; font: 15px -apple-system, system-ui, sans-serif; background: #fff; color: #222; }
+  header { padding: 14px 16px; border-bottom: 1px solid #e5e5e5; }
+  main { padding: 16px; }
+  iframe { width: 100%; height: 120px; border: 0; }
+</style>
+</head>
+<body>
+<header><strong>Settings</strong></header>
+<main>
+  <p>A short page. Everything below the content is the canvas.</p>
+  <shadow-card></shadow-card>
+  <iframe src="fixture-theme-color-frame"></iframe>
+</main>
+<script>
+  customElements.define('shadow-card', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML =
+        '<style>div{padding:12px;border-radius:8px;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.2)}</style>' +
+        '<div><b>Card in a shadow root</b><p>Muted text</p></div>';
+    }
+  });
+</script>
+</body>
+</html>

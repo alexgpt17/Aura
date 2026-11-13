@@ -2365,3 +2365,79 @@ describe('classifyAuthoredPaint', () => {
     expect(H.classifyAuthoredPaint(paint, 'overlay')).toBe(overlay);
   });
 });
+
+describe('isStackedDuplicateLabel with a per-pass cache', () => {
+  const H = require('../ios/TintExtension Extension/Resources/themeHeuristics.js');
+  test('same answers as without the cache, one count per parent', () => {
+    const parent = document.createElement('div');
+    const texts = ['Visit', 'Visit', 'Save', '  Save  ', 'Reply', 'x'.repeat(120), 'x'.repeat(120)];
+    const kids = texts.map(t => { const s = document.createElement('span'); s.textContent = t; parent.appendChild(s); return s; });
+    document.body.appendChild(parent);
+    const cache = new WeakMap();
+    for (const k of kids) expect(H.isStackedDuplicateLabel(k, cache)).toBe(H.isStackedDuplicateLabel(k));
+    expect(H.isStackedDuplicateLabel(kids[0], cache)).toBe(true);
+    expect(H.isStackedDuplicateLabel(kids[2], cache)).toBe(true);
+    expect(H.isStackedDuplicateLabel(kids[4], cache)).toBe(false);
+    expect(H.isStackedDuplicateLabel(kids[5], cache)).toBe(false);
+    expect(cache.has(parent)).toBe(true);
+    parent.remove();
+  });
+});
+
+describe('buttons and stateful controls', () => {
+  const H = require('../ios/TintExtension Extension/Resources/themeHeuristics.js');
+  const rgb = (r, g, b, a = 1) => ({ r, g, b, a });
+  const dark = { themeBg: '#1C1C1E', themeText: '#FFFFFF' };
+  const light = { themeBg: '#F2F2F7', themeText: '#000000' };
+
+  test('firstGradientStop reads computed and hex gradients', () => {
+    expect(H.firstGradientStop('linear-gradient(rgb(255, 216, 20), rgb(247, 202, 0))')).toEqual(rgb(255, 216, 20));
+    expect(H.firstGradientStop('linear-gradient(135deg, #ffd814 0%, #f7ca00 100%)')).toEqual(rgb(255, 216, 20));
+    expect(H.firstGradientStop('url(a.png)')).toBeNull();
+    expect(H.firstGradientStop('none')).toBeNull();
+  });
+
+  test('transparent button: left to the contrast pass', () => {
+    expect(H.buttonPaintDecision({ ...dark, fill: rgb(0, 0, 0, 0), text: rgb(255, 255, 255), widthFrac: 1 }).mode).toBe('none');
+  });
+
+  test('full-width white strip on a dark theme becomes a surface (Walmart "See more")', () => {
+    const d = H.buttonPaintDecision({ ...dark, fill: rgb(255, 255, 255), text: rgb(46, 47, 50), widthFrac: 1 });
+    expect(d).toEqual({ mode: 'surface', color: '#FFFFFF' });
+  });
+
+  test('narrow white button with inherited light text gets dark text (Walmart "Give feedback")', () => {
+    expect(H.buttonPaintDecision({ ...dark, fill: rgb(255, 255, 255), text: rgb(255, 255, 255), widthFrac: 0.3 })).toEqual({ mode: 'text', color: '#000000' });
+  });
+
+  test('light "Save" in a dialog with forced light text (Reddit R-3)', () => {
+    expect(H.buttonPaintDecision({ ...dark, fill: rgb(229, 235, 238), text: rgb(255, 255, 255), widthFrac: 0.45 }).mode).toBe('text');
+  });
+
+  test('gradient CTA uses its first stop and is never a surface (Amazon "Add to Cart")', () => {
+    const d = H.buttonPaintDecision({ ...dark, fill: rgb(0, 0, 0, 0), gradientStop: rgb(255, 216, 20), text: rgb(255, 255, 255), widthFrac: 1 });
+    expect(d).toEqual({ mode: 'text', color: '#000000' });
+    // The <button>'s UA ButtonFace under the gradient doesn't count.
+    const e = H.buttonPaintDecision({ ...dark, fill: rgb(107, 107, 107), gradientStop: rgb(255, 216, 20), text: rgb(255, 255, 255), widthFrac: 1 });
+    expect(e).toEqual({ mode: 'text', color: '#000000' });
+  });
+
+  test('readable buttons are left alone, colored full-width buttons stay brand', () => {
+    expect(H.buttonPaintDecision({ ...dark, fill: rgb(31, 31, 31), text: rgb(255, 255, 255), widthFrac: 0.3 }).mode).toBe('none');
+    expect(H.buttonPaintDecision({ ...dark, fill: rgb(10, 68, 155), text: rgb(255, 255, 255), widthFrac: 1 }).mode).toBe('none');
+  });
+
+  test('light theme mirror: dark full-width strip becomes a surface, dark button gets light text', () => {
+    expect(H.buttonPaintDecision({ ...light, fill: rgb(20, 20, 20), text: rgb(0, 0, 0), widthFrac: 0.9 }).mode).toBe('surface');
+    expect(H.buttonPaintDecision({ ...light, fill: rgb(20, 20, 20), text: rgb(0, 0, 0), widthFrac: 0.3 })).toEqual({ mode: 'text', color: '#ffffff' });
+  });
+
+  test('state controls: brand fill kept, neutral fill against the theme mapped by state', () => {
+    expect(H.stateControlDecision({ ...dark, fill: rgb(103, 58, 183), on: true })).toBe('keep');
+    expect(H.stateControlDecision({ ...dark, fill: rgb(255, 255, 255), on: false })).toBe('clear');
+    expect(H.stateControlDecision({ ...dark, fill: rgb(232, 222, 248), on: true })).toBe('highlight');
+    expect(H.stateControlDecision({ ...dark, fill: rgb(40, 40, 40), on: true })).toBe('keep');
+    expect(H.stateControlDecision({ ...light, fill: rgb(30, 30, 30), on: false })).toBe('clear');
+    expect(H.stateControlDecision({ ...dark, fill: null, on: true })).toBe('keep');
+  });
+});

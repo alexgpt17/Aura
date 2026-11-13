@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Late text fixture</title>
+<!--
+  "Text colors catch up 1-2 s late" (Session 6, item 6-1). Shape, not
+  content:
+    - a feed of post cards whose text lives in <div>/<span> with authored
+      dark colors (#0f1a1c title, #3e4a4f meta, #2a3c42 body). Aura's sheet
+      recolors p/li/h1-6/... but not div/span text, so on a dark theme these
+      are fixed by the JS contrast pass only
+    - server-rendered skeleton cards in the viewport, hydrated in place one
+      every 100 ms from 150 ms to ~2.5 s (Reddit/Google render this way),
+      plus a class flip on the feed every 100 ms: a continuous mutation
+      stream with gaps shorter than Aura's 150 ms debounce
+    - ~1500 off-screen filler elements below the fold, so a full pass spans
+      several slices
+-->
+<style>
+  body { margin: 0; font: 15px -apple-system, system-ui, sans-serif; background: #fff; color: #0f1a1c; }
+  .post { margin: 8px; padding: 12px; border-radius: 12px; background: #fff; border: 1px solid #e5ebee; }
+  .post .title { color: #0f1a1c; font-weight: 600; }
+  .post .meta { color: #3e4a4f; font-size: 13px; margin: 4px 0; }
+  .post .body { color: #2a3c42; }
+  .skel { height: 64px; margin: 8px; border-radius: 12px; background: #eef1f3; }
+  .filler div { padding: 2px 8px; color: #2a3c42; }
+</style>
+</head>
+<body>
+<div id="feed"></div>
+<div class="filler" id="filler"></div>
+<script>
+  var feed = document.getElementById('feed');
+  var N = 24;
+  for (var i = 0; i < N; i++) feed.insertAdjacentHTML('beforeend', '<div class="skel" id="s' + i + '"></div>');
+  var html = '';
+  for (var k = 0; k < 1500; k++) html += '<div><span>Older post ' + k + '</span> <span>· 3d</span></div>';
+  document.getElementById('filler').innerHTML = html;
+  var card = function (i) {
+    return '<div class="post"><div class="title">Post title number ' + i + ' about the iPhone</div>' +
+      '<div class="meta"><span>r/iphone</span> · <span>' + (i + 1) + 'h</span> · <span>u/someone</span></div>' +
+      '<div class="body"><span>Body text of the post, which wraps to a second line on a phone screen.</span></div></div>';
+  };
+  var n = 0;
+  setTimeout(function step() {
+    var s = document.getElementById('s' + n);
+    if (s) s.outerHTML = card(n);
+    feed.classList.toggle('h' + (n % 2));
+    n++;
+    if (n < N) setTimeout(step, 100);
+  }, 150);
+</script>
+</body>
+</html>

@@ -101,7 +101,12 @@
 
     // ---- extension API stub --------------------------------------------
 
-    var storageData = cfg.themeData ? { tintThemeData: cfg.themeData } : {};
+    // The switch scenario reloads with different storage: run.js leaves the
+    // replacement theme data in sessionStorage (survives the reload, per tab).
+    var tdOverride = null;
+    try { tdOverride = sessionStorage.getItem('__AH_TD'); } catch (e) {}
+    var startTd = tdOverride ? JSON.parse(tdOverride) : cfg.themeData;
+    var storageData = startTd ? { tintThemeData: startTd } : {};
     var changeListeners = [];
     var STORAGE_DELAY_MS = typeof cfg.storageDelayMs === 'number' ? cfg.storageDelayMs : 5;
     AH.browser = {
@@ -142,6 +147,69 @@
     };
     // Harness-only: swap theme data live (used for the theme-switch check).
     AH.setThemeData = function (td) { return AH.browser.storage.local.set({ tintThemeData: td }); };
+
+    // Every surface that can carry a theme color (theme-switch check).
+    // Sheet copies are identified by the --aura-bg they were built with.
+    AH.surfaces = function () {
+        var de = document.documentElement, b = document.body;
+        var sheetBg = function (s) { var m = s && /--aura-bg:\s*([^;]+);/.exec(s.textContent || ''); return m ? m[1].trim() : (s ? '(no --aura-bg)' : null); };
+        var tally = function (list) { var o = {}; list.forEach(function (v) { o[v] = (o[v] || 0) + 1; }); return o; };
+        var shadowCopies = [];
+        var walk = function (root) {
+            var all = root.querySelectorAll('*');
+            for (var i = 0; i < all.length; i++) {
+                var sr = all[i].shadowRoot;
+                if (!sr) continue;
+                var s = sr.querySelector('style[data-aura-shadow]');
+                shadowCopies.push(s ? sheetBg(s) : 'none');
+                walk(sr);
+            }
+        };
+        walk(document);
+        var iframeCopies = [];
+        Array.prototype.forEach.call(document.querySelectorAll('iframe'), function (f) {
+            try { var d = f.contentDocument; iframeCopies.push(d ? sheetBg(d.querySelector('style[data-aura-iframe]')) || 'none' : 'x-origin'); } catch (e) { iframeCopies.push('x-origin'); }
+        });
+        var cs = getComputedStyle(de), before = getComputedStyle(de, '::before');
+        var shield = document.getElementById('aura-early-shield');
+        return {
+            htmlBg: cs.backgroundColor,
+            htmlBgImage: cs.backgroundImage === 'none' ? '' : cs.backgroundImage.slice(0, 60),
+            colorScheme: cs.colorScheme,
+            htmlInline: de.style.cssText.slice(0, 160),
+            bodyBg: b ? getComputedStyle(b).backgroundColor : null,
+            bodyInline: b ? b.style.cssText.slice(0, 160) : null,
+            htmlBefore: before.content === 'none' ? '' : before.backgroundColor + ' ' + before.backgroundImage.slice(0, 40),
+            themeColorMetas: Array.prototype.map.call(document.querySelectorAll('meta[name="theme-color"]'), function (m) {
+                return (m.getAttribute('media') ? '[' + m.getAttribute('media') + '] ' : '') + m.getAttribute('content');
+            }),
+            shield: shield ? shield.textContent.slice(0, 120) : null,
+            coreSheet: sheetBg(document.getElementById('aura-core-engine')),
+            splitLayer: !!document.getElementById('aura-split-bg'),
+            pseudoSheet: !!document.getElementById('aura-pseudo-overrides'),
+            shadowCopies: tally(shadowCopies),
+            iframeCopies: tally(iframeCopies),
+            cache: (function () { try { return localStorage.getItem('__aura'); } catch (e) { return 'throws'; } })(),
+        };
+    };
+
+    // Mean color of the bottom strip of a screenshot (PNG as base64).
+    AH.meanColor = function (b64) {
+        return new Promise(function (resolve) {
+            var img = new Image();
+            img.onload = function () {
+                var c = document.createElement('canvas');
+                c.width = img.width; c.height = img.height;
+                var g = c.getContext('2d');
+                g.drawImage(img, 0, 0);
+                var d = g.getImageData(0, 0, c.width, c.height).data, r = 0, gg = 0, bb = 0, n = d.length / 4;
+                for (var i = 0; i < d.length; i += 4) { r += d[i]; gg += d[i + 1]; bb += d[i + 2]; }
+                resolve('rgb(' + Math.round(r / n) + ', ' + Math.round(gg / n) + ', ' + Math.round(bb / n) + ')');
+            };
+            img.onerror = function () { resolve(null); };
+            img.src = 'data:image/png;base64,' + b64;
+        });
+    };
 
     // ---- AuraDebug-compatible hooks (content.js calls DBG?.x()) ----------
 
@@ -226,6 +294,111 @@
     };
 
     if (!isTop) return;
+
+    // ---- color timeline (6-1, opt-in: cfg.timeline) ------------------------
+    // Every Aura inline-style write (element, property, Aura call chain) plus
+    // the viewport's computed color/background sampled every 100 ms for the
+    // first 6 s. run.js matches each late visible change to the write that
+    // caused it. Stack capture per write is slow, so timing runs leave it off.
+    if (cfg.timeline && cfg.themed) {
+        AH.writes = [];
+        AH.colorChanges = [];
+        var declOwner = new WeakMap();
+        [HTMLElement.prototype, SVGElement.prototype].forEach(function (proto) {
+            var d = Object.getOwnPropertyDescriptor(proto, 'style') || Object.getOwnPropertyDescriptor(Element.prototype, 'style');
+            if (!d || !d.get) return;
+            Object.defineProperty(proto, 'style', {
+                configurable: true, enumerable: d.enumerable, set: d.set,
+                get: function () { var s = d.get.call(this); try { declOwner.set(s, this); } catch (e) {} return s; },
+            });
+        });
+        var auraChain = function () {
+            var st = '';
+            try { st = new Error().stack || ''; } catch (e) {}
+            var out = [];
+            var re = /at (?:Object\.)?([\w$.]+) \(aura\/(?!probe)[\w.]+:\d+/g, m;
+            while ((m = re.exec(st)) && out.length < 4) {
+                if (/^(safePass|safeVisit|slice|runSteps|setProperty|removeProperty)$/.test(m[1])) continue;
+                out.push(m[1]);
+            }
+            return out.length ? out.join('<') : null;
+        };
+        var CSD = CSSStyleDeclaration.prototype;
+        ['setProperty', 'removeProperty'].forEach(function (name) {
+            var orig = CSD[name];
+            CSD[name] = function (prop) {
+                var el = declOwner.get(this);
+                if (el && AH.writes.length < 200000 && /color|background/.test(String(prop))) {
+                    var chain = auraChain();
+                    if (chain) AH.writes.push({ t: now(), el: el, prop: String(prop), chain: chain });
+                }
+                return orig.apply(this, arguments);
+            };
+        });
+        var last = new Map();
+        // What's on screen, from a 12 x 24 grid of points (elementsFromPoint
+        // returns every element stacked at a point, so text, its card and
+        // the bars above it are all sampled); open shadow roots are
+        // pierced. A full-document scan every 100 ms delayed Aura's own
+        // passes by seconds on big fixtures.
+        var onScreen = function () {
+            var set = new Set(), vh = innerHeight, vw = innerWidth;
+            var add = function (root, x, y, depth) {
+                var list = root.elementsFromPoint(x, y);
+                for (var i = 0; i < list.length; i++) {
+                    var el = list[i];
+                    if (set.has(el)) continue;
+                    set.add(el);
+                    if (el.shadowRoot && depth < 4) add(el.shadowRoot, x, y, depth + 1);
+                }
+            };
+            for (var gy = 0; gy < 24; gy++) for (var gx = 0; gx < 12; gx++) {
+                try { add(document, (gx + 0.5) * vw / 12, (gy + 0.5) * vh / 24, 0); } catch (e) {}
+            }
+            return set;
+        };
+        var last = new Map();
+        var sampleVisible = function () {
+            var t = now();
+            try {
+                onScreen().forEach(function (el) {
+                    if (el === document.documentElement) return;
+                    var cs = getComputedStyle(el);
+                    var v = cs.color + '|' + cs.backgroundColor;
+                    var prev = last.get(el);
+                    if (prev !== undefined && prev !== v) {
+                        var root = el.getRootNode();
+                        AH.colorChanges.push({ t: t, el: el, desc: (root !== document ? '›' : '') + describeNode(el), from: prev, to: v });
+                    }
+                    last.set(el, v);
+                });
+            } catch (e) {}
+            if (t < 6000) origSetTimeout(sampleVisible, 100);
+        };
+        origSetTimeout(sampleVisible, 0);
+        // Serializable summary for run.js: each change with the latest Aura
+        // write on that element (or, for text color, an ancestor within 4
+        // levels) at or before the sample that saw it.
+        AH.timelineSummary = function () {
+            var byEl = new Map();
+            AH.writes.forEach(function (w) { var a = byEl.get(w.el); if (!a) byEl.set(w.el, a = []); a.push(w); });
+            var cause = function (el, t, prop) {
+                var hops = 0;
+                for (var n = el; n && hops <= 4; n = n.parentElement || (n.parentNode && n.parentNode.host), hops++) {
+                    var list = byEl.get(n);
+                    if (list) for (var i = list.length - 1; i >= 0; i--) {
+                        if (list[i].t <= t && (hops === 0 || list[i].prop === prop)) return { chain: list[i].chain, prop: list[i].prop, at: Math.round(list[i].t), hops: hops };
+                    }
+                    if (prop !== 'color') break;
+                }
+                return null;
+            };
+            return AH.colorChanges.map(function (c) {
+                var colorChanged = c.from.split('|')[0] !== c.to.split('|')[0];
+                return { t: Math.round(c.t), el: c.desc, from: c.from, to: c.to, cause: cause(c.el, c.t, colorChanged ? 'color' : 'background-color') };
+            });
+        };
+    }
 
     // ---- site mutation counter (independent of Aura, also when unthemed) --
     // Counts all records so unthemed runs have a site-churn baseline.

@@ -34,16 +34,17 @@
     }
 
     /**
-     * Concatenate CSS from every SITE_FIXES-style entry whose host matches.
+     * Concatenate CSS from every SITE_FIXES-style entry whose host matches
+     * and isn't in the entry's `exclude` list (same suffix matching).
      * @param {string} hostname
-     * @param {Array<{match: string[], css: string}>} siteFixes
+     * @param {Array<{match: string[], exclude?: string[], css: string}>} siteFixes
      */
     function getSiteFix(hostname, siteFixes) {
         if (!hostname || !siteFixes || !siteFixes.length) return '';
         var out = [];
         for (var i = 0; i < siteFixes.length; i++) {
             var entry = siteFixes[i];
-            if (entry && hostMatches(hostname, entry.match)) {
+            if (entry && hostMatches(hostname, entry.match) && !hostMatches(hostname, entry.exclude)) {
                 out.push(entry.css || '');
             }
         }
@@ -101,11 +102,86 @@
         return themeData.globalTheme || null;
     }
 
+    /**
+     * Per-site theme cache: the resolved theme kept in the page's own
+     * localStorage, so the next load can apply it synchronously at
+     * document_start instead of waiting for extension storage. It holds
+     * exactly the fields applyTheme keys on, so a cached apply and the
+     * storage apply that follows produce the same stylesheet (and the
+     * storage apply is a no-op when nothing changed).
+     */
+    var THEME_CACHE_KEY = '__aura';
+    var THEME_CACHE_VERSION = 1;
+    var THEME_CACHE_MAX_CHARS = 2048;
+    var CACHE_COLOR_RE = /^(#[0-9a-fA-F]{3,8}|rgba?\(\s*[\d.]+%?\s*,\s*[\d.]+%?\s*,\s*[\d.]+%?\s*(,\s*[\d.]+\s*)?\))$/;
+    var CACHE_GRADIENT_RE = /^[\w\s#%().,-]{1,512}$/;
+    var CACHE_TYPES = { color: 1, gradient: 1, image: 1, split: 1 };
+
+    /** @returns {string|null} null when this theme must not be cached. */
+    function serializeThemeCache(theme) {
+        if (!theme || theme.enabled === false || theme.nativeDarkModeEnabled) return null;
+        var entry = {
+            v: THEME_CACHE_VERSION,
+            id: theme.id == null ? null : String(theme.id),
+            background: theme.background,
+            text: theme.text,
+            link: theme.link,
+            backgroundType: theme.backgroundType || null,
+            backgroundGradient: theme.backgroundGradient || null,
+        };
+        var json = JSON.stringify(entry);
+        return parseThemeCache(json) ? json : null;
+    }
+
+    /** Validated theme from a cache string, or null for anything else. */
+    function parseThemeCache(str) {
+        if (typeof str !== 'string' || !str || str.length > THEME_CACHE_MAX_CHARS) return null;
+        var e;
+        try { e = JSON.parse(str); } catch (err) { return null; }
+        if (!e || typeof e !== 'object' || e.v !== THEME_CACHE_VERSION) return null;
+        if (!CACHE_COLOR_RE.test(String(e.background || ''))) return null;
+        if (!CACHE_COLOR_RE.test(String(e.text || ''))) return null;
+        if (!CACHE_COLOR_RE.test(String(e.link || ''))) return null;
+        if (e.backgroundType != null && !CACHE_TYPES[e.backgroundType]) return null;
+        if (e.backgroundGradient != null
+            && (typeof e.backgroundGradient !== 'string' || !CACHE_GRADIENT_RE.test(e.backgroundGradient))) return null;
+        if (e.id != null && (typeof e.id !== 'string' || e.id.length > 64)) return null;
+        return {
+            enabled: true,
+            id: e.id,
+            background: e.background,
+            text: e.text,
+            link: e.link,
+            backgroundType: e.backgroundType,
+            backgroundGradient: e.backgroundGradient,
+        };
+    }
+
+    /**
+     * Google's own apps on google.com subdomains (Forms/Docs, Gmail, Drive,
+     * ...). The google.com SITE_FIXES and Google-only passes are written for
+     * Search, Images and AI Mode; they don't apply to these.
+     */
+    var GOOGLE_APP_HOSTS = [
+        'docs.google.com', 'mail.google.com', 'drive.google.com', 'calendar.google.com',
+        'meet.google.com', 'keep.google.com', 'photos.google.com', 'myaccount.google.com',
+        'accounts.google.com', 'play.google.com', 'news.google.com', 'translate.google.com',
+        'sites.google.com', 'classroom.google.com', 'gemini.google.com',
+    ];
+    function isGoogleSearchHost(hostname) {
+        return hostMatches(hostname, ['google.com']) && !hostMatches(hostname, GOOGLE_APP_HOSTS);
+    }
+
     return {
+        GOOGLE_APP_HOSTS: GOOGLE_APP_HOSTS,
+        isGoogleSearchHost: isGoogleSearchHost,
         parseHHMM: parseHHMM,
         hostMatches: hostMatches,
         getSiteFix: getSiteFix,
         resolveTimeBasedTheme: resolveTimeBasedTheme,
         resolveTheme: resolveTheme,
+        THEME_CACHE_KEY: THEME_CACHE_KEY,
+        serializeThemeCache: serializeThemeCache,
+        parseThemeCache: parseThemeCache,
     };
 });

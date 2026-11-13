@@ -40,6 +40,7 @@ function parseArgs(argv) {
         else if (k === '--no-shots') a.shots = false;
         else if (k === '--scenarios') a.scenarios = next();
         else if (k === '--repeat') a.repeat = parseInt(next(), 10);
+        else if (k === '--keep-storage') a.keepStorage = true;
         else if (k === '--compare') { a.compare = [next(), next()]; }
         else if (k === '--help' || k === '-h') { a.help = true; }
         else throw new Error('Unknown arg ' + k);
@@ -214,10 +215,17 @@ async function runLoad(browser, opts) {
     const harPath = path.join(HERE, 'har', site.id + '.har');
     const harMode = site.fixture ? 'off' : args.har === 'auto' ? (fs.existsSync(harPath) ? 'replay' : 'live') : args.har;
     if (harMode === 'record') ctxOpts.recordHar = { path: harPath, mode: 'full', content: 'embed' };
+    // --keep-storage: the page's localStorage (Aura's per-site theme cache)
+    // carries over from the previous load of the same site and theme.
+    const stateKey = `${site.id}|${theme}`;
+    if (args.keepStorage && opts.storageStates && opts.storageStates[stateKey]) ctxOpts.storageState = opts.storageStates[stateKey];
     const ctx = await browser.newContext(ctxOpts);
     if (harMode === 'replay') await ctx.routeFromHAR(harPath, { notFound: 'abort' });
+    // A fixture can be served from a real site's origin (`origin` in
+    // sites.js) so host-gated engine code (SITE_FIXES, Google passes) runs.
+    const fixtureOrigin = site.origin || FIXTURE_ORIGIN;
     if (site.fixture) {
-        await ctx.route(FIXTURE_ORIGIN + '/**', route => {
+        await ctx.route(fixtureOrigin + '/**', route => {
             const name = new URL(route.request().url()).pathname.replace(/^\//, '') || site.id;
             const file = path.join(HERE, 'fixtures', name.endsWith('.html') ? name : name + '.html');
             if (fs.existsSync(file)) route.fulfill({ status: 200, contentType: 'text/html', body: fs.readFileSync(file) });
@@ -228,7 +236,7 @@ async function runLoad(browser, opts) {
     // AURA_HARNESS_STORAGE_MS simulates a slow storage.local read (a cold
     // extension process); the default is 5 ms, a warm cache.
     const storageDelayMs = process.env.AURA_HARNESS_STORAGE_MS ? Number(process.env.AURA_HARNESS_STORAGE_MS) : undefined;
-    await ctx.addInitScript({ content: 'window.__AH_CONFIG = ' + JSON.stringify({ themed, themeData: themed ? themeData(THEMES[theme]) : null, storageDelayMs }) + ';' });
+    await ctx.addInitScript({ content: 'window.__AH_CONFIG = ' + JSON.stringify({ themed, themeData: themed ? themeData(THEMES[theme]) : null, storageDelayMs, timeline: !!process.env.AURA_HARNESS_TIMELINE }) + ';' });
     await ctx.addInitScript({ path: path.join(HERE, 'probe.js') });
     if (themed) for (const s of auraScripts()) await ctx.addInitScript({ content: s });
 
@@ -242,7 +250,7 @@ async function runLoad(browser, opts) {
     };
 
     try {
-        let url = site.fixture ? `${FIXTURE_ORIGIN}/${site.id}` : site.url;
+        let url = site.fixture ? `${fixtureOrigin}/${site.id}` : site.url;
         if (!url && site.resolve) url = opts.resolvedUrls[site.id];
         res.url = url;
         const navSentWall = wallNow();
@@ -262,6 +270,7 @@ async function runLoad(browser, opts) {
             const nowPage = toPage(wallNow());
             if (target > nowPage) await sleep(target - nowPage);
             await shot('5s');
+            if (themed && process.env.AURA_HARNESS_TIMELINE) res.timeline = await page.evaluate(() => window.__AH.timelineSummary ? window.__AH.timelineSummary() : null).catch(e => ({ error: String(e.message).slice(0, 200) }));
             if (themed) res.layout = await page.evaluate(layoutDiffInPage).catch(e => ({ error: String(e).slice(0, 200) }));
             try {
                 const sig = await page.evaluate(paintSignatureInPage);
@@ -286,6 +295,10 @@ async function runLoad(browser, opts) {
             } catch (e) {}
             const scrollEnd = toPage(wallNow());
             res.load = await page.evaluate(summarizeInPage, { from: 0, to: nav.load + 5000 });
+            // The five longest Aura tasks [start ms, duration ms, kind]: which
+            // task a "max task" regression is.
+            res.passList = await page.evaluate(() => window.__AH.passes.map(p => [Math.round(p.start), p.root, p.elements])).catch(() => null);
+            res.topTasks = await page.evaluate(() => window.__AH.tasks.slice().sort((a, b) => b[1] - a[1]).slice(0, 5).map(t => [Math.round(t[0]), Math.round(t[1] * 10) / 10, t[2]])).catch(() => null);
             res.scroll = await page.evaluate(summarizeInPage, { from: scrollStart, to: scrollEnd });
             res.themeTiming = await page.evaluate(() => {
                 const AH = window.__AH;
@@ -304,6 +317,52 @@ async function runLoad(browser, opts) {
                 return { firstPaint: fp ? fp.startTime : null, storageResolved: AH.marks.storageResolved, cssApplied: AH.marks.cssApplied, firstPassEnd: ends.length ? ends[0] : null, settled };
             });
             Object.keys(res.themeTiming).forEach(k => { res.themeTiming[k] = r1(res.themeTiming[k]); });
+        }
+
+        if (scenario === 'switch' && themed) {
+            // Theme change in the app, seen from an open tab: theme A loaded,
+            // then storage switches to B (live onChanged), then a reload with
+            // B in storage, then the theme turned off live. Every surface
+            // that can carry a theme color is dumped at each step, plus the
+            // mean color of the screen's bottom 60 px.
+            const other = theme === 'dark' ? 'light' : 'dark';
+            const tdB = themeData(THEMES[other]);
+            const tdOff = themeData({ ...THEMES[other], enabled: false });
+            res.switch = [];
+            let t0 = wallNow();
+            const snap = async (label) => {
+                const s = await page.evaluate(() => window.__AH.surfaces()).catch(e => ({ error: String(e.message).slice(0, 120) }));
+                const vp = page.viewportSize();
+                try {
+                    const buf = await page.screenshot({ clip: { x: 0, y: vp.height - 60, width: vp.width, height: 60 } });
+                    s.bottomStrip = await page.evaluate(b => window.__AH.meanColor(b), buf.toString('base64'));
+                } catch (e) { s.bottomStrip = null; }
+                res.switch.push({ label, ms: Math.round(wallNow() - t0), ...s });
+            };
+            const at = async (ms) => { const d = t0 + ms - wallNow(); if (d > 0) await sleep(d); };
+            const setAll = td => Promise.all(page.frames().map(f => f.evaluate(x => window.__AH && window.__AH.setThemeData(x), td).catch(() => {})));
+            await sleep(2000);
+            await snap(`${theme} settled`);
+            t0 = wallNow();
+            await setAll(tdB);
+            for (const ms of [0, 100, 500, 2000]) { await at(ms); await snap(`live → ${other} +${ms}`); }
+            await shot('switch-live');
+            await page.evaluate(td => sessionStorage.setItem('__AH_TD', JSON.stringify(td)), tdB);
+            t0 = wallNow();
+            await page.reload({ waitUntil: 'commit' });
+            await page.waitForLoadState('load').catch(() => {});
+            await snap(`reload ${other} +load`);
+            await at(2000);
+            await snap(`reload ${other} +2s`);
+            await shot('switch-reload');
+            t0 = wallNow();
+            await setAll(tdOff);
+            for (const ms of [100, 2000]) { await at(ms); await snap(`live → off +${ms}`); }
+            await shot('switch-off');
+            await page.evaluate(td => sessionStorage.setItem('__AH_TD', JSON.stringify(td)), tdOff);
+            t0 = wallNow();
+            await page.reload({ waitUntil: 'load' }).catch(() => {});
+            await snap('reload off +load');
         }
 
         if (scenario === 'typing' && site.type) {
@@ -381,12 +440,19 @@ async function runLoad(browser, opts) {
     } catch (e) {
         res.error = String(e.message || e).split('\n')[0];
     } finally {
+        if (args.keepStorage && opts.storageStates) {
+            try { opts.storageStates[stateKey] = await ctx.storageState(); } catch (e) {}
+        }
         await ctx.close().catch(() => {});
     }
     return res;
 }
 
 // ---- report ------------------------------------------------------------------
+
+// How long the page was on screen before Aura's stylesheet (0 when the
+// sheet landed before the first paint).
+function unthemedMs(t) { return t && t.cssApplied != null && t.firstPaint != null ? Math.max(0, t.cssApplied - t.firstPaint) : null; }
 
 function fmt(v, d = 0) { return v == null ? '–' : (typeof v === 'number' ? v.toFixed(d) : String(v)); }
 
@@ -398,12 +464,12 @@ function report(results, meta) {
     L.push(`- Times are ms since navigation start unless noted. "Aura ms" = time inside Aura-scheduled tasks. Frame gap = longest time between two rendered frames (any cause).`);
     L.push('');
     L.push('## Load (navigation → load + 5 s)');
-    L.push('| Site | Theme | Snapshot | load | CSS applied | Settled | Aura ms | Max task | Tasks ≥50ms | Passes (full-doc) | Max sync | Frame gaps ≥50 | Max gap | Layout Δ |');
-    L.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+    L.push('| Site | Theme | Snapshot | load | CSS applied | Unthemed ms | Settled | Aura ms | Max task | Tasks ≥50ms | Passes (full-doc) | Max sync | Frame gaps ≥50 | Max gap | Layout Δ |');
+    L.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
     for (const r of results.filter(x => x.scenario === 'visual')) {
         if (r.error) { L.push(`| ${r.site} | ${r.theme} | ${r.har} | ERROR: ${r.error} |||||||||||`); continue; }
         const l = r.load || {}, t = r.themeTiming || {};
-        L.push(`| ${r.site} | ${r.theme} | ${r.har} | ${fmt(r.nav && r.nav.load)} | ${fmt(t.cssApplied)} | ${fmt(t.settled)} | ${fmt(l.auraMs)} | ${fmt(l.auraMaxTaskMs)} | ${fmt(l.auraLongTasks)} | ${fmt(l.passes)} (${fmt(l.passesFullDoc)}) | ${fmt(l.passMaxSyncMs)} | ${fmt(l.frameGapsOver50)} | ${fmt(l.frameMaxGapMs)} | ${r.layout ? (r.layout.error ? 'err' : r.layout.changed + '/' + r.layout.checked) : '–'} |`);
+        L.push(`| ${r.site} | ${r.theme} | ${r.har} | ${fmt(r.nav && r.nav.load)} | ${fmt(t.cssApplied)} | ${fmt(unthemedMs(t))} | ${fmt(t.settled)} | ${fmt(l.auraMs)} | ${fmt(l.auraMaxTaskMs)} | ${fmt(l.auraLongTasks)} | ${fmt(l.passes)} (${fmt(l.passesFullDoc)}) | ${fmt(l.passMaxSyncMs)} | ${fmt(l.frameGapsOver50)} | ${fmt(l.frameMaxGapMs)} | ${r.layout ? (r.layout.error ? 'err' : r.layout.changed + '/' + r.layout.checked) : '–'} |`);
     }
     L.push('');
     L.push('## Typing (keystroke → next frame, ms)');
@@ -416,6 +482,48 @@ function report(results, meta) {
         L.push(`| ${r.site} | ${r.theme} | \`${r.typingTarget}\` | ${fmt(a.p50)} / ${fmt(a.p95)} / ${fmt(a.max)} (${a.keys} keys) | ${a.over100} | ${fmt(b.p50)} / ${fmt(b.p95)} / ${fmt(b.max)} | ${fmt(e.auraMs)} | ${fmt(e.passes)} (${fmt(e.passesFullDoc)}) |`);
     }
     L.push('');
+    const sw = results.filter(r => r.switch && r.switch.length);
+    if (sw.length) {
+        L.push('## Theme switch (surfaces per step)');
+        for (const r of sw) {
+            L.push(`### ${r.site} / starts ${r.theme}`);
+            L.push('| Step | ms | html bg | body bg | scheme | theme-color metas | shield | core sheet | shadow copies | iframe copies | cache | bottom strip |');
+            L.push('|---|---|---|---|---|---|---|---|---|---|---|---|');
+            for (const s of r.switch) {
+                if (s.error) { L.push(`| ${s.label} | ${s.ms} | ERROR ${s.error} ||||||||||`); continue; }
+                const j = o => Object.entries(o || {}).map(([k, v]) => `${k}×${v}`).join(' ') || '–';
+                L.push(`| ${s.label} | ${s.ms} | ${s.htmlBg}${s.htmlBgImage ? ' + img' : ''} | ${s.bodyBg} | ${s.colorScheme} | ${(s.themeColorMetas || []).join(' · ') || '–'} | ${s.shield ? 'yes' : '–'} | ${s.coreSheet || '–'} | ${j(s.shadowCopies)} | ${j(s.iframeCopies)} | ${s.cache ? s.cache.slice(0, 40) : '–'} | ${s.bottomStrip} |`);
+            }
+        }
+        L.push('');
+    }
+    const tl = results.filter(r => Array.isArray(r.timeline));
+    if (tl.length) {
+        L.push('## Color timeline (viewport, sampled every 100 ms to 6 s)');
+        L.push('Late = a visible color change after the first full pass ended. Cause = the Aura write on that element (or, for text color, an ancestor) that preceded it; "site" = no Aura write.');
+        L.push('');
+        L.push('| Site | Theme | CSS applied | First pass end | Last change | Last Aura-caused change | Late changes (Aura / site) |');
+        L.push('|---|---|---|---|---|---|---|');
+        for (const r of tl) {
+            const t = r.themeTiming || {};
+            const fp = t.firstPassEnd || 0;
+            const ch = r.timeline;
+            const last = ch.length ? ch[ch.length - 1].t : null;
+            const aura = ch.filter(c => c.cause);
+            const lastAura = aura.length ? aura[aura.length - 1].t : null;
+            const late = ch.filter(c => c.t > fp);
+            L.push(`| ${r.site} | ${r.theme} | ${fmt(t.cssApplied)} | ${fmt(fp)} | ${fmt(last)} | ${fmt(lastAura)} | ${late.filter(c => c.cause).length} / ${late.filter(c => !c.cause).length} |`);
+        }
+        for (const r of tl) {
+            const fp = (r.themeTiming && r.themeTiming.firstPassEnd) || 0;
+            const late = r.timeline.filter(c => c.t > fp && c.cause);
+            if (!late.length) continue;
+            const by = {};
+            late.forEach(c => { const k = c.cause.chain; (by[k] = by[k] || []).push(c); });
+            L.push(`- **${r.site} / ${r.theme}** late Aura-caused changes by writer: ` + Object.entries(by).map(([k, v]) => `\`${k}\` ×${v.length} (${v[0].t}–${v[v.length - 1].t} ms, e.g. ${v[0].el}: ${v[0].from} → ${v[0].to})`).join('; '));
+        }
+        L.push('');
+    }
     L.push('## Hottest sub-passes (whole load, themed runs)');
     for (const r of results.filter(x => x.theme !== 'none' && x.subPasses && Object.keys(x.subPasses).length)) {
         L.push(`- **${r.site} / ${r.theme} / ${r.scenario}**: ` + Object.entries(r.subPasses).slice(0, 6).map(([k, v]) => `${k} ${v.ms}ms/${v.n}×`).join(', '));
@@ -450,6 +558,7 @@ function compare(dirA, dirB) {
             rows.push(['Aura ms (load+5s)', a.load.auraMs, b.load.auraMs], ['Max Aura task', a.load.auraMaxTaskMs, b.load.auraMaxTaskMs],
                 ['Max frame gap', a.load.frameMaxGapMs, b.load.frameMaxGapMs], ['Passes (full-doc)', `${a.load.passes} (${a.load.passesFullDoc})`, `${b.load.passes} (${b.load.passesFullDoc})`],
                 ['Settled', a.themeTiming && a.themeTiming.settled, b.themeTiming && b.themeTiming.settled],
+                ['Unthemed ms', unthemedMs(a.themeTiming), unthemedMs(b.themeTiming)],
                 ['Layout Δ', a.layout && a.layout.changed, b.layout && b.layout.changed]);
         }
         if (a.scenario === 'typing' && a.typing && b.typing) {
@@ -464,8 +573,11 @@ function compare(dirA, dirB) {
     for (const f of paintFiles) {
         const fb = path.join(dirB, f);
         if (!fs.existsSync(fb)) continue;
-        const pa = JSON.parse(fs.readFileSync(path.join(dirA, f), 'utf8'));
-        const pb = JSON.parse(fs.readFileSync(fb, 'utf8'));
+        // Head-only elements never paint, and Aura's own theme-color meta
+        // sits at a different position across engines: leave them out.
+        const painted = e => !/^(meta|title|head|link|base|noscript)\b/.test(e[0]);
+        const pa = JSON.parse(fs.readFileSync(path.join(dirA, f), 'utf8')).filter(painted);
+        const pb = JSON.parse(fs.readFileSync(fb, 'utf8')).filter(painted);
         const n = Math.min(pa.length, pb.length);
         const diffs = [];
         let aligned = true;
@@ -521,15 +633,17 @@ async function main() {
     fs.writeFileSync(urlsFile, JSON.stringify(savedUrls, null, 2));
 
     const results = [];
+    const storageStates = {};
     const repeat = args.repeat || 1;
     for (const site of sites) {
         for (const theme of themes) {
             for (const scenario of scenarios) {
                 if (scenario === 'typing' && !site.type) continue;
+                if (scenario === 'switch' && theme === 'none') continue;
                 for (let k = 0; k < repeat; k++) {
                     const t = Date.now();
                     process.stdout.write(`${site.id} · ${theme} · ${scenario}${repeat > 1 ? ' #' + (k + 1) : ''} … `);
-                    const res = await runLoad(browser, { site, theme, scenario, outDir, args, resolvedUrls });
+                    const res = await runLoad(browser, { site, theme, scenario, outDir, args, resolvedUrls, storageStates });
                     if (repeat > 1) res.rep = k;
                     results.push(res);
                     console.log(res.error ? 'ERROR ' + res.error : `${((Date.now() - t) / 1000).toFixed(1)}s`);
@@ -540,7 +654,7 @@ async function main() {
     await browser.close();
 
     fs.writeFileSync(path.join(outDir, 'results.json'), JSON.stringify({ meta, results }, null, 2));
-    const md = report(repeat > 1 ? mergeRepeats(results) : results, meta);
+    const md = report(repeat > 1 ? mergeRepeats(results, args.keepStorage) : results, meta);
     fs.writeFileSync(path.join(outDir, 'report.md'), md);
     console.log('\n' + md);
     console.log('Output: ' + outDir);
@@ -548,9 +662,12 @@ async function main() {
 
 // With --repeat N, report the median run per site/theme/scenario (by the
 // metric the scenario is about) so one noisy load doesn't decide a verdict.
-function mergeRepeats(results) {
+// With --keep-storage the first load of each group is the cold one (no
+// cache yet), so the median is taken over the warm loads only.
+function mergeRepeats(results, warmOnly) {
     const groups = new Map();
     for (const r of results) {
+        if (warmOnly && r.rep === 0) continue;
         const k = `${r.site}|${r.theme}|${r.scenario}`;
         if (!groups.has(k)) groups.set(k, []);
         groups.get(k).push(r);

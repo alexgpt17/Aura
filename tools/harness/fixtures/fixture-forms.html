@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Untitled form</title>
+<!--
+  Google Forms (TEST_SITES F-1), served as https://docs.google.com/… so the
+  google.com SITE_FIXES scoping is exercised. Shape, not content:
+    - div[role=checkbox] / div[role=radio] whose state IS the box's own
+      background: unchecked = white box with a gray border, checked =
+      purple (#673ab7) box with a white check mark. The universal rule
+      strips div backgrounds, so unchecked and checked looked the same.
+    - a role=switch toggle and [aria-selected] tab chips
+    - the "Autosave your work" dialog (role=dialog, white card, its own
+      buttons), shown after 1 s
+-->
+<style>
+  body { margin: 0; font: 15px Roboto, arial, sans-serif; background: #f0ebf8; color: #202124; }
+  .card { margin: 12px; padding: 16px; border-radius: 8px; background: #fff; border-top: 8px solid #673ab7; }
+  .opt { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+  .box { width: 18px; height: 18px; border: 2px solid #5f6368; border-radius: 2px; background: #fff; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 14px; }
+  .box[aria-checked="true"] { background: #673ab7; border-color: #673ab7; }
+  .radio { width: 18px; height: 18px; border: 2px solid #5f6368; border-radius: 50%; background: #fff; }
+  .radio[aria-checked="true"] { border-color: #673ab7; box-shadow: inset 0 0 0 4px #fff; background: #673ab7; }
+  .sw { width: 36px; height: 14px; border-radius: 7px; background: #bdc1c6; position: relative; }
+  .sw[aria-checked="true"] { background: #b39ddb; }
+  .tabs { display: flex; gap: 6px; }
+  .tab { padding: 6px 14px; border-radius: 16px; background: #fff; border: 1px solid #dadce0; }
+  .tab[aria-selected="true"] { background: #e8def8; border-color: #e8def8; color: #1d192b; }
+  .dlg { position: fixed; left: 24px; right: 24px; top: 30%; padding: 20px; border-radius: 8px; background: #fff; box-shadow: 0 4px 24px rgba(0,0,0,.3); display: none; }
+  .dlg .act { margin-top: 16px; text-align: right; }
+  .dlg button { border: 0; background: transparent; color: #673ab7; font: 500 14px Roboto, arial; padding: 8px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h3>Which do you use?</h3>
+  <div class="opt"><div class="box" role="checkbox" aria-checked="false" tabindex="0"></div><span>Safari</span></div>
+  <div class="opt"><div class="box" role="checkbox" aria-checked="true" tabindex="0">✓</div><span>Chrome</span></div>
+  <div class="opt"><div class="box" role="checkbox" aria-checked="false" tabindex="0"></div><span>Firefox</span></div>
+</div>
+<div class="card">
+  <h3>How often?</h3>
+  <div class="opt"><div class="radio" role="radio" aria-checked="true" tabindex="0"></div><span>Daily</span></div>
+  <div class="opt"><div class="radio" role="radio" aria-checked="false" tabindex="0"></div><span>Weekly</span></div>
+  <div class="opt"><div class="sw" role="switch" aria-checked="true" tabindex="0"></div><span>Email me a copy</span></div>
+  <div class="tabs" role="tablist"><div class="tab" role="tab" aria-selected="true">Questions</div><div class="tab" role="tab" aria-selected="false">Responses</div></div>
+</div>
+<div class="dlg" role="dialog" aria-modal="true"><b>Autosave your work</b><p>Sign in to Google to save your progress.</p><div class="act"><button>Dismiss</button><button>Sign in</button></div></div>
+<script>setTimeout(function () { document.querySelector('.dlg').style.display = 'block'; }, 1000);</script>
+</body>
+</html>

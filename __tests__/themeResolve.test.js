@@ -94,3 +94,55 @@ describe('resolveTheme precedence', () => {
     expect(R.parseHHMM('19:00')).toBe(19 * 60);
   });
 });
+
+describe('theme cache', () => {
+  const dark = { enabled: true, id: 'dark', background: '#1C1C1E', text: '#FFFFFF', link: '#0A84FF', backgroundType: 'color', backgroundGradient: null };
+
+  test('round-trips the fields applyTheme keys on', () => {
+    const s = R.serializeThemeCache(dark);
+    expect(R.parseThemeCache(s)).toEqual(dark);
+  });
+
+  test('gradient theme round-trips', () => {
+    const g = { ...dark, backgroundType: 'gradient', backgroundGradient: 'linear-gradient(135deg, #0f2027 0%, #2c5364 100%)' };
+    expect(R.parseThemeCache(R.serializeThemeCache(g))).toEqual(g);
+  });
+
+  test('never caches theme off or native dark mode', () => {
+    expect(R.serializeThemeCache({ ...dark, enabled: false })).toBeNull();
+    expect(R.serializeThemeCache({ ...dark, nativeDarkModeEnabled: true })).toBeNull();
+    expect(R.serializeThemeCache(null)).toBeNull();
+  });
+
+  test('rejects junk, oversize, wrong version and unsafe values', () => {
+    const ok = JSON.parse(R.serializeThemeCache(dark));
+    expect(R.parseThemeCache(null)).toBeNull();
+    expect(R.parseThemeCache('')).toBeNull();
+    expect(R.parseThemeCache('{not json')).toBeNull();
+    expect(R.parseThemeCache('[]')).toBeNull();
+    expect(R.parseThemeCache(JSON.stringify({ ...ok, v: 0 }))).toBeNull();
+    expect(R.parseThemeCache(JSON.stringify({ ...ok, background: 'red;}body{display:none' }))).toBeNull();
+    expect(R.parseThemeCache(JSON.stringify({ ...ok, text: 'url(x)' }))).toBeNull();
+    expect(R.parseThemeCache(JSON.stringify({ ...ok, backgroundGradient: 'linear-gradient(red, blue)}*{color:red' }))).toBeNull();
+    expect(R.parseThemeCache(JSON.stringify({ ...ok, backgroundType: 'video' }))).toBeNull();
+    expect(R.parseThemeCache(JSON.stringify({ ...ok, id: 'x'.repeat(65) }))).toBeNull();
+    expect(R.parseThemeCache(JSON.stringify({ ...ok, pad: 'x'.repeat(3000) }))).toBeNull();
+    expect(R.parseThemeCache(JSON.stringify({ ...ok, background: 'rgb(28, 28, 30)' }))).not.toBeNull();
+  });
+});
+
+describe('Google Search vs Google apps', () => {
+  test('getSiteFix honors exclude', () => {
+    const fixes = [{ match: ['google.com'], exclude: R.GOOGLE_APP_HOSTS, css: '/* g */' }];
+    expect(R.getSiteFix('www.google.com', fixes)).toBe('/* g */');
+    expect(R.getSiteFix('google.com', fixes)).toBe('/* g */');
+    expect(R.getSiteFix('docs.google.com', fixes)).toBe('');
+    expect(R.getSiteFix('mail.google.com', fixes)).toBe('');
+  });
+  test('isGoogleSearchHost', () => {
+    expect(R.isGoogleSearchHost('www.google.com')).toBe(true);
+    expect(R.isGoogleSearchHost('images.google.com')).toBe(true);
+    expect(R.isGoogleSearchHost('docs.google.com')).toBe(false);
+    expect(R.isGoogleSearchHost('notgoogle.com')).toBe(false);
+  });
+});
