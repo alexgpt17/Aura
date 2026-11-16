@@ -91,8 +91,12 @@
     function resolveTheme(themeData, hostname, mins) {
         if (!themeData) return null;
         var host = hostname || '';
+        // A per-site entry wins either way: "Disabled" for a site
+        // (enabled: false) turns Aura off there instead of falling through
+        // to the time-based or global theme (X-4); applyTheme removes the
+        // theme and its cache key for it.
         var siteTheme = themeData.siteThemes && themeData.siteThemes[host];
-        if (siteTheme && siteTheme.enabled !== false) {
+        if (siteTheme) {
             return siteTheme;
         }
 

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en" data-color-mode="auto" data-light-theme="light" data-dark-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1e2327">
+<meta name="color-scheme" content="light dark">
+<title>GitHub · Build and ship software</title>
+<!--
+  Safari's status bar / toolbar tint on github.com (TEST_SITES X-7), served
+  as https://github.com (github.com is in CHROME_REPAINT_DISABLED_HOSTS).
+  Shape, following GitHub's logged-out mobile markup:
+    - one static theme-color meta, plus a color-scheme meta
+    - html/body painted from a CSS variable (--bgColor-default)
+    - a non-fixed header (HeaderMktg) with a ☰ button that opens a fixed,
+      full-screen HeaderMenu panel (white)
+    - a site script that rewrites the theme-color meta's content 1.5 s
+      after load, the way a color-mode script resolves "auto". Whether
+      GitHub does this on the phone is not known: this is the one source
+      of a late white tint the engine can't see (the observer doesn't
+      watch `content`)
+  It also carries GitHub's own dark mode (Primer: data-color-mode plus
+  data-light-theme / data-dark-theme on <html>) for the native Dark Mode
+  switch (X-5, `--scenarios settings`).
+  The harness's tint probe (results.json → tint) lists everything Safari
+  can sample: the metas, html/body, and fixed/sticky boxes at either edge.
+-->
+<style>
+  :root { --bgColor-default: #ffffff; --fgColor-default: #1f2328; }
+  /* Primer's dark palette: the site's own dark mode (X-5). */
+  [data-color-mode="dark"] { --bgColor-default: #0d1117; --fgColor-default: #f0f6fc; }
+  html, body { background-color: var(--bgColor-default); }
+  body { margin: 0; font: 16px -apple-system, sans-serif; color: var(--fgColor-default); }
+  .HeaderMktg { display: flex; align-items: center; justify-content: space-between; padding: 16px; }
+  .HeaderMktg .logo { width: 32px; height: 32px; border-radius: 16px; background: #1f2328; }
+  .toggle { width: 40px; height: 32px; border: 1px solid #d1d9e0; border-radius: 6px; background: transparent; font-size: 18px; }
+  .HeaderMenu { position: fixed; inset: 0; z-index: 50; display: none; padding: 64px 16px 16px; background: var(--bgColor-default); }
+  .HeaderMenu.open { display: block; }
+  .HeaderMenu a { display: block; padding: 14px 0; border-bottom: 1px solid #d1d9e0; color: var(--fgColor-default); text-decoration: none; }
+  .hero { padding: 48px 16px; }
+  .hero h1 { font-size: 40px; line-height: 1.1; margin: 0 0 16px; }
+  .signup { display: inline-block; padding: 12px 20px; border-radius: 6px; background: #1f883d; color: #fff; }
+  .more { padding: 16px 16px 900px; }
+</style>
+</head>
+<body>
+<header class="HeaderMktg" role="banner"><div class="logo"></div><button class="toggle" aria-label="Toggle navigation" onclick="document.querySelector('.HeaderMenu').classList.toggle('open')">☰</button></header>
+<div class="HeaderMenu"><a href="#">Product</a><a href="#">Solutions</a><a href="#">Resources</a><a href="#">Open Source</a><a href="#">Pricing</a><a href="#">Sign in</a></div>
+<div class="hero"><h1>Build and ship software on a single, collaborative platform</h1><a class="signup" href="#">Sign up for GitHub</a></div>
+<div class="more">Join the world's most widely adopted developer platform.</div>
+<script>
+  window.addEventListener('load', function () {
+    setTimeout(function () { document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff'); }, 1500);
+  });
+</script>
+</body>
+</html>

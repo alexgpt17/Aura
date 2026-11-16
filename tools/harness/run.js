@@ -198,7 +198,12 @@ function paintSignatureInPage() {
             const el = all[i];
             if (el.tagName === 'STYLE' || el.tagName === 'SCRIPT') continue;
             const cs = getComputedStyle(el);
-            out.push([prefix + window.__AH.describeNode(el), cs.backgroundColor, cs.color, cs.backgroundImage === 'none' ? '' : cs.backgroundImage.slice(0, 60)]);
+            // Last column: background-image, plus a non-normal blend mode.
+            const img = cs.backgroundImage === 'none' ? '' : cs.backgroundImage.slice(0, 60);
+            const row = [prefix + window.__AH.describeNode(el), cs.backgroundColor, cs.color, cs.mixBlendMode !== 'normal' ? img + ' blend:' + cs.mixBlendMode : img];
+            // Debug only: the element's inline style and data-aura-* marks.
+            if (window.__AH_DUMP_INLINE) row.push(el.style.cssText.slice(0, 120) + ' ' + Array.from(el.attributes).filter(a => a.name.startsWith('data-aura')).map(a => a.name).join(' '));
+            out.push(row);
             if (el.shadowRoot) walk(el.shadowRoot, prefix + '›');
         }
     };
@@ -273,13 +278,18 @@ async function runLoad(browser, opts) {
             if (themed && process.env.AURA_HARNESS_TIMELINE) res.timeline = await page.evaluate(() => window.__AH.timelineSummary ? window.__AH.timelineSummary() : null).catch(e => ({ error: String(e.message).slice(0, 200) }));
             if (themed) res.layout = await page.evaluate(layoutDiffInPage).catch(e => ({ error: String(e).slice(0, 200) }));
             try {
+                if (process.env.AURA_HARNESS_DUMP_INLINE) await page.evaluate(() => { window.__AH_DUMP_INLINE = true; });
                 const sig = await page.evaluate(paintSignatureInPage);
                 fs.writeFileSync(path.join(outDir, `${site.id}--${theme}--paint${res.rep ? '-' + res.rep : ''}.json`), JSON.stringify(sig));
             } catch (e) {}
+            res.tint = { '5s': await page.evaluate(() => window.__AH.tint()).catch(e => ({ error: String(e.message).slice(0, 120) })) };
             for (const act of site.actions || []) {
                 if (act.click) { try { await page.locator(act.click).first().click({ timeout: 3000 }); } catch (e) { res.actionError = (res.actionError || '') + `click ${act.click} failed; `; } }
                 if (act.wait) await sleep(act.wait);
-                if (act.shot) await shot(act.shot);
+                if (act.shot) {
+                    await shot(act.shot);
+                    res.tint[act.shot] = await page.evaluate(() => window.__AH.tint()).catch(e => ({ error: String(e.message).slice(0, 120) }));
+                }
             }
             if (site.actions && site.actions.length) { await page.goBack().catch(() => {}); }
             // Scroll three screens like a thumb flick, then settle.
@@ -363,6 +373,58 @@ async function runLoad(browser, opts) {
             t0 = wallNow();
             await page.reload({ waitUntil: 'load' }).catch(() => {});
             await snap('reload off +load');
+        }
+
+        if (scenario === 'settings' && themed) {
+            // The app's per-site and native switches (X-4, X-5), seen from an
+            // open tab: native Dark Mode on live, a site mutation, a reload,
+            // native off live, then this site set to "Disabled" live and a
+            // reload. Same surface dump as the switch scenario, plus the
+            // page's data-color-mode and how many elements carry an Aura
+            // inline paint.
+            const host = new URL(page.url()).hostname;
+            const base = themeData(THEMES[theme]);
+            const native = { ...base, nativeDarkModeEnabled: true };
+            const disabled = { ...base, siteThemes: { [host]: { ...THEMES[theme], enabled: false } } };
+            res.switch = [];
+            let t0 = wallNow();
+            const snap = async (label) => {
+                const s = await page.evaluate(() => window.__AH.surfaces()).catch(e => ({ error: String(e.message).slice(0, 120) }));
+                res.switch.push({ label, ms: Math.round(wallNow() - t0), ...s });
+            };
+            const setAll = td => Promise.all(page.frames().map(f => f.evaluate(x => window.__AH && window.__AH.setThemeData(x), td).catch(() => {})));
+            const reloadWith = async (td) => {
+                await page.evaluate(x => sessionStorage.setItem('__AH_TD', JSON.stringify(x)), td);
+                t0 = wallNow();
+                await page.reload({ waitUntil: 'load' }).catch(() => {});
+            };
+            await sleep(2000);
+            await snap(`${theme} settled`);
+            t0 = wallNow();
+            await setAll(native);
+            await sleep(500);
+            await snap('native on, live +500');
+            await page.evaluate(() => { const d = document.createElement('div'); d.className = 'late'; d.style.cssText = 'position:fixed;top:0;left:0;right:0;height:48px;background:#fff'; d.textContent = 'late banner'; document.body.appendChild(d); });
+            await sleep(1000);
+            await snap('native on, site mutation +1s');
+            await reloadWith(native);
+            await snap('native on, reload +load');
+            await sleep(2000);
+            await snap('native on, reload +2s');
+            await shot('native');
+            t0 = wallNow();
+            await setAll(base);
+            await sleep(500);
+            await snap('native off, live +500');
+            t0 = wallNow();
+            await setAll(disabled);
+            await sleep(500);
+            await snap('site Disabled, live +500');
+            await reloadWith(disabled);
+            await snap('site Disabled, reload +load');
+            await sleep(1500);
+            await snap('site Disabled, reload +1.5s');
+            await shot('disabled');
         }
 
         if (scenario === 'typing' && site.type) {
@@ -487,12 +549,12 @@ function report(results, meta) {
         L.push('## Theme switch (surfaces per step)');
         for (const r of sw) {
             L.push(`### ${r.site} / starts ${r.theme}`);
-            L.push('| Step | ms | html bg | body bg | scheme | theme-color metas | shield | core sheet | shadow copies | iframe copies | cache | bottom strip |');
-            L.push('|---|---|---|---|---|---|---|---|---|---|---|---|');
+            L.push('| Step | ms | html bg | body bg | scheme | theme-color metas | shield | core sheet | shadow copies | iframe copies | cache | bottom strip | color-mode | Aura inline |');
+            L.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
             for (const s of r.switch) {
-                if (s.error) { L.push(`| ${s.label} | ${s.ms} | ERROR ${s.error} ||||||||||`); continue; }
+                if (s.error) { L.push(`| ${s.label} | ${s.ms} | ERROR ${s.error} ||||||||||||`); continue; }
                 const j = o => Object.entries(o || {}).map(([k, v]) => `${k}×${v}`).join(' ') || '–';
-                L.push(`| ${s.label} | ${s.ms} | ${s.htmlBg}${s.htmlBgImage ? ' + img' : ''} | ${s.bodyBg} | ${s.colorScheme} | ${(s.themeColorMetas || []).join(' · ') || '–'} | ${s.shield ? 'yes' : '–'} | ${s.coreSheet || '–'} | ${j(s.shadowCopies)} | ${j(s.iframeCopies)} | ${s.cache ? s.cache.slice(0, 40) : '–'} | ${s.bottomStrip} |`);
+                L.push(`| ${s.label} | ${s.ms} | ${s.htmlBg}${s.htmlBgImage ? ' + img' : ''} | ${s.bodyBg} | ${s.colorScheme} | ${(s.themeColorMetas || []).join(' · ') || '–'} | ${s.shield ? 'yes' : '–'} | ${s.coreSheet || '–'} | ${j(s.shadowCopies)} | ${j(s.iframeCopies)} | ${s.cache ? s.cache.slice(0, 40) : '–'} | ${s.bottomStrip || '–'} | ${s.colorMode || '–'} | ${s.auraInline} |`);
             }
         }
         L.push('');
@@ -639,7 +701,7 @@ async function main() {
         for (const theme of themes) {
             for (const scenario of scenarios) {
                 if (scenario === 'typing' && !site.type) continue;
-                if (scenario === 'switch' && theme === 'none') continue;
+                if ((scenario === 'switch' || scenario === 'settings') && theme === 'none') continue;
                 for (let k = 0; k < repeat; k++) {
                     const t = Date.now();
                     process.stdout.write(`${site.id} · ${theme} · ${scenario}${repeat > 1 ? ' #' + (k + 1) : ''} … `);

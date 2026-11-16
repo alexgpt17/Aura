@@ -65,6 +65,23 @@ Your build of the uncommitted Session 6 tree, dark + light. Screenshots: `~/Down
   - Airbnb: white search pill and chips with low-contrast text, white edge fade on the category row (IMG_0648).
   - Urban Plates: sticky "Beverages" bar, checkout panel and cookie banner transparent (IMG_0656, 0657, 0655).
 
+## Nov 14 phone findings (Session 7 build)
+Your build of the uncommitted Session 7 tree, dark + light. Screenshots: `~/Downloads/IMG_0677…0694.PNG`.
+- **Passed, no regressions seen:** R-4 Reddit squares, B-3 Amazon photos, X-5 native Dark Mode ("working quite well"), X-4, Airbnb search pill, all regression rows.
+- **Not seen:** G-4 and W-5 (you weren't sure where to look; TEST_SITES now says when they appear).
+- **Still failing / new** (fix by category; TEST_SITES row in brackets):
+  1. **AI Mode composer field still transparent** [G-5] (IMG_0683, 0682, 0684). The Session 7 fixture guessed the shape wrong (composer inside `#rso`); needs the real DOM.
+  2. **No tint behind the expanded composer** [G-7] (Aura off: IMG_0686, 0685). With Aura off the page behind an expanded composer is dimmed, which tells you to tap out of it; themed, there's no dimming. Hypothesis: a black full-screen layer dimmed with CSS `opacity`: its fill reads as opaque black, the overlay rule paints it `--aura-overlay` (= theme bg), and at reduced opacity over a theme page it's invisible. `readAuthoredPaint` doesn't read `opacity`.
+  3. **AI Overview "Show more"** [G-6] (themed IMG_0687 vs Aura off IMG_0688): the collapsed text should fade into the background behind an opaque button; themed, the text runs under a see-through button. Likely the expander/fade marks (`markGoogleAiOverview`, `GOOGLE_AI_EXPANDER_SELECTOR`) no longer match. **The most important item.**
+  4. **White edge fades** [X-8], dark themes: GitHub carousel rows (IMG_0677; Aura off 0678), Airbnb "Inspiration" category row (IMG_0681), WebMD tab row's right edge (IMG_0690, 0691). Gradient overlays (an element or `::before`/`::after`) outside fixed/sticky roots, so 7-1's gradient repaint never runs on them.
+  5. **Light buttons/chips with light text** [X-9]: Reddit "Save Draft?" Save is white with light theme text (IMG_0689); Airbnb category chips are white pills with link-colored text (IMG_0681). You suspect more sites. Causes to check: `H.effectiveBackground` ignores background-image (gradient pills); button text in nested shadow roots/slots that `settleButtons` doesn't reach.
+  6. **F-2 still failing on dark:** Urban Plates' focused First Name label is a white box (IMG_0680; light theme fine, IMG_0679). Likely `:focus-within` CSS gives it the white fill and moves it with no DOM mutation, so no pass re-evaluates it (no focus listener exists).
+  7. **WebMD hero unreadable** [X-10] (IMG_0691, 0693, 0694; Aura off IMG_0692): a light decorative background image is kept and the text is themed light. **Decided Nov 14: drop decorative background images on large text sections and theme the section; keep photos and give their text a dark scrim.**
+  8. **Safari tint:** X-7 GitHub status bar/toolbar still keep site colors. New [Load-4]: theme off → reload → theme on live, the bottom bar stays white until a reload (WebMD, IMG_0693).
+  9. **Urban Plates "Beverages" sticky bar still see-through** [U-1]; **Walmart "switch to another country" popup transparent** [X-11].
+  10. **Walmart ☰ menu flash** [X-11]: opening/closing the menu briefly flashes the top bar and the menu before it settles. Likely the debounced pass painting after the class toggle.
+- **Decided Nov 14, changed Nov 15:** no HAR recording or HUD inspects (the Debug/WebKit steps aren't practical). Session 8 reads the live DOM through Claude in Chrome instead, and builds fixtures from that and the screenshots.
+
 ## Engine principles (Oct 23 — apply to every fix from here on)
 - **Fixed/sticky layers** (headers, toolbars, tab bars, search bars, sidebars): if the original was opaque, the themed one is opaque, including after scroll, resize, and late-loading content. Decide from the **authored paint**, never from geometry.
 - **Overlays** (modals, cookie/consent, dropdowns, drawers): backdrop and card are handled separately (dark translucent scrim kept, opaque card painted, transparent wrapper left alone). Never clipped.
@@ -86,10 +103,11 @@ Your build of the uncommitted Session 6 tree, dark + light. Screenshots: `~/Down
 | 3 | Nov 4 ✓ | Test harness + input lag |
 | 4 | Nov 4–5 ✓ | **Layer & overlay engine**: absorbs the old Session 6 Wikipedia/Reddit items (code + harness done; on-device check pending) |
 | 5 | Nov 5 ✓ | Small surfaces (5B) + load flash / light base (5A); phone check passed Nov 5; committed as `96f28c1` |
-| 6 | Nov 5 ✓ (pulled forward from Nov 7) | Theme cache + old-theme back layer + late text colors + buttons/controls + Google AI lag; phone check Nov 13 mostly passed; committed at the start of Session 7 |
-| 7 | Nov 13–15 | Commit Session 6, then the Nov 13 phone findings 1–9 (incl. X-4 and X-5) |
-| — | Nov 16 | Phone check of Session 7 + re-check of the older-build screenshots |
-| 8 | Nov 17–18 | Fixes from the Nov 16 check |
+| 6 | Nov 5 ✓ (pulled forward from Nov 7) | Theme cache + old-theme back layer + late text colors + buttons/controls + Google AI lag; phone check Nov 13 mostly passed; committed as `05121ac` at the start of Session 7 |
+| 7 | Nov 13 ✓ | Session 6 committed (`05121ac`); Nov 13 phone findings 1–9 incl. X-4 and X-5; phone check Nov 14 passed |
+| 8 | Nov 15–16 | Nov 14 phone findings (Google AI first), live DOM read through Claude in Chrome |
+| — | Nov 16–17 | Phone check of Session 8 |
+| 8b | Nov 17–18 | Fixes from that check |
 | 9 | Nov 19–20 | Regression + App Store submission |
 | — | Nov 21–22 | Buffer / resubmission |
 | — | Nov 23 | Deadline |
@@ -442,19 +460,107 @@ Chromium headless, Mac moderately busy (load 2.4–4.2), 4 rounds alternating wh
   - Everything else: 0 differences (hydration 7412 elements, late-text 4696, wiki, popover, chips, bearbottom, theme-color). Head elements (`meta`, `title`) are left out of the comparison: Aura's own theme-color meta sits at a different position.
 - Cache-applied vs storage-applied (same engine): 0 differences in all 52 dumps; the Session 6 numbers in 6-0 are from the final engine.
 
-### Found, not fixed (decided Nov 13: fix both in Session 7)
+### Found, not fixed (decided Nov 13: fix both; fixed in Session 7, see 7-6)
 - **Per-site "Disabled" toggle doesn't disable (X-4).** The app writes `siteThemes[host].enabled = false`; `resolveTheme` (and background.js) then fall through to the time-based or global theme, and a jest test encodes that ("disabled site theme falls through"). Fix: one line in `resolveTheme` + flip that test; the cache already deletes its key for an off theme.
 - **The native "Dark Mode" switch (X-5) never takes effect.** The app and the Swift handler store `nativeDarkModeEnabled` at the top level of the theme data; content.js reads it from the resolved theme. Fix: read `themeData.nativeDarkModeEnabled`. That turns on a path that hasn't run in the field.
 - Test: TEST_SITES Load-1/2/3 (updated pass criteria), B-1, X-6, F-1 (updated), R-3, Type-2/Type-3, G-1..G-3, dark + light, Google rows side by side with Aura off.
 
-## Session 7 — Nov 13 phone findings + X-4/X-5 (Nov 13–15)
-- [ ] Commit Session 6 (the A/B baseline); worktree `../Aura-s6` replaces `../Aura-s5`.
-- [ ] Opaque surfaces still transparent (one category): AI Mode composer field, AI Mode sticky top bar, the band under the composer, Google promo bottom sheet, wikipedia.org portal banner (findings 1–3).
-- [ ] Mask elements that hide a line with the container color: floating labels on input borders, Reddit thread connectors (findings 6, 8).
-- [ ] Buttons and scrims in sheets: filled buttons stand apart from the themed sheet; the backdrop stays a dimmed scrim, also in shadow DOM (finding 4).
-- [ ] Images blended (`multiply` / `darken`) onto tiles that are now dark (finding 5).
-- [ ] Safari chrome tint on github.com (finding 7).
-- [ ] X-4: per-site "Disabled" turns Aura off on that site. X-5: the native Dark Mode switch takes effect.
+## Session 7 — Nov 13 phone findings + X-4/X-5 — done Nov 13; phone check Nov 14 passed (no regressions, see "Nov 14 phone findings"); commit at the start of Session 8
+- [x] Session 6 committed as `05121ac` (the A/B baseline); worktree `../Aura-s6` replaces `../Aura-s5`. Old harness runs cleared (210 MB).
+- The Nov 13 screenshots (IMG_0648…0675) aren't on this Mac (Downloads ends at IMG_0627), and Claude in Chrome wasn't connected, so no live DOM was read. Every cause below is from the engine code plus a fixture that reproduces the phone symptom on the Session 6 engine; which shape the real page has is in "Only the phone can confirm".
+
+### 7-1 Opaque surfaces still transparent (G-4, G-5, W-5)
+- [x] Fixtures: `fixture-google-aimode` extended (sticky top bar and composer inside `#rso`, a gradient-only fixed band under the composer), new `fixture-promo-sheet` and `fixture-portal-banner`. All five surfaces reproduce on Session 6: top bar, composer bar/pill/field transparent; the band keeps the site's gradient (white here, Google's dark gray under its dark CSS on the phone); promo sheet and banner transparent.
+- **Why the authored-paint rule didn't paint each one** (three general causes):
+  1. **Google's strip rules hid the paint from the probe.** `#rso div { transparent }` and the AI-card rule in SITE_FIXES had no probe exemption, so `readAuthoredPaint` read everything under `#rso` as transparent and the layer rule never painted it (the sticky top bar, the composer's fixed bar). The `#rso` rule also out-specified the `[data-aura-composer]` paint. Fix: the probe exemption on those rules (`:where()`, no specificity change), and the `#rso` rule skips the composer.
+  2. **Gradient-only paint wasn't read.** The probe read `background-color` only; a band painted with `background-image: linear-gradient(...)` read as clear, and the strip leaves gradients alone, so the site's own color stayed. Fix: `classifyAuthoredPaint` reads the gradient's stops: all opaque → `opaque`; opaque and transparent stops → `fade`. Either way the gradient is repainted in the theme color with each stop's alpha kept (`H.themeGradient`), so a fade stays a fade. 7 jest cases.
+  3. **Overlay-tier cards were skipped.** A fixed modal-card shape at z-index ≥ 1000 was released unpainted (the fox5sandiego curtain guard from before Session 4), and the sticky rule leaves modal cards to that walk: Google's app-promo sheet and Wikipedia's fundraising banner. Fix: they go through the authored-paint rule like any card (a curtain is a transparent wrapper, which the rule leaves alone). fox5's own shells stay skipped by host (`CHROME_PAINT_HOST_SKIPS`, same selectors as its SITE_FIXES entry).
+- Also found: `restoreAuthoredChromeOpacity` collected `!important` background selectors from Aura's own sheets too, so Aura's paint rules nominated elements as "authored opaque". Aura's sheets are now skipped (fewer rules scanned, too).
+- AI Mode typing: no Aura pass runs while typing in either engine (0 passes, ~10 ms Aura time in the first 4 s in both); numbers in the A/B below.
+
+### 7-2 Mask elements (F-2, R-4)
+- [x] `fixture-masks`: floating labels across an outlined input's top border (`<label>`, `<span>`, `<div>`), and Reddit-style thread connectors in a shadow root on a site in its own dark mode (a `border-left` thread line, curved elbows, and a 16 × 16 square painted the page's `#0e1113` that cuts the line off).
+- Session 6: dark themes cleared the labels (bright pass), so the border line ran through the label text; light themes kept them white (the white box, F-2); the mask square stayed `#0e1113` on every theme (black squares, R-4).
+- [x] Fix, one rule (`settleMasks`): a small absolutely positioned element (≤ 320 × 40) that a neighbor's line crosses (a visible border edge of its parent or a sibling, or a hairline element), whose authored fill matches what it sits on (the nearest authored-opaque ancestor; the page when there's none), takes the themed color of what's behind it now. Nominated in the walk (one style read), decided in one step after it (probe of the mask and its ancestors in one batch), light DOM and shadow roots. 4 jest cases.
+
+### 7-3 Buttons and scrims in sheets (R-3)
+- [x] `fixture-buttons`: the draft sheet now sits in a full-screen `role=dialog` scrim (`rgba(0,0,0,.4)` + a 2 px backdrop blur) in the shadow root, with Save/Discard stacked full width. On Session 6 this reproduces the phone: solid theme-color backdrop, Save blends into the sheet.
+- Causes and fixes:
+  - **Scrim:** any tint behind a backdrop blur was classified as a frosted card, so the covering backdrop was painted solid. Now a layer that covers the screen and is dark translucent stays a `scrim` even when blurred (the sheet inside is the card). A plain dark scrim already worked; whether Reddit's has a blur is phone-only.
+  - **Save:** a full-width neutral button was always painted as a theme surface (the Walmart strip rule). Now a button whose authored fill stood apart from its container (contrast ≥ 1.18 or a clear hue difference) is a control, never a surface. If its kept fill would blend into the themed container, it gets a distinct fill: theme text mixed into the container until it stands apart as much as it did as authored (contrast 1.15–1.6). Discard keeps its blue.
+  - Cost: the container check probes a button's ancestors only when the fill could blend (or could be a strip), in the same batch as the buttons; a distinct paint stays on across passes while unchanged.
+
+### 7-4 Images blended onto light tiles (B-3)
+- [x] `fixture-blend`. The sheet has always set `img { mix-blend-mode: normal }`, so bare blended images were fine; the near-black photos come from a blend on a **wrapper** (a div or `<picture>`) around the photo. Reproduced on Session 6.
+- Picked by paint diff: neutralizing the wrapper's blend changes one property on each blended wrapper and nothing else, and matches what bare `<img>`s already get; keeping the tile's light fill would change every tile, still need the neutralize fallback for a blended photo on a large text card, and put light slabs on a dark theme. Fix (`visitBlendElement`): `multiply`/`darken`/`color-burn` on an element that contains media → `normal`, dark themes only (on a light theme the blend still drops into a light page, as with Aura off).
+- The harness paint dump now records a non-normal blend mode.
+
+### 7-5 Safari tint on github.com (X-7)
+- [x] Harness: `results.json → tint` lists everything Safari can tint from (theme-color metas, html/body, fixed/sticky boxes at either edge with their pseudo-elements) at +5 s and after each action. `fixture-github-chrome` follows GitHub's logged-out mobile markup (served as github.com).
+- **Found:** the observer doesn't watch `content`, so a site script that rewrites its theme-color meta after Aura synced it (GitHub's color-mode script resolving "auto" is the likely candidate) leaves the site's color as the first meta until an unrelated mutation starts a pass. In the fixture the first meta stayed `#ffffff` at +5 s on a dark page. Fix: a `content`-only observer re-syncs at once; the site's newest value is what theme-off restores. After: the theme color holds through the rewrite, a live switch and a reload; theme off restores the site's value.
+- Nothing else in the fixture can tint white: html/body are the theme color, and no fixed/sticky box touches an edge until the ☰ menu opens (then it's the themed menu).
+
+### 7-6 X-4 per-site "Disabled" / 7-7 X-5 native Dark Mode
+- [x] X-4: `resolveTheme` returns a site entry even when `enabled: false`, so `applyTheme` removes the theme and deletes the cache key; returning nothing would have been ignored by the storage listener (`if (!newTheme) return`). background.js sends the disabled entry. The jest test is flipped ("turns Aura off on that site", plus never cached, plus other sites unaffected).
+- [x] X-5: content.js carries `themeData.nativeDarkModeEnabled` onto the resolved theme (key, cache, apply all see it).
+- **The path that had never run had a bug:** after the site's own dark mode was switched on, `currentTheme` stayed set, so the first site mutation started a full Aura pass on the natively dark page (inline theme paints with no Aura sheet); a site that was already dark also kept the meta sync running. Now native mode leaves the engine idle (`currentTheme = null`, `nativeModeActive`).
+- Harness `--scenarios settings` on `fixture-github-chrome` (Primer dark palette added). Session 6: native on and site Disabled changed nothing. After:
+  | Step | Page | Aura sheet | theme-color metas | Cache key | Aura inline paints |
+  |---|---|---|---|---|---|
+  | native on, live | site's own dark (`data-color-mode=dark`) | – | site's | deleted | 0 |
+  | + a site mutation | same | – | site's | – | 0 |
+  | reload, native on | same | – | site's | – | 0 |
+  | native off, live | Aura theme, `data-color-mode` back to `auto` | yes | theme | written | 0 |
+  | site Disabled, live | site's original | – | site's | deleted | 0 |
+  | reload, Disabled | site's original, no shield | – | site's | – | 0 |
+
+### A/B vs Session 6 (`05121ac`)
+Chromium headless, offline fixtures, Mac moderately busy (load 1.4–3.7), 4 rounds alternating which engine runs first, medians. Old = `05121ac` (worktree `../Aura-s6`). The A/B was run three times (the first two found the button costs below and a self-nomination); these are the final engine's numbers.
+| Fixture | Longest Aura task, ms (dark / light) | Aura ms, load + 5 s (dark / light) | Tasks ≥ 50 ms | Layout Δ |
+|---|---|---|---|---|
+| late-text (the longest task overall) | 30.9 → 30.4 / 31.3 → 31.3 | 648 → 654 / 595 → 595 | 0 → 0 | 0 → 0 |
+| hydration | 16.9 → 15.5 / 14.0 → 15.7 | 181 → 206 / 178 → 202 | 0 → 0 | 0 → 0 |
+| google-aimode / -deep | 16.3 → 11.9, 12.4 → 11.8 / 11.7 → 13.0, 11.6 → 11.1 | 221 → 208, 216 → 232 / 207 → 207, 207 → 210 | 0 → 0 | 0 → 0 |
+| the other 15 fixtures | 8.8–16.8 → 9.9–13.7 (per fixture −4.4…+4.1, both directions) | −8…+9 ms | 0 → 0 | 0 → 0 |
+- Where the time goes: hydration's +25 ms is `settleButtons` (≈ 14 → 20 ms dark, 14 → 33 ms light: a filled button whose fill could blend into a light theme has its ancestors probed, once per element, in the same batch as the buttons). All of it is in sliced steps; the longest task didn't move. The first A/B had hydration light at +52 ms and a +17 ms forced style recalc in `reopaqueOverlays`; fixed by the 1.18 threshold (UA-default `#efefef` buttons, contrast 1.15 on white, no longer count as standing apart), one probe batch per shadow root, reading fills before lifting our own writes, and leaving an unchanged distinct paint on.
+- Typing, keystroke → next frame. The AI Mode fixtures run 0 Aura passes while typing in both engines (≈ 10–12 ms Aura time in the first 4 s, ≈ 3 ms settled, the same in both), so the three A/B runs are pooled for them (12 rounds per engine; one round with a machine stall dropped). p95 first 4 s / settled:
+  - AI Mode dark 22.6 → 22.6 / 22.4 → 22.8; light 22.1 → 23.2 / 21.9 → 22.1
+  - AI Mode deep dark 22.7 → 22.0 / 22.1 → 22.7; light 22.4 → 23.4 / 22.4 → 23.4
+  - hydration dark 30.3 → 31.2 / 31.2 → 32.3; light 30.8 → 31.8 / 31.5 → 32.4 (2 passes while typing early in both; light has the button cost above)
+  - 0 keys over 100 ms. Run-to-run swing of a single A/B was ±2.5 ms (run 2 had the new engine lower almost everywhere, run 3 higher everywhere, including settled hydration, where neither engine does any work).
+  - **Not strictly ≤ Session 6:** the pooled AI Mode p95 is within −0.7…+1.1 ms, with no Aura work behind the difference. Type-2 side by side with Aura off on the phone is the real check.
+- **Paint diff vs Session 6, every element that paints differently** (dark and light, +5 s and after scroll):
+  - google-aimode: `div.tbar` transparent → theme (7-1, cause 1); `div.cbar` transparent → theme (cause 1); `div.cband` white gradient → theme gradient (cause 2).
+  - google-aimode-deep: `div.sliver` theme → transparent. Session 6 painted it in 1 of 4 rounds (nondeterministic), the final engine in 0 of 4; it sits on the painted composer bar either way, so nothing visible changes.
+  - promo-sheet: `div.promo` transparent → theme (cause 3). portal-banner: `div.frb` transparent → theme (cause 3).
+  - masks: `label.fl`, `span.fl`, `div.fl` (dark: transparent → theme; light: white / transparent → theme) and `›span.mask` `#0e1113` → theme (7-2).
+  - buttons: `›div.scrim` solid theme → `rgba(0,0,0,.4)`; `›div.sheet` transparent → theme; `›button.save` dark: theme (blended) → its authored `#e5ebee` with black text; light: `#e5ebee` (blended into `#f2f2f7`) → distinct `#dadade` (7-3).
+  - airbnb-login (dark): `button.accept` `#222` → distinct `#404042`. The cookie card's dark "Accept all" stood apart from the white card; on the themed dark card it had blended in (7-3, same rule).
+  - blend (dark): `div.mx`, `picture.mx`, `div.dk`, `div.ph` blend multiply/darken → normal (7-4).
+  - Everything else: 0 differences (hydration 7412 elements, late-text, wiki, popover, chips, bearbottom, theme-color, forms, explore, shadow-bars, github-chrome).
+- Engine tests: 287 (`npm run test:engine`), green. `__tests__/App.test.tsx` (the RN app) fails to parse under the default jest config, as before; it isn't part of `test:engine`.
+
+### Only the phone can confirm
+- G-5: whether real AI Mode has the top bar and composer inside `#rso` (cause 1) and the band painted with a gradient (cause 2). If any of the three still shows: HUD inspect it, then ↑ parent up to the fixed/sticky element, and send the `pos`, `authored bg … img …`, `aura sets` and `rules` lines of each step.
+- G-4 / W-5: whether the promo sheet and the banner are fixed cards at z-index ≥ 1000 (cause 3). Same HUD inspect if not fixed.
+- W-5 wordmark: "WIKIPEDIA looks white on the light background" isn't explained by anything here. Most likely the phone was in dark mode: the portal's own `prefers-color-scheme: dark` CSS (which follows iOS, not Aura) whitens the wordmark under a light Aura theme; Aura can't switch that media query. Check with iOS in light mode; if it's still white, HUD inspect the wordmark (tag, `src`/class, `aura sets`).
+- R-4: whether Reddit's squares are this shape. If they remain, HUD inspect one square on a light theme and send: the tag/class/`shadow` lines, `pos` (it should be `absolute` and about 16×16), `now bg`/`authored bg`, `aura sets`; then ↑ parent once and send the same for the parent. If tapping the square selects the whole comment row instead of a small element, say so: the square is then a `::before`/`::after` or an SVG, which this rule doesn't cover.
+- R-3: whether Reddit's backdrop has a backdrop blur (the fixed case) or is a different shape; and whether Save/Discard now read as buttons.
+- B-3: whether Amazon's blend is on a wrapper (fixed) or on the `<img>` itself (already neutral before, so then the cause is something else: HUD inspect the photo's parent tile).
+- X-7: which surface Safari samples. Recent Safari versions may tint from page content at the edges (fixed/sticky bars, the page background) and not only from the theme-color meta; I couldn't confirm which applies to your iOS version. If github.com still shows white, HUD inspect what sits at the very top of the page (and inside the ☰ menu) and send `pos` + `now bg`.
+- X-4 / X-5: the real app → extension path (App Group → background.js → storage), which the harness stubs.
+
+## Session 8 — Nov 14 phone findings (Nov 14–16)
+Real markup (changed Nov 15): no HARs or HUD inspects. The agent reads the live DOM in your Chrome through Claude in Chrome (desktop markup, mobile-width window; keep Chrome open with the extension connected) and builds fixtures from that plus the screenshots. Where the desktop DOM can't settle a cause, it says so and the phone check decides.
+- [ ] Commit Session 7 (the A/B baseline); worktree `../Aura-s7` replaces `../Aura-s6`.
+- [ ] 1. Google AI (G-5, G-6, G-7, Type-2): composer field opaque; the expanded composer's tint visible (authored paint × `opacity`); AI Overview "Show more" fade + opaque button. Fixtures rebuilt from the live DOM read in Chrome. Typing ≤ Session 7.
+- [ ] 2. Text on light fills (X-9), broadly: a harness metric for visible text under 3:1 against its effective fill (gradients and images included), driven to 0 or explained.
+- [ ] 3. Edge fades (X-8): gradient fades (element or pseudo) repainted in the theme color (`H.themeGradient`).
+- [ ] 4. Floating label on focus (F-2): re-evaluate on focusin/focusout, one scoped pass.
+- [ ] 5. Light decorative background images (X-10, decided): drop and theme; photos keep a dark scrim behind text.
+- [ ] 6. Safari tint (X-7, Load-4): live apply produces the same surfaces as a reload apply; phone confirms.
+- [ ] 7. Transparent bars/popups (U-1, X-11).
+- [ ] 8. Walmart ☰ menu flash (X-11).
 
 ## Session 9 — Regression + App Store submission (was Session 7)
 - [ ] Full TEST_SITES pass (dark + light + one split preset). Fix only regressions. Includes the Nov 5 rows: B-2 Bearbottom Find my size, F-1 Google Form, X-6 Walmart order page, A-4 Airbnb chips.
@@ -519,6 +625,13 @@ Chromium headless, Mac moderately busy (load 2.4–4.2), 4 rounds alternating wh
   - Fixtures: theme-color, late-text, buttons, forms, google-aimode (+ deep). Harness: `--keep-storage`, `--scenarios switch`, `AURA_HARNESS_TIMELINE`, per-fixture origin, top tasks and pass list in results.
   - Not committed; phone check list in the Session 6 report.
 - **Nov 13 phone check of Session 6:** mostly passed, including Load-1/2/3 (the bottom strip switches right away), F-1, B-1/X-6, AI Mode typing and all regression rows. Nine findings recorded in "Nov 13 phone findings"; X-4 and X-5 decided: fix both. Deadline moved to Nov 23; old Session 7 renumbered to Session 9. New TEST_SITES rows G-4, G-5, W-5, R-4, B-3, X-7, F-2; R-3 criteria updated.
+- **Session 7 (Nov 13):**
+  - Committed Session 6 (`05121ac`, A/B baseline in worktree `../Aura-s6`).
+  - Opaque surfaces: three general causes (Google's strip rules hid authored paint from the probe; gradient-only paint wasn't read; z-index ≥ 1000 cards were skipped). Also: Aura's own sheets no longer nominate "authored" elements.
+  - Mask elements: one rule for floating labels and thread-line masks. R-3: a blurred covering backdrop stays a scrim; buttons keep standing apart from their themed container. B-3: darkening blends on photo wrappers neutralized on dark themes. X-7: a site rewriting its theme-color meta after Aura is re-synced at once; harness tint probe. X-4 and X-5 fixed, plus the native path's engine-restart bug.
+  - Fixtures: promo-sheet, portal-banner, masks, blend, github-chrome; google-aimode and buttons extended. Harness: `--scenarios settings`, `tint`, blend mode in paint dumps, `AURA_HARNESS_DUMP_INLINE`.
+  - Three A/B runs vs Session 6 (the first two found the button cost and the self-nomination). Not committed; phone check Nov 16.
+- **Nov 14 phone check of Session 7:** passed, no regressions (R-4, B-3, X-4, X-5 confirmed). New/remaining findings in "Nov 14 phone findings"; Google AI first. Decided: drop decorative light background images on text sections; Session 8 reads live DOM through Claude in Chrome (no HARs/HUD). Harness: live site entries for webmd, urbanplates, walmart; google-search query → "what is ashwagandha".
 
 ## Root-cause details (Session 1 audit)
 Line numbers are from baseline commit `0d47537`. Paths are relative to `ios/TintExtension Extension/Resources/`. Confidence levels are stated per item. "Hypothesis" means the HUD (Session 2) must confirm it.

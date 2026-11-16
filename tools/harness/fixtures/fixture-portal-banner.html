@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wikipedia</title>
+<!--
+  Offline stand-in for the www.wikipedia.org portal with a fundraising
+  banner showing (TEST_SITES W-5, light theme too). Served as
+  https://www.wikipedia.org. Shape:
+    - the central wordmark (an SVG text logo) and the language list
+    - a CentralNotice-style banner inserted after 1 s: a role-less
+      position:fixed card at the bottom, z-index 100000, white, with text,
+      a filled "Donate" button and a close button
+  Same skip as fixture-promo-sheet before Session 7: a fixed modal-card
+  shape at z-index >= 1000 was never painted, so the banner text sat over
+  the language list.
+-->
+<style>
+  body { margin: 0; font: 15px sans-serif; background: #fff; color: #202122; text-align: center; }
+  .central { padding: 24px 16px 8px; }
+  .central svg { width: 220px; height: 40px; }
+  .langs { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 8px; padding: 12px 16px; }
+  .langs a { color: #36c; text-decoration: none; }
+  .langs small { display: block; color: #54595d; }
+  .search { margin: 16px; padding: 8px; border: 1px solid #a2a9b1; border-radius: 2px; text-align: left; color: #72777d; }
+  .more { padding: 0 16px 300px; color: #54595d; }
+  .frb { position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 100000; padding: 16px; border-radius: 8px; background: #fff;
+         box-shadow: 0 2px 10px rgba(0,0,0,.25); text-align: left; }
+  .frb p { margin: 0 0 12px; line-height: 1.4; }
+  .frb .donate { border: 0; padding: 10px 18px; border-radius: 4px; background: #36c; color: #fff; font: 700 15px sans-serif; }
+  .frb .close { position: absolute; top: 6px; right: 8px; border: 0; background: transparent; font-size: 20px; color: #202122; }
+</style>
+</head>
+<body>
+<div class="central"><svg viewBox="0 0 220 40" role="img" aria-label="Wikipedia"><text x="110" y="30" text-anchor="middle" font-family="serif" font-size="30" letter-spacing="3" fill="#000">WIKIPEDIA</text></svg>
+  <div>The Free Encyclopedia</div></div>
+<div class="langs">
+  <a href="#">English<small>6 917 000+ articles</small></a><a href="#">日本語<small>1 450 000+ 記事</small></a>
+  <a href="#">Deutsch<small>2 990 000+ Artikel</small></a><a href="#">Español<small>2 010 000+ artículos</small></a>
+  <a href="#">Русский<small>2 040 000+ статей</small></a><a href="#">Français<small>2 660 000+ articles</small></a>
+  <a href="#">Italiano<small>1 900 000+ voci</small></a><a href="#">中文<small>1 470 000+ 条目</small></a>
+  <a href="#">Polski<small>1 650 000+ haseł</small></a><a href="#">Português<small>1 150 000+ artigos</small></a>
+</div>
+<div class="search">Search Wikipedia</div>
+<div class="more">Read Wikipedia in your language</div>
+<script>
+  setTimeout(function () {
+    document.body.insertAdjacentHTML('beforeend',
+      '<div class="frb"><button class="close" aria-label="Close">×</button>' +
+      '<p><b>Please don’t skip this 1-minute read.</b> This Thursday, we ask you to join the 2% of readers who give. ' +
+      'If everyone reading this gave just $2.75, we would hit our goal in a couple of hours.</p>' +
+      '<button class="donate">Donate now</button></div>');
+  }, 1000);
+</script>
+</body>
+</html>

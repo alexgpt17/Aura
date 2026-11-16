@@ -28,7 +28,7 @@ module.exports = [
     {
         id: 'google-search',
         rows: ['Type-3', 'G-1'],
-        url: 'https://www.google.com/search?q=why+is+the+sky+blue',
+        url: 'https://www.google.com/search?q=what+is+ashwagandha',
         type: { selectors: ['textarea[name="q"]', 'input[name="q"]'] },
     },
     {
@@ -57,6 +57,10 @@ module.exports = [
     { id: 'youtube', rows: ['X-1'], url: 'https://m.youtube.com/' },
     { id: 'x', rows: ['X-1'], url: 'https://x.com/' },
     { id: 'fox5', rows: ['X-2'], url: 'https://fox5sandiego.com/' },
+    // Nov 14 phone findings (record with --har record, see RELEASE_PLAN Session 8).
+    { id: 'webmd', rows: ['X-8', 'X-10', 'Load-4'], url: 'https://www.webmd.com/vitamins/ai/ingredientmono-1564/alpha-gpc' },
+    { id: 'urbanplates', rows: ['F-2', 'U-1'], url: 'https://urbanplates.com/menu/' },
+    { id: 'walmart', rows: ['X-6', 'X-11'], url: 'https://www.walmart.com/', actions: [{ click: 'button[aria-label*="Menu" i], [data-automation-id="hamburger-menu"]' }, { wait: 1000 }, { shot: 'menu' }] },
     { id: 'gmaps', rows: ['X-3'], url: 'https://www.google.com/maps' },
 
     // Offline fixtures (always available, also inside a no-network sandbox).
@@ -94,4 +98,13 @@ module.exports = [
     },
     { id: 'fixture-buttons', rows: ['B-1', 'X-6', 'R-3 (synthetic)'], fixture: true },
     { id: 'fixture-forms', rows: ['F-1 (synthetic)'], fixture: true, origin: 'https://docs.google.com' },
+    // Session 7.
+    { id: 'fixture-promo-sheet', rows: ['G-4 (synthetic)'], fixture: true, origin: 'https://www.google.com' },
+    { id: 'fixture-blend', rows: ['B-3 (synthetic)'], fixture: true },
+    {
+        id: 'fixture-github-chrome', rows: ['X-7 (synthetic)'], fixture: true, origin: 'https://github.com',
+        actions: [{ click: 'button[aria-label="Toggle navigation"]' }, { wait: 800 }, { shot: 'menu' }],
+    },
+    { id: 'fixture-masks', rows: ['F-2', 'R-4 (synthetic)'], fixture: true },
+    { id: 'fixture-portal-banner', rows: ['W-5 (synthetic)'], fixture: true, origin: 'https://www.wikipedia.org' },
 ];

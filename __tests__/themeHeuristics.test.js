@@ -2360,9 +2360,57 @@ describe('classifyAuthoredPaint', () => {
     ['dark backdrop with blur is a frosted card', p('rgba(0, 0, 0, 0.4)', 'blur(8px)'), 'opaque', 'opaque'],
     ['almost invisible wash', p('rgba(0, 0, 0, 0.04)'), 'clear', 'clear'],
     ['space-separated rgb()', p('rgb(255 255 255 / 0.9)'), 'opaque', 'opaque'],
+    ['solid gradient band, no color', { bg: 'rgba(0, 0, 0, 0)', img: 'linear-gradient(rgb(255, 255, 255), rgb(255, 255, 255))' }, 'opaque', 'opaque'],
+    ['fade into the page color', { bg: 'rgba(0, 0, 0, 0)', img: 'linear-gradient(to right, rgba(255, 255, 255, 0), rgb(255, 255, 255))' }, 'fade', 'fade'],
+    ['faint gradient wash', { bg: 'rgba(0, 0, 0, 0)', img: 'linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.2))' }, 'clear', 'clear'],
+    ['photo background is not paint', { bg: 'rgba(0, 0, 0, 0)', img: 'url("a.jpg"), linear-gradient(rgb(0, 0, 0), rgb(0, 0, 0))' }, 'clear', 'clear'],
+    ['background color wins over a gradient', { bg: 'rgb(255, 255, 255)', img: 'linear-gradient(rgba(0, 0, 0, 0), rgb(0, 0, 0))' }, 'opaque', 'opaque'],
   ])('%s', (_label, paint, layer, overlay) => {
     expect(H.classifyAuthoredPaint(paint, 'layer')).toBe(layer);
     expect(H.classifyAuthoredPaint(paint, 'overlay')).toBe(overlay);
+  });
+});
+
+describe('mask elements', () => {
+  const R = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
+  const side = { top: 0, right: 0, bottom: 0, left: 0 };
+  test('a floating label across an input border is a mask', () => {
+    const label = R(10, 91, 90, 18);
+    const input = { ...side, rect: R(0, 100, 360, 48), top: 1, right: 1, bottom: 1, left: 1 };
+    expect(H.isMaskOverLine(label, [input])).toBe(true);
+  });
+  test('a square across a thread line (border-left) is a mask', () => {
+    expect(H.isMaskOverLine(R(4, 200, 16, 16), [{ ...side, rect: R(11, 0, 1, 220), left: 1 }])).toBe(true);
+  });
+  test('a badge that crosses no line is not', () => {
+    expect(H.isMaskOverLine(R(10, 10, 90, 22), [{ ...side, rect: R(0, 0, 360, 160) }])).toBe(false);
+    expect(H.isMaskOverLine(R(0, 0, 400, 30), [{ ...side, rect: R(0, 10, 400, 40), top: 1 }])).toBe(false);
+  });
+  test('the fill must match what it sits on', () => {
+    expect(H.isMaskFill({ r: 255, g: 255, b: 255, a: 1 }, null)).toBe(true);
+    expect(H.isMaskFill({ r: 14, g: 17, b: 19, a: 1 }, { r: 14, g: 17, b: 19, a: 1 })).toBe(true);
+    expect(H.isMaskFill({ r: 255, g: 255, b: 255, a: 1 }, { r: 14, g: 17, b: 19, a: 1 })).toBe(false);
+    expect(H.isMaskFill({ r: 255, g: 255, b: 255, a: 0 }, null)).toBe(false);
+  });
+});
+
+describe('covering backdrops', () => {
+  test('a blurred dark backdrop that covers the screen stays a scrim', () => {
+    const p = { bg: 'rgba(0, 0, 0, 0.4)', backdrop: 'blur(2px)' };
+    expect(H.classifyAuthoredPaint(p, 'overlay', true)).toBe('scrim');
+    expect(H.classifyAuthoredPaint(p, 'overlay', false)).toBe('opaque');
+  });
+});
+
+describe('themeGradient', () => {
+  test('each stop becomes the token at its own alpha', () => {
+    expect(H.themeGradient('linear-gradient(to right, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.5) 40%, rgb(255, 255, 255))', 'var(--aura-bg)'))
+      .toBe('linear-gradient(to right, transparent, color-mix(in srgb, var(--aura-bg) 50%, transparent) 40%, var(--aura-bg))');
+  });
+  test('null for anything but a pure gradient', () => {
+    expect(H.themeGradient('none', 'var(--aura-bg)')).toBeNull();
+    expect(H.themeGradient('url("a.png")', 'var(--aura-bg)')).toBeNull();
+    expect(H.themeGradient('url("a.png"), linear-gradient(rgb(0, 0, 0), rgb(0, 0, 0))', 'var(--aura-bg)')).toBeNull();
   });
 });
 
@@ -2430,6 +2478,30 @@ describe('buttons and stateful controls', () => {
   test('light theme mirror: dark full-width strip becomes a surface, dark button gets light text', () => {
     expect(H.buttonPaintDecision({ ...light, fill: rgb(20, 20, 20), text: rgb(0, 0, 0), widthFrac: 0.9 }).mode).toBe('surface');
     expect(H.buttonPaintDecision({ ...light, fill: rgb(20, 20, 20), text: rgb(0, 0, 0), widthFrac: 0.3 })).toEqual({ mode: 'text', color: '#ffffff' });
+  });
+
+  test('a full-width button that stood apart from its sheet stays a control (Reddit R-3 stacked "Save")', () => {
+    const sheet = { container: rgb(255, 255, 255), themedContainer: rgb(28, 28, 30), distinctFill: rgb(64, 64, 66) };
+    expect(H.buttonPaintDecision({ ...dark, ...sheet, fill: rgb(229, 235, 238), text: rgb(255, 255, 255), widthFrac: 1 }).mode).toBe('text');
+    // The Walmart strip blended into its white section: still a surface.
+    expect(H.buttonPaintDecision({ ...dark, fill: rgb(255, 255, 255), text: rgb(46, 47, 50), widthFrac: 1, container: rgb(255, 255, 255), themedContainer: rgb(28, 28, 30), distinctFill: rgb(64, 64, 66) }).mode).toBe('surface');
+  });
+
+  test('a fill that stood apart but blends into the themed container gets the distinct fill', () => {
+    const d = H.buttonPaintDecision({ ...dark, fill: rgb(30, 30, 32), text: rgb(255, 255, 255), widthFrac: 1,
+      container: rgb(255, 255, 255), themedContainer: rgb(28, 28, 30), distinctFill: rgb(64, 64, 66) });
+    expect(d).toEqual({ mode: 'distinct', color: '#FFFFFF' });
+    // Still apart from the themed sheet (brand blue): kept as authored.
+    expect(H.buttonPaintDecision({ ...dark, fill: rgb(10, 68, 155), text: rgb(255, 255, 255), widthFrac: 1,
+      container: rgb(255, 255, 255), themedContainer: rgb(28, 28, 30), distinctFill: rgb(64, 64, 66) }).mode).toBe('none');
+  });
+
+  test('fillStandsApart', () => {
+    expect(H.fillStandsApart(rgb(229, 235, 238), rgb(255, 255, 255))).toBe(true);
+    expect(H.fillStandsApart(rgb(247, 247, 247), rgb(255, 255, 255))).toBe(false);
+    expect(H.fillStandsApart(rgb(239, 239, 239), rgb(255, 255, 255))).toBe(false);
+    expect(H.fillStandsApart(rgb(30, 30, 32), rgb(28, 28, 30))).toBe(false);
+    expect(H.fillStandsApart(rgb(200, 40, 40), rgb(40, 120, 40))).toBe(true);
   });
 
   test('state controls: brand fill kept, neutral fill against the theme mapped by state', () => {

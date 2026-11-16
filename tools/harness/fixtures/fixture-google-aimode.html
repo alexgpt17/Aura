@@ -22,6 +22,15 @@
       the way Google's composer mutates on input
     - an Images-viewer-shaped [aria-modal] sheet, hidden, plus #islrg (the
       body:has() rules key on these)
+  Session 7 (G-5), shapes that stayed transparent on the phone:
+    - a sticky top bar (G logo + chevron) inside #rso, authored white, with
+      the answer scrolling under it. #rso's strip rule (SITE_FIXES) has no
+      probe exemption, so the authored-paint probe read it as transparent
+    - the composer sits inside #rso too, its fixed bar authored white
+    - a fixed band under the composer painted with a background-image
+      gradient (no background-color): the strip leaves gradients alone and
+      the probe only read background-color, so the site's own color (dark
+      gray under Google's dark CSS on the phone, white here) stays
 -->
 <style>
   body { margin: 0; font: 16px arial, sans-serif; background: #fff; color: #1f1f1f; }
@@ -38,7 +47,10 @@
   .mZ3f ul { padding-left: 20px; }
   .mZ3f .chip { display: inline-block; margin: 4px 4px 0 0; padding: 6px 12px; border-radius: 14px; background: #fff; border: 1px solid #c4c7c5; font-size: 14px; }
   .mZ3f .disc { margin-top: 12px; font-size: 12px; color: #444746; }
-  .cbar { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 12px 24px; background: #fff; }
+  .cbar { position: fixed; left: 0; right: 0; bottom: 24px; padding: 10px 12px 0; background: #fff; z-index: 5; }
+  .cband { position: fixed; left: 0; right: 0; bottom: 0; height: 24px; background-image: linear-gradient(#fff, #fff); z-index: 5; }
+  .tbar { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: 10px; height: 52px; margin: 0 -16px; padding: 0 16px; background: #fff; }
+  .tbar .chev { width: 32px; height: 32px; border: 0; border-radius: 16px; background: transparent; color: #444746; }
   .pill { display: flex; align-items: flex-end; gap: 6px; padding: 6px 8px; border-radius: 28px; background: #f0f4f9; }
   .pill.focused { background: #e9eef6; }
   .sliver { flex: 1; min-height: 42px; display: flex; align-items: center; }
@@ -54,6 +66,7 @@
 <body>
 <div class="hdr"><div class="q">why is the sky blue</div></div>
 <div id="rso">
+  <div class="tbar"><svg width="24" height="24" viewBox="0 0 24 24" aria-label="Google"><path fill="#4285f4" d="M12 2h10v10H12z"/><path fill="#ea4335" d="M2 2h10v10H2z"/><path fill="#fbbc05" d="M2 12h10v10H2z"/><path fill="#34a853" d="M12 12h10v10H12z"/></svg><button class="chev" aria-label="More">⌄</button></div>
   <div class="Kx9p">
     <h3>AI Overview</h3>
     <div id="m-x-content">
@@ -71,16 +84,17 @@
     <div class="disc">AI responses may include mistakes. Learn more</div>
   </div>
   <div id="islrg"><div></div><div></div><div></div><div></div></div>
-</div>
-<div class="viewer" aria-modal="true" role="dialog"><button aria-label="Close">×</button></div>
-<div class="cbar">
-  <div class="pill">
-    <button class="ib" aria-label="Add">+</button>
-    <div class="sliver"><textarea aria-label="Ask anything" placeholder="Ask anything" rows="1"></textarea></div>
-    <button class="ib" aria-label="Voice">🎤</button>
-    <button class="ib send off" aria-label="Send">➤</button>
+  <div class="cbar">
+    <div class="pill">
+      <button class="ib" aria-label="Add">+</button>
+      <div class="sliver"><textarea aria-label="Ask anything" placeholder="Ask anything" rows="1"></textarea></div>
+      <button class="ib" aria-label="Voice">🎤</button>
+      <button class="ib send off" aria-label="Send">➤</button>
+    </div>
   </div>
 </div>
+<div class="cband"></div>
+<div class="viewer" aria-modal="true" role="dialog"><button aria-label="Close">×</button></div>
 <script>
   var words = ' is made of all colors. When it enters the atmosphere, it hits nitrogen and oxygen molecules, which are much smaller than the wavelength of visible light, so they scatter it in every direction; blue light scatters about five times more than red, so the sky looks blue from wherever you stand'.split(' ');
   var stream = document.getElementById('stream'), body = stream.parentNode, w = 0, t0 = performance.now();

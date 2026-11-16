@@ -48,7 +48,7 @@ describe('resolveTheme precedence', () => {
     expect(R.resolveTheme(data, 'news.example.com', 12 * 60)).toEqual(site);
   });
 
-  test('disabled site theme falls through', () => {
+  test('disabled site theme turns Aura off on that site (X-4)', () => {
     const data = {
       globalTheme: global,
       siteThemes: { 'news.example.com': { ...site, enabled: false } },
@@ -60,7 +60,12 @@ describe('resolveTheme precedence', () => {
         nightThemeColors: night,
       },
     };
-    expect(R.resolveTheme(data, 'news.example.com', 12 * 60)).toEqual(day);
+    const resolved = R.resolveTheme(data, 'news.example.com', 12 * 60);
+    expect(resolved.enabled).toBe(false);
+    // ...and is never cached, so the next load starts unthemed.
+    expect(R.serializeThemeCache(resolved)).toBeNull();
+    // Other sites still get the time-based theme.
+    expect(R.resolveTheme(data, 'other.example.com', 12 * 60)).toEqual(day);
   });
 
   test('time-based day vs night window', () => {

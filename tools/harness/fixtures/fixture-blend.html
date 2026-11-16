@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blended images</title>
+<!--
+  Product photos blended onto light tiles (TEST_SITES B-3, Amazon "Similar
+  products"). Product shots have white backgrounds; the site sets
+  mix-blend-mode: multiply (or darken) so the white drops out into the
+  tile's light gray. The engine has always forced `img { mix-blend-mode:
+  normal }`, so the blend that survives is on a wrapper around the photo.
+  Shapes:
+    - a 2-column grid of tiles (div, #f7f8f8, a little larger than the
+      photo): multiply on a wrapper div, on a <picture>, darken on a
+      wrapper div, and one multiply <img> (the case already neutralized)
+    - a large white result card (photo + title + price) whose photo
+      wrapper is multiplied onto the card itself
+  Themed dark, the strip clears the tile, so the photo multiplies with the
+  dark page: nearly black.
+-->
+<style>
+  body { margin: 0; font: 15px -apple-system, sans-serif; background: #fff; color: #0f1111; }
+  h3 { margin: 12px 16px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 16px; }
+  .tile { padding: 8px; border-radius: 8px; background: #f7f8f8; }
+  .tile img { display: block; width: 100%; height: auto; }
+  .mx { mix-blend-mode: multiply; }
+  .dk { mix-blend-mode: darken; }
+  picture { display: block; }
+  .cap { margin: 6px 0 12px; font-size: 13px; }
+  .card { margin: 16px; padding: 12px; border-radius: 8px; background: #fff; box-shadow: 0 0 0 1px #ddd; }
+  .card .ph { width: 120px; height: 120px; mix-blend-mode: multiply; float: left; margin-right: 12px; }
+  .card .ph img { width: 120px; height: 120px; }
+  .card .price { font-size: 20px; font-weight: 700; }
+</style>
+</head>
+<body>
+<h3>Similar products</h3>
+<div class="grid">
+  <div><div class="tile"><div class="mx"><img alt="Cable A" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2ZmZiIvPjxyZWN0IHg9IjUwIiB5PSI0MCIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMjAiIHJ4PSIxNCIgZmlsbD0iI2U0NzkxMSIvPjxjaXJjbGUgY3g9IjEwMCIgY3k9IjEwMCIgcj0iMjIiIGZpbGw9IiNmZmYiLz48L3N2Zz4="></div></div><div class="cap">USB-C cable, 6 ft</div></div>
+  <div><div class="tile"><picture class="mx"><img alt="Cable B" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2ZmZiIvPjxyZWN0IHg9IjUwIiB5PSI0MCIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMjAiIHJ4PSIxNCIgZmlsbD0iIzFhNzNlOCIvPjxjaXJjbGUgY3g9IjEwMCIgY3k9IjEwMCIgcj0iMjIiIGZpbGw9IiNmZmYiLz48L3N2Zz4="></picture></div><div class="cap">Braided cable, 2-pack</div></div>
+  <div><div class="tile"><img alt="Charger" class="mx" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2ZmZiIvPjxyZWN0IHg9IjUwIiB5PSI0MCIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMjAiIHJ4PSIxNCIgZmlsbD0iIzMzMzMzMyIvPjxjaXJjbGUgY3g9IjEwMCIgY3k9IjEwMCIgcj0iMjIiIGZpbGw9IiNmZmYiLz48L3N2Zz4="></div><div class="cap">65 W charger (img)</div></div>
+  <div><div class="tile"><div class="dk"><img alt="Hub" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2ZmZiIvPjxyZWN0IHg9IjUwIiB5PSI0MCIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMjAiIHJ4PSIxNCIgZmlsbD0iI2MwMzkyYiIvPjxjaXJjbGUgY3g9IjEwMCIgY3k9IjEwMCIgcj0iMjIiIGZpbGw9IiNmZmYiLz48L3N2Zz4="></div></div><div class="cap">USB-C hub (darken wrapper)</div></div>
+</div>
+<div class="card"><div class="ph"><img alt="Adapter" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2ZmZiIvPjxyZWN0IHg9IjUwIiB5PSI0MCIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMjAiIHJ4PSIxNCIgZmlsbD0iIzE2YTA4NSIvPjxjaXJjbGUgY3g9IjEwMCIgY3k9IjEwMCIgcj0iMjIiIGZpbGw9IiNmZmYiLz48L3N2Zz4="></div><div>USB-C to Lightning adapter, 3 ft, fast charging</div><div class="price">$12.99</div><div style="clear:both"></div></div>
+</body>
+</html>

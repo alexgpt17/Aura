@@ -204,8 +204,9 @@ async function writeToStorage(newData) {
                             let themeToSend = globalTheme;
                             const tabHostname = new URL(tab.url).hostname;
                             
-                            if (newData.siteThemes?.[tabHostname]?.enabled !== false
-                                && newData.siteThemes?.[tabHostname]) {
+                            // A disabled site entry is sent as is (enabled:
+                            // false), so the tab turns Aura off (X-4).
+                            if (newData.siteThemes?.[tabHostname]) {
                                 themeToSend = newData.siteThemes[tabHostname];
                             } else if (newData.timeBasedRule?.enabled) {
                                 // Approximate day/night here so newly opened tabs

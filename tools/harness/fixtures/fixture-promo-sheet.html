@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>golden gate bridge - Google Search</title>
+<!--
+  Offline stand-in for Google's "Keep things dark while you browse" app
+  promo on Safari (TEST_SITES G-4). Served as https://www.google.com. Shape:
+    - results with an AI Overview card inside #rso
+    - a role-less, position:fixed bottom sheet at z-index 2000 (outside
+      #rso): white, rounded top, a title, a line of text, a text button
+      ("Stay in browser") and a filled button ("Continue"). Shown 800 ms
+      after load, as Google slides it in
+  Before Session 7 a fixed modal-card-shaped element at z-index >= 1000 was
+  skipped as an "overlay-tier shell" (the fox5sandiego curtain guard), and
+  the sticky rule leaves modal cards to that walk, so the sheet stayed
+  stripped: results showed through it.
+-->
+<style>
+  body { margin: 0; font: 16px arial, sans-serif; background: #fff; color: #1f1f1f; }
+  .hdr { padding: 12px 16px; border-bottom: 1px solid #ecedef; }
+  .hdr .q { padding: 10px 14px; border-radius: 22px; background: #fff; box-shadow: 0 1px 6px rgba(32,33,36,.28); }
+  #rso { padding: 0 16px 40px; }
+  .Kx9p { margin: 12px 0; padding: 14px; border-radius: 16px; background: #fff; border: 1px solid #e3e3e3; }
+  .res { margin: 18px 0; }
+  .res a { color: #1a0dab; font-size: 18px; }
+  .res p { margin: 4px 0; color: #4d5156; }
+  .promo { position: fixed; left: 0; right: 0; bottom: 0; z-index: 2000; padding: 20px 20px 28px; border-radius: 24px 24px 0 0;
+           background: #fff; box-shadow: 0 -2px 12px rgba(0,0,0,.2); transform: translateY(100%); transition: transform .2s; }
+  .promo.on { transform: none; }
+  .promo h2 { margin: 0 0 8px; font-size: 20px; font-weight: 400; }
+  .promo p { margin: 0 0 18px; color: #444746; }
+  .promo .row { display: flex; justify-content: flex-end; gap: 8px; }
+  .promo .txt { border: 0; padding: 10px 16px; border-radius: 20px; background: transparent; color: #0b57d0; font: 500 14px arial; }
+  .promo .fill { border: 0; padding: 10px 20px; border-radius: 20px; background: #0b57d0; color: #fff; font: 500 14px arial; }
+</style>
+</head>
+<body>
+<div class="hdr"><div class="q">golden gate bridge</div></div>
+<div id="rso">
+  <div class="Kx9p"><h3>AI Overview</h3><p>The Golden Gate Bridge is a suspension bridge spanning the Golden Gate, the strait connecting San Francisco Bay and the Pacific Ocean.</p></div>
+  <div class="res"><a href="#">Golden Gate Bridge - Wikipedia</a><p>The bridge opened in 1937 and was then the longest suspension bridge main span in the world.</p></div>
+  <div class="res"><a href="#">Golden Gate Bridge Highway &amp; Transportation District</a><p>Tolls, hours, visitor center and parking.</p></div>
+  <div class="res"><a href="#">Visiting the bridge</a><p>Walk or bike across; the east sidewalk is open to pedestrians during daylight hours.</p></div>
+  <div class="res"><a href="#">History and construction</a><p>Chief engineer Joseph Strauss; construction began in January 1933.</p></div>
+</div>
+<div class="promo">
+  <h2>Keep things dark while you browse</h2>
+  <p>Get dark theme and more in the Google app.</p>
+  <div class="row"><button class="txt">Stay in browser</button><button class="fill">Continue</button></div>
+</div>
+<script>
+  setTimeout(function () { document.querySelector('.promo').classList.add('on'); }, 800);
+</script>
+</body>
+</html>

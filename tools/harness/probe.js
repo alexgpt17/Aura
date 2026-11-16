@@ -190,7 +190,45 @@
             shadowCopies: tally(shadowCopies),
             iframeCopies: tally(iframeCopies),
             cache: (function () { try { return localStorage.getItem('__aura'); } catch (e) { return 'throws'; } })(),
+            colorMode: de.getAttribute('data-color-mode'),
+            // Elements carrying an Aura inline paint (light DOM).
+            auraInline: document.querySelectorAll('[style*="--aura"]').length,
         };
+    };
+
+    // What Safari can tint its status bar / toolbar from: the theme-color
+    // metas, the html/body (canvas) background, and every visible
+    // fixed/sticky box touching the top or bottom edge of the viewport
+    // (with its ::before/::after), each with its computed background.
+    // Which of these Safari actually samples is phone-only.
+    AH.tint = function () {
+        var vh = window.innerHeight, out = { metas: [], html: '', body: '', top: [], bottom: [] };
+        Array.prototype.forEach.call(document.querySelectorAll('meta[name="theme-color"]'), function (m) {
+            out.metas.push((m.id ? '#' + m.id + ' ' : '') + (m.getAttribute('media') ? '[' + m.getAttribute('media') + '] ' : '') + m.getAttribute('content'));
+        });
+        out.html = getComputedStyle(document.documentElement).backgroundColor;
+        out.body = document.body ? getComputedStyle(document.body).backgroundColor : '';
+        var paint = function (cs) { return cs.backgroundColor + (cs.backgroundImage !== 'none' ? ' ' + cs.backgroundImage.slice(0, 40) : ''); };
+        var walk = function (root, prefix) {
+            var all = root.querySelectorAll('*');
+            for (var i = 0; i < all.length; i++) {
+                var el = all[i], cs = getComputedStyle(el);
+                if (el.shadowRoot) walk(el.shadowRoot, prefix + '›');
+                if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+                if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+                var r = el.getBoundingClientRect();
+                if (r.width < 1 || r.height < 1) continue;
+                var row = prefix + AH.describeNode(el) + ' ' + Math.round(r.top) + '..' + Math.round(r.bottom) + ': ' + paint(cs);
+                ['::before', '::after'].forEach(function (p) {
+                    var ps = getComputedStyle(el, p);
+                    if (ps.content !== 'none' && ps.content !== 'normal') row += ' ' + p + ' ' + paint(ps);
+                });
+                if (r.top <= 1 && r.bottom > 0) out.top.push(row);
+                if (r.bottom >= vh - 1 && r.top < vh) out.bottom.push(row);
+            }
+        };
+        walk(document, '');
+        return out;
     };
 
     // Mean color of the bottom strip of a screenshot (PNG as base64).

@@ -13,8 +13,13 @@
     - Airbnb: white chip links (<a> pills, link-colored text), a white
       "Guest favorite" badge (a div) and a "Prices include all fees" pill
     - Amazon: a gradient "Add to Cart" (the fill is background-image only)
-    - Reddit: a bottom sheet (role=dialog) inside a shadow root with a light
-      "Save" button and a dark "Discard" button, opened after 1 s
+    - Reddit: a bottom sheet inside a shadow root with a light "Save"
+      button and a dark "Discard" button, opened after 1 s. Session 7
+      (R-3): the sheet sits in a full-screen role=dialog wrapper whose own
+      paint is the dimming scrim (rgba(0,0,0,.4) + a 2 px backdrop blur), and the buttons are
+      stacked full width, as on the phone. Before Session 7 the static
+      dialog rule could leave the scrim solid, and a full-width neutral
+      button was painted as a theme surface (Save blended into the sheet)
     - a dark authored button (#1f1f1f, white text) that must stay as it is
 -->
 <style>
@@ -52,14 +57,15 @@
     open() {
       this.shadowRoot.innerHTML =
         '<style>' +
-        '.sheet{position:fixed;left:0;right:0;bottom:0;padding:16px;border-radius:16px 16px 0 0;background:#fff;box-shadow:0 -2px 12px rgba(0,0,0,.2)}' +
-        '.row{display:flex;gap:8px;margin-top:12px}' +
-        'button{flex:1;padding:10px;border:0;border-radius:20px;font:inherit}' +
+        '.scrim{position:fixed;inset:0;background:rgba(0,0,0,.4);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}' +
+        '.sheet{position:absolute;left:0;right:0;bottom:0;padding:16px;border-radius:16px 16px 0 0;background:#fff;box-shadow:0 -2px 12px rgba(0,0,0,.2)}' +
+        '.row{display:flex;flex-direction:column;gap:8px;margin-top:12px}' +
+        'button{padding:10px;border:0;border-radius:20px;font:inherit}' +
         '.save{background:#e5ebee;color:#0f1a1c}' +
         '.discard{background:#0a449b;color:#fff}' +
         '</style>' +
-        '<div class="sheet" role="dialog" aria-modal="true"><b>Save draft?</b><p>You can come back to it later.</p>' +
-        '<div class="row"><button class="save">Save</button><button class="discard">Discard</button></div></div>';
+        '<div class="scrim" role="dialog" aria-modal="true"><div class="sheet"><b>Save draft?</b><p>You can come back to it later.</p>' +
+        '<div class="row"><button class="save">Save</button><button class="discard">Discard</button></div></div></div>';
     }
   });
   setTimeout(function () { document.querySelector('draft-sheet').open(); }, 1000);

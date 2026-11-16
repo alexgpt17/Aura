@@ -1892,27 +1892,133 @@
      *   'scrim'  — overlay mode only: a dark translucent backdrop. Keep its
      *              authored color (dimmed, not solid, not cleared) and keep
      *              descending to find the card.
+     *   'fade'   — no background color, a gradient fading between opaque
+     *              and transparent stops: repaint the gradient in the
+     *              theme color (themeGradient) and keep descending.
      *   'clear'  — transparent or a faint wash: leave it, keep descending.
-     * In layer mode a dark translucent bar at >= 0.5 is 'opaque': it's a
-     * surface with text on it, which needs the theme surface + theme text.
-     * @param {{ bg?: string, backdrop?: string }|null} paint
+     * A gradient with every stop >= 0.5 alpha (and no background color) is
+     * 'opaque'. In layer mode a dark translucent bar at >= 0.5 is 'opaque':
+     * it's a surface with text on it, which needs the theme surface + theme
+     * text.
+     * A layer that covers the screen (`covering`) is a backdrop, not a
+     * card: in overlay mode a dark translucent one stays 'scrim' even
+     * behind a blur (Reddit's "Save draft?" backdrop).
+     * @param {{ bg?: string, backdrop?: string, img?: string }|null} paint
      * @param {'layer'|'overlay'} mode
-     * @returns {'opaque'|'scrim'|'clear'}
+     * @param {boolean} [covering]
+     * @returns {'opaque'|'scrim'|'fade'|'clear'}
      */
-    function classifyAuthoredPaint(paint, mode) {
+    function classifyAuthoredPaint(paint, mode, covering) {
         if (!paint) return 'clear';
         var c = parseCssRgb(paint.bg);
         var a = c ? c.a : 0;
-        if (a <= AUTHORED_PAINT_MIN_ALPHA) return 'clear';
+        if (a <= AUTHORED_PAINT_MIN_ALPHA) {
+            // A surface painted with a gradient and no background color (a
+            // solid `linear-gradient(#fff, #fff)` band, a fade into the
+            // page color). The strip leaves background-image alone, so
+            // the site's own color would stay.
+            var stops = gradientStopAlphas(paint.img);
+            if (!stops) return 'clear';
+            if (stops.min >= 0.5) return 'opaque';
+            if (stops.max >= 0.5) return 'fade';
+            return 'clear';
+        }
         var blurred = !!paint.backdrop && paint.backdrop !== 'none';
         var dark = Math.max(c.r, c.g, c.b) <= AUTHORED_SCRIM_MAX_CHANNEL;
-        if (mode === 'overlay' && dark && a < AUTHORED_SCRIM_MAX_ALPHA && !blurred) return 'scrim';
+        if (mode === 'overlay' && dark && a < AUTHORED_SCRIM_MAX_ALPHA && (!blurred || covering)) return 'scrim';
         if (a >= 0.5 || blurred) return 'opaque';
         return 'clear';
     }
     var AUTHORED_PAINT_MIN_ALPHA = 0.05;
+
+    // { min, max } alpha over a pure gradient's color stops (null if the
+    // value isn't a gradient, has a url() layer, or names no colors).
+    var CSS_COLOR_RE = /rgba?\([^)]*\)/gi;
+    function gradientStopAlphas(value) {
+        if (!isGradientBackgroundImage(value)) return null;
+        var m = String(value).match(CSS_COLOR_RE);
+        if (!m) return null;
+        var min = 1;
+        var max = 0;
+        for (var i = 0; i < m.length; i++) {
+            var c = parseCssRgb(m[i]);
+            var a = c ? c.a : 0;
+            if (a < min) min = a;
+            if (a > max) max = a;
+        }
+        return { min: min, max: max };
+    }
+
+    /**
+     * The authored gradient with every color stop replaced by `token` at
+     * that stop's alpha, so a fade or a gradient band keeps its shape in
+     * the theme color. Computed values serialize colors as rgb()/rgba().
+     * Null for anything but a pure gradient.
+     */
+    function themeGradient(value, token) {
+        if (!gradientStopAlphas(value)) return null;
+        return String(value).replace(CSS_COLOR_RE, function (col) {
+            var c = parseCssRgb(col);
+            var a = c ? c.a : 0;
+            if (a <= 0) return 'transparent';
+            if (a >= 1) return token;
+            return 'color-mix(in srgb, ' + token + ' ' + Math.round(a * 100) + '%, transparent)';
+        });
+    }
     var AUTHORED_SCRIM_MAX_ALPHA = 0.95;
     var AUTHORED_SCRIM_MAX_CHANNEL = 96;
+
+    /**
+     * Mask elements: a small element painted its container's color to hide
+     * a line under it (a floating label on an outlined input's border, a
+     * square that cuts a comment thread line off below the last reply).
+     * True when one of the neighbors' lines crosses `rect`: a visible
+     * border edge, or a hairline element (<= 2 px thick).
+     * neighbors: [{ rect, top, right, bottom, left }] where each side is
+     * the visible border width in px (0 = none).
+     */
+    var MASK_MAX_WIDTH = 320;
+    var MASK_MAX_HEIGHT = 40;
+    var MASK_MIN_SIZE = 4;
+    function isMaskShape(rect) {
+        return !!rect && rect.width >= MASK_MIN_SIZE && rect.height >= MASK_MIN_SIZE
+            && rect.width <= MASK_MAX_WIDTH && rect.height <= MASK_MAX_HEIGHT;
+    }
+    function lineCrossesRect(n, r) {
+        var nr = n.rect;
+        if (!nr) return false;
+        var xOverlap = Math.min(nr.right, r.right) - Math.max(nr.left, r.left) > 0;
+        var yOverlap = Math.min(nr.bottom, r.bottom) - Math.max(nr.top, r.top) > 0;
+        var inY = function (y) { return y >= r.top && y <= r.bottom; };
+        var inX = function (x) { return x >= r.left && x <= r.right; };
+        if (n.top > 0 && xOverlap && inY(nr.top)) return true;
+        if (n.bottom > 0 && xOverlap && inY(nr.bottom)) return true;
+        if (n.left > 0 && yOverlap && inX(nr.left)) return true;
+        if (n.right > 0 && yOverlap && inX(nr.right)) return true;
+        var thin = (nr.right - nr.left) <= 2 || (nr.bottom - nr.top) <= 2;
+        return !!n.hairline && thin && xOverlap && yOverlap;
+    }
+    function isMaskOverLine(rect, neighbors) {
+        if (!isMaskShape(rect) || !neighbors) return false;
+        for (var i = 0; i < neighbors.length; i++) {
+            if (lineCrossesRect(neighbors[i], rect)) return true;
+        }
+        return false;
+    }
+    /**
+     * The mask's own fill must be opaque and match what it sits on: the
+     * authored paint of the nearest ancestor that has one (null when no
+     * ancestor painted anything, i.e. the page canvas, which can't be
+     * read once themed: accepted).
+     */
+    var MASK_MATCH_MAX_CHANNEL_DIFF = 24;
+    function isMaskFill(fill, behind) {
+        if (!fill || fill.a < 0.5) return false;
+        if (!behind) return true;
+        return Math.abs(fill.r - behind.r) <= MASK_MATCH_MAX_CHANNEL_DIFF
+            && Math.abs(fill.g - behind.g) <= MASK_MATCH_MAX_CHANNEL_DIFF
+            && Math.abs(fill.b - behind.b) <= MASK_MATCH_MAX_CHANNEL_DIFF;
+    }
 
     function shouldSkipStickyElement(info) {
         return stickySkipReason(info) !== null;
@@ -2164,6 +2270,22 @@
         return Math.max(fill.r, fill.g, fill.b) - Math.min(fill.r, fill.g, fill.b) <= CONTROL_NEUTRAL_MAX_CHROMA;
     }
 
+    // A fill "stands apart" from what it sits on when the two differ in
+    // luminance (contrast >= 1.18: Reddit's #e5ebee "Save" on a white
+    // sheet is 1.2; a UA-default #efefef button on white, 1.15, doesn't)
+    // or clearly in hue (a channel differs by >= 48).
+    var FILL_APART_MIN_CONTRAST = 1.18;
+    var FILL_APART_MIN_CHANNEL = 48;
+    function fillContrast(a, b) {
+        if (!a || !b) return 1;
+        return contrastRatio(relativeLuminance(a.r, a.g, a.b), relativeLuminance(b.r, b.g, b.b));
+    }
+    function fillStandsApart(a, b) {
+        if (!a || !b) return false;
+        if (fillContrast(a, b) >= FILL_APART_MIN_CONTRAST) return true;
+        return Math.max(Math.abs(a.r - b.r), Math.abs(a.g - b.g), Math.abs(a.b - b.b)) >= FILL_APART_MIN_CHANNEL;
+    }
+
     /**
      * Buttons keep their own fill; what changes is decided from it (the
      * authored background color, or a gradient's first stop):
@@ -2173,7 +2295,16 @@
      *             "See more" strip on a dark theme): paint it as a theme
      *             surface with theme text
      *   'text'    keep the fill, set a readable text color (`color`)
-     * info: { fill, gradientStop, text, themeBg, themeText, widthFrac }
+     *   'distinct' the fill stood apart from its container as authored but
+     *             blends into the themed container: paint the theme's
+     *             distinct control fill (`fill`, computed by the caller)
+     *             with a readable text color
+     * A button that stood apart from its container (`container`: the
+     * authored paint of the nearest ancestor that has one; null = the
+     * page, unknown) is a control, never a theme surface: only a strip
+     * that blended into its container becomes 'surface'.
+     * info: { fill, gradientStop, text, themeBg, themeText, widthFrac,
+     *         container?, themedContainer?, distinctFill? }
      */
     function buttonPaintDecision(info) {
         if (!info) return { mode: 'none' };
@@ -2182,8 +2313,13 @@
         var stop = info.gradientStop && info.gradientStop.a >= 0.5 ? info.gradientStop : null;
         var fill = stop || (info.fill && info.fill.a >= 0.5 ? info.fill : null);
         if (!fill) return { mode: 'none' };
-        if (!stop && info.widthFrac >= 0.8 && isNeutralFill(fill) && fillAgainstTheme(fill, info.themeBg)) {
+        var apart = info.container ? fillStandsApart(fill, info.container) : null;
+        if (!stop && apart !== true && info.widthFrac >= 0.8 && isNeutralFill(fill) && fillAgainstTheme(fill, info.themeBg)) {
             return { mode: 'surface', color: info.themeText };
+        }
+        if (apart === true && info.themedContainer && info.distinctFill
+            && !fillStandsApart(fill, info.themedContainer)) {
+            return { mode: 'distinct', color: pickReadableAgainstSurface(info.distinctFill, info.themeText, 4.5) };
         }
         var text = info.text;
         if (text && !hasPoorContrast(text, fill, 3.0)) return { mode: 'none' };
@@ -2516,6 +2652,13 @@
         shouldSkipStickyElement: shouldSkipStickyElement,
         stickySkipReason: stickySkipReason,
         classifyAuthoredPaint: classifyAuthoredPaint,
+        themeGradient: themeGradient,
+        isMaskShape: isMaskShape,
+        fillStandsApart: fillStandsApart,
+        fillContrast: fillContrast,
+        isNeutralFill: isNeutralFill,
+        isMaskOverLine: isMaskOverLine,
+        isMaskFill: isMaskFill,
         isSpaShellId: isSpaShellId,
         isLargeLayoutShell: isLargeLayoutShell,
         isLargeLayoutNode: isLargeLayoutNode,
