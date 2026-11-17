@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Walmart | Save Money. Live better.</title>
+<!--
+  walmart.com ☰ menu (TEST_SITES X-11), read live in desktop Chrome at a
+  500 px window, Nov 15, with a MutationObserver recording the open and
+  the close:
+    - two sticky blue bars (SPAN.bg-secondary, 84 px, z 5, and
+      DIV.bg-primary, 42 px, z 3; #0053e2, transition: top .65s) and a
+      sticky white chip row (z 2)
+    - ☰ (a[aria-label="Menu"]) opens it. Same task: aria-expanded on the
+      button, body gets class overflow-hidden, the page wrapper
+      div.relative.flex.flex-column gets inline `transform: translateX(320px);
+      transition: transform .3s` (the whole page slides right), and a
+      DIV[role=dialog] > SECTION > SECTION > NAV.absolute.vh-100.w-100.z-2
+      is appended inside the wrapper. The NAV holds the 320 px panel
+      (DIV.absolute, at left -320 px, no fill: the white is the body
+      showing through) and a "Close menu" button (absolute, fills the
+      pushed page, rgba(255,255,255,0)).
+    - ~190 ms later the panel's UL gets its rows (LI.mv4 "Language |
+      English", "Country, language and currency", …, mid-gray text) and
+      HR separators.
+    - Close: the dialog is removed, the inline transform cleared, body's
+      class removed (one task).
+    - 41 elements on the page have color/all transitions (24 × color
+      .15s, 17 × all .1s): an inline color write on one of them animates.
+  The fixture opens the menu itself at 2.0 s and closes it at 3.8 s (inside
+  the color timeline's 6 s); the harness action opens it again by click.
+-->
+<style>
+  body { margin: 0; font: 14px "Bogle", Helvetica, Arial, sans-serif; background: #fff; color: #2e2f32; }
+  body.overflow-hidden { overflow: hidden; }
+  .wrap { position: relative; display: flex; flex-direction: column; min-height: 100vh; }
+  .bg-secondary { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; height: 84px; padding: 0 12px; background: #0053e2; color: #fff; transition: top .65s; }
+  .bg-secondary a { color: #fff; font-size: 22px; text-decoration: none; transition: color .15s; }
+  .bg-secondary .srch { flex: 1; height: 40px; border-radius: 20px; background: #fff; color: #74767c; display: flex; align-items: center; padding: 0 14px; }
+  .bg-primary { position: sticky; top: 84px; z-index: 3; height: 42px; display: flex; align-items: center; padding: 0 12px; background: #0053e2; color: #fff; transition: top .65s; }
+  .chips { position: sticky; top: 126px; z-index: 2; height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: #fff; transition: all .1s; }
+  .chips span { padding: 6px 12px; border: 1px solid #babbbe; border-radius: 16px; color: #2e2f32; transition: color .15s; }
+  .tiles { padding: 12px; }
+  .tile { height: 160px; margin-bottom: 12px; border-radius: 12px; background: #e6f1fc; transition: all .1s; }
+  nav.absolute { position: absolute; top: 0; left: 0; width: 100%; height: 100vh; z-index: 2; }
+  .panel { position: absolute; top: 0; left: -320px; width: 320px; padding-top: 32px; font-size: 14px; }
+  .panel .signin { display: inline-block; margin: 0 16px 12px; padding: 8px 16px; border-radius: 18px; background: #0071dc; color: #fff; }
+  .list { list-style: none; margin: 0; padding: 0 16px; color: #74767c; }
+  .list li { margin: 16px 0; transition: color .15s; }
+  .list hr { border: 0; border-top: 1px solid #e3e4e5; }
+  .close { position: absolute; inset: 0; width: 100%; border: 0; padding: 0; background: rgba(255,255,255,0); }
+</style>
+</head>
+<body>
+<div class="wrap relative flex flex-column" id="wrap">
+  <span class="bg-secondary"><a href="#m" aria-label="Menu" aria-expanded="false" id="menu">☰</a><span class="srch">Search Walmart</span></span>
+  <div class="bg-primary white sticky">How do you want your items?</div>
+  <div class="chips header"><span>Departments</span><span>Services</span><span>Deals</span></div>
+  <div class="tiles"><div class="tile"></div><div class="tile"></div><div class="tile"></div><div class="tile"></div><div class="tile"></div><div class="tile"></div></div>
+</div>
+<script>
+  var wrap = document.getElementById('wrap'), btn = document.getElementById('menu'), dlg = null;
+  function open() {
+    if (dlg) return;
+    btn.setAttribute('aria-expanded', 'true');
+    document.body.className = 'overflow-hidden';
+    wrap.style.transform = 'translateX(320px)';
+    wrap.style.transition = 'transform 0.3s';
+    dlg = document.createElement('div');
+    dlg.setAttribute('role', 'dialog');
+    dlg.innerHTML = '<section><section><nav class="absolute vh-100 w-100 z-2"><div class="panel absolute f6 pt7"><span class="signin">Sign in or create account</span><div class="flex-auto overflow-auto"><ul class="list mid-gray"></ul></div></div><button class="close" aria-label="Close menu"></button></nav></section></section>';
+    wrap.appendChild(dlg);
+    dlg.querySelector('.close').addEventListener('click', close);
+    setTimeout(function () {
+      if (!dlg) return;
+      var ul = dlg.querySelector('ul');
+      ['Language | English', 'Country, language and currency', 'Walmart+', 'Purchase History', 'My Items', 'Subscriptions', 'Account', 'Help'].forEach(function (t, i) {
+        if (i === 2 || i === 7) ul.appendChild(document.createElement('hr'));
+        var li = document.createElement('li');
+        li.className = 'mv4';
+        li.textContent = t;
+        ul.appendChild(li);
+      });
+    }, 190);
+  }
+  function close() {
+    if (!dlg) return;
+    dlg.remove();
+    dlg = null;
+    btn.setAttribute('aria-expanded', 'false');
+    document.body.className = '';
+    wrap.style.transform = '';
+  }
+  btn.addEventListener('click', function (e) { e.preventDefault(); open(); });
+  setTimeout(open, 2000);
+  setTimeout(close, 3800);
+</script>
+</body>
+</html>

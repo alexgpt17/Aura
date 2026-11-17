@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edge fades</title>
+<!--
+  Edge fades (TEST_SITES X-8): gradients from transparent into the color
+  of what they sit on, laid over the ends of a scrolling row. Read live in
+  desktop Chrome at a 500 px window, Nov 15:
+    - github.com homepage: .HeroPagination__chapters and .DataMarquee rows,
+      each with ::before / ::after (absolute, 64 px and 128 px wide,
+      z-index 1, pointer-events none) painted
+      linear-gradient(to right|left, #fff [48px], transparent)
+    - airbnb.com "Inspiration for future getaways": the row's right-edge
+      scroll button (absolute, 20 x 40, white) whose ::before (48 px)
+      is linear-gradient(90deg, transparent, #fff 90%)
+    - an element fade (an absolute div, not a pseudo-element), the shape
+      Google's AI Overview collapse fade has (see fixture-google-aimode)
+  Must stay as authored:
+    - a dark text scrim over a photo (gradient into rgba(0,0,0,.6)): its
+      color isn't what it sits on
+  Existing behavior, unchanged: a decorative section gradient with no
+  transparent stop is cleared like any large layout fill.
+-->
+<style>
+  body { margin: 0; font: 15px -apple-system, system-ui, sans-serif; background: #fff; color: #1f2328; }
+  h2 { margin: 18px 16px 8px; font-size: 18px; }
+  .HeroPagination__chapters { position: relative; height: 50px; }
+  .DataMarquee { position: relative; height: 145px; margin-top: 12px; }
+  .scroller { display: flex; gap: 12px; overflow-x: auto; height: 100%; padding: 0 16px; }
+  .scroller > div { flex: 0 0 auto; display: flex; align-items: center; padding: 0 14px; border: 1px solid #d1d9e0; border-radius: 8px; }
+  .DataMarquee .scroller > div { width: 180px; }
+  .HeroPagination__chapters::before, .HeroPagination__chapters::after,
+  .DataMarquee::before, .DataMarquee::after { content: ''; position: absolute; top: 0; bottom: 0; width: 64px; z-index: 1; pointer-events: none; }
+  .HeroPagination__chapters::before, .DataMarquee::before { left: 0; background: linear-gradient(to right, #fff, rgba(0,0,0,0)); }
+  .HeroPagination__chapters::after { right: 0; background: linear-gradient(to left, #fff, rgba(0,0,0,0)); }
+  .DataMarquee::after { right: 0; width: 128px; background: linear-gradient(to left, #fff 48px, rgba(0,0,0,0)); }
+  .insp { position: relative; padding: 0 0 8px; }
+  .insp .tabs { display: flex; gap: 22px; overflow: hidden; padding: 8px 16px; white-space: nowrap; }
+  .insp .tabs span { color: #6a6a6a; }
+  .s1fzn41a { position: absolute; top: 4px; right: 6px; width: 20px; height: 40px; border: 0; padding: 0; background: #fff; color: #222; }
+  .s1fzn41a::before { content: ''; position: absolute; top: 0; right: 20px; width: 48px; height: 40px; background: linear-gradient(90deg, rgba(0,0,0,0) 0%, #fff 90%); pointer-events: none; }
+  .clip { position: relative; max-height: 120px; overflow: hidden; margin: 0 16px; }
+  .clip p { margin: 0 0 10px; line-height: 22px; }
+  .efade { position: absolute; left: 0; right: 0; bottom: 0; height: 90px; background-image: linear-gradient(rgba(255,255,255,0), #fff 70px); }
+  .photo { position: relative; height: 180px; margin: 16px; border-radius: 12px; background: url(img/photo.png) center / cover; }
+  .photo .scrim { position: absolute; left: 0; right: 0; bottom: 0; height: 100px; border-radius: 0 0 12px 12px; background-image: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.6)); }
+  .photo .cap { position: absolute; left: 14px; bottom: 12px; color: #fff; font-weight: 600; }
+  .deco { margin: 16px; padding: 18px; border-radius: 12px; background-image: linear-gradient(135deg, #f6f8fa, #eaeef2); }
+</style>
+</head>
+<body>
+<h2>Build what's next</h2>
+<div class="HeroPagination__chapters"><div class="scroller"><div>Code</div><div>Plan</div><div>Collaborate</div><div>Automate</div><div>Secure</div><div>Deploy</div></div></div>
+<div class="DataMarquee"><div class="scroller"><div>55% faster coding</div><div>88% retention</div><div>3x more PRs</div><div>75% happier</div></div></div>
+<h2>Inspiration for future getaways</h2>
+<div class="insp">
+  <div class="tabs"><span>Popular</span><span>Arts &amp; culture</span><span>Outdoors</span><span>Mountains</span><span>Beach</span><span>Unique stays</span></div>
+  <button class="s1fzn41a" aria-label="Next">›</button>
+</div>
+<h2>Collapsed text</h2>
+<div class="clip">
+  <p>An element fade sits over the end of clipped text, the way a "Show more" collapse fades the text into the page before the button.</p>
+  <p>Second paragraph that the fade hides almost entirely.</p>
+  <div class="efade"></div>
+</div>
+<div class="photo"><div class="scrim"></div><div class="cap">Lake cabin, 2 guests</div></div>
+<div class="deco">Decorative section gradient with no transparent stop.</div>
+</body>
+</html>

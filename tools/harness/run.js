@@ -52,6 +52,9 @@ const THEMES = {
     // Same shape ThemeSelectionScreen writes (globalTheme = completeTheme).
     dark: { enabled: true, id: 'dark', background: '#1C1C1E', text: '#FFFFFF', link: '#0A84FF', backgroundType: 'color', backgroundImage: null, backgroundGradient: null },
     light: { enabled: true, id: 'light', background: '#F2F2F7', text: '#000000', link: '#007AFF', backgroundType: 'color', backgroundImage: null, backgroundGradient: null },
+    // The app's "Gray" preset: a dark theme with a light link color, the
+    // shape of X-9 (link-colored text on white pills). Session 8.
+    gray: { enabled: true, id: 'gray', background: '#3A3A3C', text: '#F2F2F7', link: '#64D2FF', backgroundType: 'color', backgroundImage: null, backgroundGradient: null },
 };
 
 function themeData(theme) {
@@ -198,9 +201,19 @@ function paintSignatureInPage() {
             const el = all[i];
             if (el.tagName === 'STYLE' || el.tagName === 'SCRIPT') continue;
             const cs = getComputedStyle(el);
-            // Last column: background-image, plus a non-normal blend mode.
-            const img = cs.backgroundImage === 'none' ? '' : cs.backgroundImage.slice(0, 60);
-            const row = [prefix + window.__AH.describeNode(el), cs.backgroundColor, cs.color, cs.mixBlendMode !== 'normal' ? img + ' blend:' + cs.mixBlendMode : img];
+            // Last column: background-image, plus a non-normal blend mode,
+            // an opacity below 1, and a painted ::before/::after (Session 8:
+            // pill fills and edge fades live on pseudo-elements).
+            let img = cs.backgroundImage === 'none' ? '' : cs.backgroundImage.slice(0, 60);
+            if (cs.mixBlendMode !== 'normal') img += ' blend:' + cs.mixBlendMode;
+            if (cs.opacity !== '1') img += ' op:' + cs.opacity;
+            for (const p of ['::before', '::after']) {
+                const ps = getComputedStyle(el, p);
+                if (ps.content === 'none' || ps.content === 'normal') continue;
+                if (ps.backgroundColor === 'rgba(0, 0, 0, 0)' && ps.backgroundImage === 'none') continue;
+                img += ' ' + p + ' ' + ps.backgroundColor + (ps.backgroundImage !== 'none' ? ' ' + ps.backgroundImage.slice(0, 50) : '');
+            }
+            const row = [prefix + window.__AH.describeNode(el), cs.backgroundColor, cs.color, img.trim()];
             // Debug only: the element's inline style and data-aura-* marks.
             if (window.__AH_DUMP_INLINE) row.push(el.style.cssText.slice(0, 120) + ' ' + Array.from(el.attributes).filter(a => a.name.startsWith('data-aura')).map(a => a.name).join(' '));
             out.push(row);
@@ -209,6 +222,181 @@ function paintSignatureInPage() {
     };
     walk(document, '');
     return out;
+}
+
+// Visible text whose contrast against the fill it actually sits on is
+// under 3:1 (Session 8, X-9). The fill is composited bottom to top from
+// the canvas through every ancestor: its background color, its gradient
+// (stops averaged) or image (pixels averaged), its ::before/::after when
+// they cover the text and most of the element, and earlier positioned
+// siblings that cover the text (Airbnb's chip fill is a pointer-events:none
+// span next to the label, which elementsFromPoint can't see). Each layer
+// is weighted by its own opacity. Viewport only; open shadow roots too.
+async function lowContrastInPage() {
+    const parse = s => {
+        if (!s) return null;
+        let m = s.match(/^rgba?\(([^)]+)\)$/);
+        if (m) {
+            const p = m[1].split(/[ ,/]+/).filter(Boolean).map(Number);
+            return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+        }
+        m = s.match(/^color\(srgb ([^)]+)\)$/);
+        if (m) {
+            const p = m[1].split(/[ /]+/).filter(Boolean).map(Number);
+            return { r: p[0] * 255, g: p[1] * 255, b: p[2] * 255, a: p.length > 3 ? p[3] : 1 };
+        }
+        return null;
+    };
+    const over = (top, under) => {
+        const a = top.a + under.a * (1 - top.a);
+        if (a <= 0) return { r: 0, g: 0, b: 0, a: 0 };
+        const ch = k => (top[k] * top.a + under[k] * under.a * (1 - top.a)) / a;
+        return { r: ch('r'), g: ch('g'), b: ch('b'), a };
+    };
+    const lum = c => {
+        const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+        return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+    };
+    const ratio = (x, y) => { const a = lum(x), b = lum(y); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); };
+    const hex = c => '#' + [c.r, c.g, c.b].map(v => Math.round(v).toString(16).padStart(2, '0')).join('') + (c.a < 1 ? '/' + c.a.toFixed(2) : '');
+    const imgCache = new Map();
+    const imageMean = async url => {
+        if (imgCache.has(url)) return imgCache.get(url);
+        let mean = null;
+        try {
+            const im = new Image();
+            im.src = url;
+            await im.decode();
+            const cv = document.createElement('canvas');
+            cv.width = cv.height = 16;
+            const x = cv.getContext('2d');
+            x.drawImage(im, 0, 0, 16, 16);
+            const d = x.getImageData(0, 0, 16, 16).data;
+            let r = 0, g = 0, b = 0, a = 0;
+            for (let i = 0; i < d.length; i += 4) { const w = d[i + 3] / 255; r += d[i] * w; g += d[i + 1] * w; b += d[i + 2] * w; a += w; }
+            mean = a ? { r: r / a, g: g / a, b: b / a, a: a / 256 } : { r: 0, g: 0, b: 0, a: 0 };
+        } catch (e) {}
+        imgCache.set(url, mean);
+        return mean;
+    };
+    // One element's own paint as a list of layers (bottom first).
+    const layersOf = async (cs, op) => {
+        const out = [];
+        const bg = parse(cs.backgroundColor);
+        if (bg && bg.a > 0) out.push({ c: { ...bg, a: bg.a * op }, via: '' });
+        const img = cs.backgroundImage;
+        if (img && img !== 'none') {
+            const url = img.match(/url\("?([^")]+)"?\)/);
+            if (url) {
+                const m = await imageMean(url[1]);
+                if (m && m.a > 0) out.push({ c: { ...m, a: m.a * op }, via: 'image' });
+            } else {
+                const stops = (img.match(/(rgba?\([^)]+\)|color\(srgb [^)]+\))/g) || []).map(parse).filter(Boolean);
+                if (stops.length) {
+                    let r = 0, g = 0, b = 0, a = 0;
+                    stops.forEach(s => { r += s.r * s.a; g += s.g * s.a; b += s.b * s.a; a += s.a; });
+                    if (a > 0) out.push({ c: { r: r / a, g: g / a, b: b / a, a: (a / stops.length) * op }, via: 'gradient' });
+                }
+            }
+        }
+        return out;
+    };
+    const covers = (r, x, y) => r.width > 0 && r.height > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    const pseudoLayers = async (el, which, x, y) => {
+        const ps = getComputedStyle(el, which);
+        if (ps.content === 'none' || ps.content === 'normal' || ps.display === 'none' || ps.visibility === 'hidden') return [];
+        if (ps.position !== 'absolute' && ps.position !== 'fixed') return [];
+        const host = el.getBoundingClientRect();
+        const w = parseFloat(ps.width), h = parseFloat(ps.height);
+        if (!(w * h >= host.width * host.height * 0.5)) return [];
+        const left = parseFloat(ps.left), top = parseFloat(ps.top);
+        const r = { left: host.left + (isNaN(left) ? 0 : left), top: host.top + (isNaN(top) ? 0 : top) };
+        r.right = r.left + w; r.bottom = r.top + h; r.width = w; r.height = h;
+        if (!covers(r, x, y)) return [];
+        return layersOf(ps, parseFloat(ps.opacity) || 0);
+    };
+    const chainOf = el => {
+        const chain = [];
+        for (let n = el; n; ) {
+            chain.unshift(n);
+            if (n.parentElement) n = n.parentElement;
+            else { const r = n.getRootNode(); n = r && r.host ? r.host : null; }
+        }
+        return chain;
+    };
+    const parentOf = n => n.parentElement || (n.getRootNode() && n.getRootNode().host) || null;
+    const els = [];
+    const walk = root => {
+        const all = root.querySelectorAll('*');
+        for (let i = 0; i < all.length; i++) {
+            const el = all[i];
+            if (/^(SCRIPT|STYLE|NOSCRIPT|TITLE|OPTION|TEMPLATE|svg|SVG|TEXT)$/.test(el.tagName) || el.closest('svg')) { if (el.shadowRoot) walk(el.shadowRoot); continue; }
+            for (const t of el.childNodes) {
+                if (t.nodeType === 3 && t.data.trim()) { els.push([el, t]); break; }
+            }
+            if (el.shadowRoot) walk(el.shadowRoot);
+        }
+    };
+    walk(document);
+    const vw = innerWidth, vh = innerHeight;
+    // html and body are in every chain, so the canvas under them is white.
+    const canvas = { r: 255, g: 255, b: 255, a: 1 };
+    const items = [];
+    let checked = 0;
+    for (const [el, t] of els) {
+        const range = document.createRange();
+        range.selectNodeContents(t);
+        const rr = Array.from(range.getClientRects()).find(r => r.width >= 2 && r.height >= 4);
+        if (!rr || rr.bottom <= 0 || rr.top >= vh || rr.right <= 0 || rr.left >= vw) continue;
+        const cs = getComputedStyle(el);
+        if (cs.visibility !== 'visible' || parseFloat(cs.fontSize) < 6) continue;
+        const chain = chainOf(el);
+        let opacity = 1;
+        chain.forEach(n => { opacity *= parseFloat(getComputedStyle(n).opacity); });
+        if (opacity < 0.1) continue;
+        const fg = parse(cs.webkitTextFillColor) || parse(cs.color);
+        if (!fg || fg.a < 0.1) continue;
+        // Clipped away (sr-only text, a collapsed box).
+        let clipped = false;
+        for (let n = parentOf(el); n && n !== document.documentElement && !clipped; n = parentOf(n)) {
+            const ncs = getComputedStyle(n);
+            if (ncs.overflow !== 'visible' || ncs.clipPath !== 'none') {
+                const r = n.getBoundingClientRect();
+                if (r.width < 2 || r.height < 2) clipped = true;
+            }
+        }
+        if (clipped) continue;
+        checked++;
+        const x = Math.min(vw - 1, Math.max(0, rr.left + Math.min(rr.width, 40) / 2)), y = Math.min(vh - 1, Math.max(0, rr.top + rr.height / 2));
+        let fill = canvas;
+        let via = '';
+        for (let i = 0; i < chain.length; i++) {
+            const n = chain[i];
+            const ncs = getComputedStyle(n);
+            const own = parseFloat(ncs.opacity);
+            for (const L of await layersOf(ncs, own)) { fill = over(L.c, fill); via = L.c.a > 0.5 ? L.via : via; }
+            for (const L of await pseudoLayers(n, '::before', x, y)) { fill = over(L.c, fill); via = L.c.a > 0.5 ? L.via + '::before' : via; }
+            const next = chain[i + 1];
+            if (next && next.parentElement === n) {
+                for (let s = next.previousElementSibling; s; s = s.previousElementSibling) {
+                    const scs = getComputedStyle(s);
+                    if (scs.position !== 'absolute' && scs.position !== 'fixed') continue;
+                    if (scs.visibility !== 'visible' || scs.display === 'none' || !covers(s.getBoundingClientRect(), x, y)) continue;
+                    for (const L of await layersOf(scs, parseFloat(scs.opacity))) { fill = over(L.c, fill); via = L.c.a > 0.5 ? (L.via || 'sibling') : via; }
+                }
+            }
+            for (const L of await pseudoLayers(n, '::after', x, y)) { fill = over(L.c, fill); via = L.c.a > 0.5 ? L.via + '::after' : via; }
+        }
+        const text = over({ ...fg, a: fg.a * opacity }, fill);
+        const cr = ratio(text, fill);
+        if (cr < 3) {
+            items.push({
+                el: (el.getRootNode() !== document ? '›' : '') + window.__AH.describeNode(el),
+                text: t.data.trim().slice(0, 24), color: hex(fg), fill: hex(fill), ratio: Math.round(cr * 100) / 100, via,
+            });
+        }
+    }
+    return { checked, low: items.length, items: items.slice(0, 40) };
 }
 
 // ---- one load --------------------------------------------------------------
@@ -233,7 +421,12 @@ async function runLoad(browser, opts) {
         await ctx.route(fixtureOrigin + '/**', route => {
             const name = new URL(route.request().url()).pathname.replace(/^\//, '') || site.id;
             const file = path.join(HERE, 'fixtures', name.endsWith('.html') ? name : name + '.html');
-            if (fs.existsSync(file)) route.fulfill({ status: 200, contentType: 'text/html', body: fs.readFileSync(file) });
+            // Fixtures can reference their own images (fixtures/img/…).
+            const file2 = /\.(png|jpe?g|svg)$/.test(name) ? path.join(HERE, 'fixtures', name) : file;
+            const types = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', svg: 'image/svg+xml' };
+            const ext = (name.match(/\.(\w+)$/) || [])[1];
+            if (file2 !== file && fs.existsSync(file2)) route.fulfill({ status: 200, contentType: types[ext], body: fs.readFileSync(file2) });
+            else if (fs.existsSync(file)) route.fulfill({ status: 200, contentType: 'text/html', body: fs.readFileSync(file) });
             else route.fulfill({ status: 404, body: 'no fixture' });
         });
     }
@@ -283,15 +476,26 @@ async function runLoad(browser, opts) {
                 fs.writeFileSync(path.join(outDir, `${site.id}--${theme}--paint${res.rep ? '-' + res.rep : ''}.json`), JSON.stringify(sig));
             } catch (e) {}
             res.tint = { '5s': await page.evaluate(() => window.__AH.tint()).catch(e => ({ error: String(e.message).slice(0, 120) })) };
+            res.lowContrast = await page.evaluate(lowContrastInPage).catch(e => ({ error: String(e.message).slice(0, 200) }));
+            const urlBeforeActions = page.url();
             for (const act of site.actions || []) {
                 if (act.click) { try { await page.locator(act.click).first().click({ timeout: 3000 }); } catch (e) { res.actionError = (res.actionError || '') + `click ${act.click} failed; `; } }
                 if (act.wait) await sleep(act.wait);
                 if (act.shot) {
                     await shot(act.shot);
                     res.tint[act.shot] = await page.evaluate(() => window.__AH.tint()).catch(e => ({ error: String(e.message).slice(0, 120) }));
+                    // Paint after the action too (a focused field, an open menu).
+                    try {
+                        const sig = await page.evaluate(paintSignatureInPage);
+                        fs.writeFileSync(path.join(outDir, `${site.id}--${theme}--paint-${act.shot}${res.rep ? '-' + res.rep : ''}.json`), JSON.stringify(sig));
+                    } catch (e) {}
+                    if (act.contrast) res['lowContrast_' + act.shot] = await page.evaluate(lowContrastInPage).catch(e => ({ error: String(e.message).slice(0, 200) }));
                 }
             }
-            if (site.actions && site.actions.length) { await page.goBack().catch(() => {}); }
+            // Back only if an action navigated: on a fixture (no history
+            // but about:blank) goBack left the rest of the run, including
+            // the load metrics, on a blank page (fixed Session 8).
+            if (site.actions && site.actions.length && page.url() !== urlBeforeActions) { await page.goBack().catch(() => {}); }
             // Scroll three screens like a thumb flick, then settle.
             const scrollStart = toPage(wallNow());
             for (let i = 0; i < 12; i++) { await page.mouse.wheel(0, 200).catch(() => {}); await page.evaluate(() => window.scrollBy(0, 200)).catch(() => {}); await sleep(60); }
@@ -307,7 +511,7 @@ async function runLoad(browser, opts) {
             res.load = await page.evaluate(summarizeInPage, { from: 0, to: nav.load + 5000 });
             // The five longest Aura tasks [start ms, duration ms, kind]: which
             // task a "max task" regression is.
-            res.passList = await page.evaluate(() => window.__AH.passes.map(p => [Math.round(p.start), p.root, p.elements])).catch(() => null);
+            res.passList = await page.evaluate(() => window.__AH.passes.map(p => [Math.round(p.start), p.root, p.elements, p.end == null ? null : Math.round(p.end)])).catch(() => null);
             res.topTasks = await page.evaluate(() => window.__AH.tasks.slice().sort((a, b) => b[1] - a[1]).slice(0, 5).map(t => [Math.round(t[0]), Math.round(t[1] * 10) / 10, t[2]])).catch(() => null);
             res.scroll = await page.evaluate(summarizeInPage, { from: scrollStart, to: scrollEnd });
             res.themeTiming = await page.evaluate(() => {
@@ -342,6 +546,7 @@ async function runLoad(browser, opts) {
             let t0 = wallNow();
             const snap = async (label) => {
                 const s = await page.evaluate(() => window.__AH.surfaces()).catch(e => ({ error: String(e.message).slice(0, 120) }));
+                s.tint = await page.evaluate(() => window.__AH.tint()).catch(() => null);
                 const vp = page.viewportSize();
                 try {
                     const buf = await page.screenshot({ clip: { x: 0, y: vp.height - 60, width: vp.width, height: 60 } });
@@ -373,6 +578,21 @@ async function runLoad(browser, opts) {
             t0 = wallNow();
             await page.reload({ waitUntil: 'load' }).catch(() => {});
             await snap('reload off +load');
+            // Load-4: theme off → reload → theme on live (no reload), then a
+            // reload with the theme on. Live and reload should leave the same
+            // surfaces (Safari tints from them).
+            await sleep(1500);
+            const tdA = themeData(THEMES[theme]);
+            t0 = wallNow();
+            await setAll(tdA);
+            for (const ms of [100, 2000]) { await at(ms); await snap(`off-reload → live ${theme} +${ms}`); }
+            await shot('switch-on-live');
+            await page.evaluate(td => sessionStorage.setItem('__AH_TD', JSON.stringify(td)), tdA);
+            t0 = wallNow();
+            await page.reload({ waitUntil: 'load' }).catch(() => {});
+            await sleep(2000);
+            await snap(`reload ${theme} +2s`);
+            await shot('switch-on-reload');
         }
 
         if (scenario === 'settings' && themed) {
@@ -549,12 +769,13 @@ function report(results, meta) {
         L.push('## Theme switch (surfaces per step)');
         for (const r of sw) {
             L.push(`### ${r.site} / starts ${r.theme}`);
-            L.push('| Step | ms | html bg | body bg | scheme | theme-color metas | shield | core sheet | shadow copies | iframe copies | cache | bottom strip | color-mode | Aura inline |');
-            L.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+            L.push('| Step | ms | html bg | body bg | scheme | theme-color metas | shield | core sheet | shadow copies | iframe copies | cache | bottom strip | color-mode | Aura inline | edge boxes (top / bottom) |');
+            L.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
             for (const s of r.switch) {
                 if (s.error) { L.push(`| ${s.label} | ${s.ms} | ERROR ${s.error} ||||||||||||`); continue; }
                 const j = o => Object.entries(o || {}).map(([k, v]) => `${k}×${v}`).join(' ') || '–';
-                L.push(`| ${s.label} | ${s.ms} | ${s.htmlBg}${s.htmlBgImage ? ' + img' : ''} | ${s.bodyBg} | ${s.colorScheme} | ${(s.themeColorMetas || []).join(' · ') || '–'} | ${s.shield ? 'yes' : '–'} | ${s.coreSheet || '–'} | ${j(s.shadowCopies)} | ${j(s.iframeCopies)} | ${s.cache ? s.cache.slice(0, 40) : '–'} | ${s.bottomStrip || '–'} | ${s.colorMode || '–'} | ${s.auraInline} |`);
+                const edge = t => (t || []).map(x => String(x).replace(/^.*?: /, '')).join(', ') || '–';
+                L.push(`| ${s.label} | ${s.ms} | ${s.htmlBg}${s.htmlBgImage ? ' + img' : ''} | ${s.bodyBg} | ${s.colorScheme} | ${(s.themeColorMetas || []).join(' · ') || '–'} | ${s.shield ? 'yes' : '–'} | ${s.coreSheet || '–'} | ${j(s.shadowCopies)} | ${j(s.iframeCopies)} | ${s.cache ? s.cache.slice(0, 40) : '–'} | ${s.bottomStrip || '–'} | ${s.colorMode || '–'} | ${s.auraInline} | ${edge(s.tint && s.tint.top)} / ${edge(s.tint && s.tint.bottom)} |`);
             }
         }
         L.push('');
@@ -583,6 +804,17 @@ function report(results, meta) {
             const by = {};
             late.forEach(c => { const k = c.cause.chain; (by[k] = by[k] || []).push(c); });
             L.push(`- **${r.site} / ${r.theme}** late Aura-caused changes by writer: ` + Object.entries(by).map(([k, v]) => `\`${k}\` ×${v.length} (${v[0].t}–${v[v.length - 1].t} ms, e.g. ${v[0].el}: ${v[0].from} → ${v[0].to})`).join('; '));
+        }
+        L.push('');
+    }
+    const lc = results.filter(r => r.lowContrast && !r.lowContrast.error);
+    if (lc.length) {
+        L.push('## Low-contrast text (< 3:1 against the composited fill, viewport at +5 s)');
+        L.push('| Site | Theme | Text elements checked | Under 3:1 |');
+        L.push('|---|---|---|---|');
+        for (const r of lc) L.push(`| ${r.site} | ${r.theme} | ${r.lowContrast.checked} | ${r.lowContrast.low} |`);
+        for (const r of lc.filter(x => x.lowContrast.low)) {
+            L.push(`- **${r.site} / ${r.theme}**: ` + r.lowContrast.items.slice(0, 12).map(i => `\`${i.el}\` "${i.text}" ${i.color} on ${i.fill}${i.via ? ' (' + i.via + ')' : ''} ${i.ratio}:1`).join('; '));
         }
         L.push('');
     }
@@ -621,7 +853,8 @@ function compare(dirA, dirB) {
                 ['Max frame gap', a.load.frameMaxGapMs, b.load.frameMaxGapMs], ['Passes (full-doc)', `${a.load.passes} (${a.load.passesFullDoc})`, `${b.load.passes} (${b.load.passesFullDoc})`],
                 ['Settled', a.themeTiming && a.themeTiming.settled, b.themeTiming && b.themeTiming.settled],
                 ['Unthemed ms', unthemedMs(a.themeTiming), unthemedMs(b.themeTiming)],
-                ['Layout Δ', a.layout && a.layout.changed, b.layout && b.layout.changed]);
+                ['Layout Δ', a.layout && a.layout.changed, b.layout && b.layout.changed],
+                ['Low-contrast text', a.lowContrast && a.lowContrast.low, b.lowContrast && b.lowContrast.low]);
         }
         if (a.scenario === 'typing' && a.typing && b.typing) {
             rows.push(['Type first 4 s p95', a.typing.first4s.p95, b.typing.first4s.p95], ['Type first 4 s max', a.typing.first4s.max, b.typing.first4s.max],
@@ -630,7 +863,7 @@ function compare(dirA, dirB) {
         for (const [m, x, y] of rows) L.push(`| ${a.site} | ${a.theme} | ${m} | ${fmt(x)} | ${fmt(y)} |`);
     }
     // Paint diff (meaningful for fixtures and HAR replays).
-    const paintFiles = fs.readdirSync(dirA).filter(f => /--paint(-scrolled)?\.json$/.test(f));
+    const paintFiles = fs.readdirSync(dirA).filter(f => /--paint(-[a-z]+)?\.json$/.test(f));
     const P = [];
     for (const f of paintFiles) {
         const fb = path.join(dirB, f);
@@ -647,7 +880,7 @@ function compare(dirA, dirB) {
             if (pa[i][0] !== pb[i][0]) { aligned = false; break; }
             if (pa[i][1] !== pb[i][1] || pa[i][2] !== pb[i][2] || pa[i][3] !== pb[i][3]) diffs.push(pa[i][0] + ': ' + pa[i].slice(1).join(' ') + '  →  ' + pb[i].slice(1).join(' '));
         }
-        P.push(`- **${f.replace(/--paint(-scrolled)?\.json$/, (m, sc) => sc ? ' (after scroll)' : '')}**: ` + (!aligned || pa.length !== pb.length ? `DOM differs (${pa.length} vs ${pb.length} elements), not comparable` : `${diffs.length} of ${n} elements paint differently`) + (diffs.length ? '\n' + diffs.slice(0, 60).map(d => '  - `' + d + '`').join('\n') : ''));
+        P.push(`- **${f.replace(/--paint(-[a-z]+)?\.json$/, (m, sc) => sc ? ` (${sc.slice(1)})` : '')}**: ` + (!aligned || pa.length !== pb.length ? `DOM differs (${pa.length} vs ${pb.length} elements), not comparable` : `${diffs.length} of ${n} elements paint differently`) + (diffs.length ? '\n' + diffs.slice(0, 60).map(d => '  - `' + d + '`').join('\n') : ''));
     }
     if (P.length) L.push('', '## Paint diff (computed bg / color / bg-image per element)', ...P);
     return L.join('\n') + '\n';

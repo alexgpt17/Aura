@@ -3,100 +3,123 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>why is the sky blue - Google Search</title>
+<title>what is ashwagandha - Google Search</title>
 <!--
-  Offline stand-in for Google AI Mode / AI Overview (TEST_SITES Type-2, G-1,
-  G-2). Served as https://www.google.com/… so the google.com SITE_FIXES and
-  Google-only passes run. Shape, not content:
-    - an AI Overview inside #rso: a "Show more" collapse fade (an empty div
-      followed by a sibling holding [aria-controls="m-x-content"]) and the
-      expanded #m-x-content
-    - an AI Mode answer card: hashed-class white surfaces, paragraphs and
-      lists, and the "AI responses may include mistakes." disclaimer leaf
-      the engine anchors on. It streams: a word every 50 ms for 4 s, then a
-      paragraph every 300 ms until 6 s (Google's own streaming render)
-    - a fixed bottom composer: outer fixed bar > rounded pill (#f0f4f9) >
-      42 px inner sliver > textarea[aria-label="Ask anything"], plus
-      +/mic/send icon buttons. Every keystroke auto-grows the textarea
-      (inline height) and toggles classes on the pill and the send button,
-      the way Google's composer mutates on input
-    - an Images-viewer-shaped [aria-modal] sheet, hidden, plus #islrg (the
-      body:has() rules key on these)
-  Session 7 (G-5), shapes that stayed transparent on the phone:
-    - a sticky top bar (G logo + chevron) inside #rso, authored white, with
-      the answer scrolling under it. #rso's strip rule (SITE_FIXES) has no
-      probe exemption, so the authored-paint probe read it as transparent
-    - the composer sits inside #rso too, its fixed bar authored white
-    - a fixed band under the composer painted with a background-image
-      gradient (no background-color): the strip leaves gradients alone and
-      the probe only read background-color, so the site's own color (dark
-      gray under Google's dark CSS on the phone, white here) stays
+  Offline stand-in for Google AI Overview / AI Mode (TEST_SITES Type-2, G-1,
+  G-2, G-5, G-6, G-7). Served as https://www.google.com/… so the google.com
+  SITE_FIXES and Google-only passes run.
+  Session 8: rebuilt from the live DOM read in desktop Chrome at a 500 px
+  window (google.com/search?q=what+is+ashwagandha, then udm=50), Nov 15.
+  Class names are Google's. Colors are Google's light values (the phone
+  gets light CSS); desktop Chrome was in dark mode, where every fill below
+  was the dark equivalent (page rgb(34,36,42), pill rgb(54,56,64)).
+    - AI Overview, collapsed: .h7Tj7e (max-height 383 px, overflow clip) >
+      .D5ad8b (the text) + .RDmXvc (absolute, 148 px, a gradient from
+      transparent to the page color at 80 px: the collapse fade) +
+      .lACQkd (absolute, bottom 20 px) > .zNsLfb (relative, z-index 2,
+      opaque page color: the button's backing) > .Jzkafd[role=button]
+      [aria-expanded=false] > a pill with a 1 px border and transparent
+      fill. No aria-controls="m-x-content" and no "Show more AI" label:
+      the selector the engine keyed on (GOOGLE_AI_EXPANDER_SELECTOR) no
+      longer matches.
+    - AI Mode answer card (kept from Session 6: streams, carries the
+      "AI responses may include mistakes." disclaimer)
+    - a sticky top bar (Session 7, G-5)
+    - the composer: .y4VEUd (fixed, z 10) > .t0ITR > .UAbVe > div >
+      .AgWCw (relative) > [.b7ROub (empty), .Zze5V (absolute band:
+      gradient transparent → page color at 30 px), .esoFne (z 1) >
+      .yaj8zd > .Txyg0d > textarea (transparent), .wYOqBc (opacity 0),
+      .d4HWzd (absolute, inset 0: the pill's fill and border are its
+      ::before, its shadow its ::after), .xm5Wye (absolute buttons)].
+      Typing auto-grows the textarea and toggles the send button.
+    - the expanded composer's tint (G-7): Google's stylesheet has
+      `.lgo9kc { position: fixed; inset: 0; background: #000; opacity: 0;
+      visibility: hidden; z-index: 1000 }` and `.lgo9kc.vKW4md
+      { opacity: .6; visibility: inherit }` (the element wasn't in the
+      desktop DOM; which element the phone shows is a guess). Focusing the
+      composer adds .vKW4md, the way the phone dims the page.
 -->
 <style>
   body { margin: 0; font: 16px arial, sans-serif; background: #fff; color: #1f1f1f; }
   .hdr { padding: 12px 16px; border-bottom: 1px solid #ecedef; display: flex; gap: 8px; }
   .hdr .q { flex: 1; padding: 10px 14px; border-radius: 22px; background: #fff; box-shadow: 0 1px 6px rgba(32,33,36,.28); }
-  #rso { padding: 0 16px 140px; }
-  .Kx9p { margin: 12px 0; padding: 14px; border-radius: 16px; background: #fff; border: 1px solid #e3e3e3; }
-  .Kx9p h3 { margin: 0 0 8px; font-size: 18px; }
-  .fade { height: 60px; margin-top: -60px; position: relative; background-image: linear-gradient(rgba(255,255,255,0), #fff); }
-  .more { text-align: center; }
-  .more [aria-controls] { display: inline-block; padding: 8px 18px; border-radius: 18px; background: #f0f4f9; color: #0b57d0; }
+  #rso { padding: 0 16px 160px; }
+  .tbar { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: 10px; height: 52px; margin: 0 -16px; padding: 0 16px; background: #fff; }
+  .tbar .chev { width: 32px; height: 32px; border: 0; border-radius: 16px; background: transparent; color: #444746; }
+  .aio h2 { font-size: 16px; margin: 16px 0 8px; }
+  .h7Tj7e { position: relative; max-height: 220px; overflow: clip; }
+  .D5ad8b p { margin: 0 0 12px; line-height: 24px; }
+  .RDmXvc { position: absolute; left: 0; right: 0; bottom: 0; height: 148px; background-image: linear-gradient(rgba(0,0,0,0) 0px, rgba(255,255,255,.9) 52px, #fff 80px); }
+  .lACQkd { position: absolute; left: 0; right: 0; bottom: 20px; }
+  .zNsLfb { position: relative; z-index: 2; background-color: #fff; }
+  .Jzkafd .pl { display: flex; justify-content: center; align-items: center; height: 48px; border: 1px solid #c4c7c5; border-radius: 9999px; color: #1f1f1f; }
   .mZ3f { margin: 16px 0; padding: 16px; border-radius: 20px; background: #f8fafd; }
   .mZ3f .bub { margin: 0 0 12px auto; max-width: 70%; padding: 10px 14px; border-radius: 18px; background: #e9eef6; }
   .mZ3f ul { padding-left: 20px; }
   .mZ3f .chip { display: inline-block; margin: 4px 4px 0 0; padding: 6px 12px; border-radius: 14px; background: #fff; border: 1px solid #c4c7c5; font-size: 14px; }
   .mZ3f .disc { margin-top: 12px; font-size: 12px; color: #444746; }
-  .cbar { position: fixed; left: 0; right: 0; bottom: 24px; padding: 10px 12px 0; background: #fff; z-index: 5; }
-  .cband { position: fixed; left: 0; right: 0; bottom: 0; height: 24px; background-image: linear-gradient(#fff, #fff); z-index: 5; }
-  .tbar { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: 10px; height: 52px; margin: 0 -16px; padding: 0 16px; background: #fff; }
-  .tbar .chev { width: 32px; height: 32px; border: 0; border-radius: 16px; background: transparent; color: #444746; }
-  .pill { display: flex; align-items: flex-end; gap: 6px; padding: 6px 8px; border-radius: 28px; background: #f0f4f9; }
-  .pill.focused { background: #e9eef6; }
-  .sliver { flex: 1; min-height: 42px; display: flex; align-items: center; }
-  .sliver textarea { width: 100%; height: 24px; border: 0; outline: 0; resize: none; font: 16px arial; background: transparent; color: #1f1f1f; }
+  .y4VEUd { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; }
+  .t0ITR { position: relative; margin: 0 12px; padding-bottom: 34px; }
+  .AgWCw { position: relative; border-radius: 24px; }
+  .b7ROub { position: absolute; top: -16px; left: 0; }
+  .Zze5V { position: absolute; top: -28px; left: 0; right: 0; bottom: -34px; background-image: linear-gradient(rgba(0,0,0,0), #fff 30px, #fff); }
+  .esoFne { position: relative; z-index: 1; border-radius: 24px; padding: 0 20px 52px; }
+  .Txyg0d { position: relative; min-height: 42px; display: flex; align-items: center; }
+  .Txyg0d textarea { position: relative; width: 100%; height: 24px; border: 0; outline: 0; resize: none; font: 16px arial; background: transparent; color: #1f1f1f; }
+  .wYOqBc { position: absolute; inset: -1px; border-radius: 24px; opacity: 0; box-shadow: 0 0 0 2px #0b57d0; }
+  .d4HWzd { position: absolute; inset: 0; border-radius: 24px; border: 0 solid transparent; }
+  .d4HWzd::before { content: ''; position: absolute; inset: 0; background: #f0f4f9; border: 1px solid #c4c7c5; border-radius: 24px; }
+  .d4HWzd::after { content: ''; position: absolute; inset: 0; border-radius: 24px; box-shadow: 0 4px 18px rgba(23,23,23,.12); }
+  .xm5Wye { position: absolute; right: 12px; bottom: 8px; z-index: 2; display: flex; gap: 6px; }
   .ib { width: 36px; height: 36px; border: 0; border-radius: 18px; background: transparent; color: #444746; }
-  .ib.send { background: #c2e7ff; color: #001d35; }
-  .ib.send.off { background: transparent; color: #a8abad; }
+  .ib.send { background: #0b57d0; color: #fff; opacity: .4; }
+  .ib.send.on { opacity: 1; }
+  .add { position: absolute; left: 12px; bottom: 8px; z-index: 2; }
+  .lgo9kc { position: fixed; inset: 0; background-color: #000; opacity: 0; visibility: hidden; z-index: 9; transition: opacity .25s; }
+  .lgo9kc.vKW4md { opacity: .6; visibility: inherit; }
   .viewer { position: fixed; inset: 0; background: #fff; display: none; }
-  #islrg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 16px; }
+  #islrg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   #islrg div { height: 80px; border-radius: 8px; background: #dfe3e8; }
 </style>
 </head>
 <body>
-<div class="hdr"><div class="q">why is the sky blue</div></div>
+<div class="hdr"><div class="q">what is ashwagandha</div></div>
 <div id="rso">
   <div class="tbar"><svg width="24" height="24" viewBox="0 0 24 24" aria-label="Google"><path fill="#4285f4" d="M12 2h10v10H12z"/><path fill="#ea4335" d="M2 2h10v10H2z"/><path fill="#fbbc05" d="M2 12h10v10H2z"/><path fill="#34a853" d="M12 12h10v10H12z"/></svg><button class="chev" aria-label="More">⌄</button></div>
-  <div class="Kx9p">
-    <h3>AI Overview</h3>
-    <div id="m-x-content">
-      <p>The sky is blue because of Rayleigh scattering: air molecules scatter shorter (blue) wavelengths of sunlight much more than longer (red) ones.</p>
-      <p>Violet is scattered even more, but sunlight has less of it and our eyes are less sensitive to it.</p>
+  <div class="aio">
+    <h2>AI Overview</h2>
+    <div class="h7Tj7e" data-fh="">
+      <div class="D5ad8b">
+        <p>Ashwagandha (Withania somnifera) is an ancient evergreen shrub native to parts of India, Africa, and the Middle East that has been used for thousands of years in traditional Ayurvedic medicine.</p>
+        <p>It is classified as an adaptogen, a plant substance thought to help the body manage and resist physical and mental stress. Its active compounds, primarily withanolides, are believed to interact with stress-response systems like the hypothalamic-pituitary-adrenal axis and lower cortisol.</p>
+        <p>Common uses include stress and anxiety, sleep, and exercise performance.</p>
+      </div>
+      <div class="RDmXvc Jzkafd LrrQLb"></div>
+      <div class="lACQkd"><div class="zNsLfb"><div class="Jzkafd" role="button" aria-expanded="false"><div class="pl">Show more ⌄</div></div></div></div>
     </div>
-    <div class="fade"></div>
-    <div class="more"><div role="button" aria-controls="m-x-content" aria-expanded="false">Show more</div></div>
   </div>
   <div class="mZ3f" id="answer">
-    <div class="bub">why is the sky blue</div>
-    <div class="body"><p id="stream">Sunlight</p></div>
-    <ul><li>Shorter wavelengths scatter more</li><li>Sunsets look red because light crosses more air</li></ul>
-    <span class="chip">Rayleigh scattering</span><span class="chip">Why are sunsets red?</span>
+    <div class="bub">what is ashwagandha</div>
+    <div class="body"><p id="stream">Ashwagandha</p></div>
+    <ul><li>An adaptogen used in Ayurveda</li><li>Studied for stress and sleep</li></ul>
+    <span class="chip">Is it safe?</span><span class="chip">Dosage</span>
     <div class="disc">AI responses may include mistakes. Learn more</div>
   </div>
   <div id="islrg"><div></div><div></div><div></div><div></div></div>
-  <div class="cbar">
-    <div class="pill">
-      <button class="ib" aria-label="Add">+</button>
-      <div class="sliver"><textarea aria-label="Ask anything" placeholder="Ask anything" rows="1"></textarea></div>
-      <button class="ib" aria-label="Voice">🎤</button>
-      <button class="ib send off" aria-label="Send">➤</button>
-    </div>
-  </div>
 </div>
-<div class="cband"></div>
+<div class="lgo9kc"></div>
+<div class="y4VEUd YNk70c"><div class="t0ITR hh3ttd"><div class="UAbVe"><div><div style="display: contents"><div class="AgWCw">
+  <div class="b7ROub"></div>
+  <div class="Zze5V"></div>
+  <div class="esoFne" role="presentation"><div class="yaj8zd" role="presentation"><div class="Txyg0d"><textarea class="ITIRGe" role="textbox" aria-label="Ask anything" placeholder="Ask anything" rows="1"></textarea></div></div></div>
+  <div class="wYOqBc"></div>
+  <div class="d4HWzd"></div>
+  <div class="add"><button class="ib" aria-label="Add">+</button></div>
+  <div class="xm5Wye"><button class="ib" aria-label="Voice">🎤</button><button class="ib send" aria-label="Send">➤</button></div>
+</div></div></div></div></div></div>
 <div class="viewer" aria-modal="true" role="dialog"><button aria-label="Close">×</button></div>
 <script>
-  var words = ' is made of all colors. When it enters the atmosphere, it hits nitrogen and oxygen molecules, which are much smaller than the wavelength of visible light, so they scatter it in every direction; blue light scatters about five times more than red, so the sky looks blue from wherever you stand'.split(' ');
+  var words = ' (Withania somnifera) is an evergreen shrub native to India, the Middle East and Africa. Often called Indian ginseng, it has been used for thousands of years in traditional Ayurvedic medicine as an adaptogen, a natural substance thought to help the body cope with stress'.split(' ');
   var stream = document.getElementById('stream'), body = stream.parentNode, w = 0, t0 = performance.now();
   var tick = setInterval(function () {
     if (performance.now() - t0 > 4000 || w >= words.length) {
@@ -112,13 +135,13 @@
     s.textContent = ' ' + words[w++];
     stream.appendChild(s);
   }, 50);
-  var ta = document.querySelector('textarea'), pill = document.querySelector('.pill'), send = document.querySelector('.send');
-  ta.addEventListener('focus', function () { pill.classList.add('focused'); });
+  var ta = document.querySelector('textarea'), send = document.querySelector('.send'), dim = document.querySelector('.lgo9kc');
+  ta.addEventListener('focus', function () { dim.classList.add('vKW4md'); });
+  ta.addEventListener('blur', function () { dim.classList.remove('vKW4md'); });
   ta.addEventListener('input', function () {
     ta.style.height = '24px';
     ta.style.height = Math.min(120, ta.scrollHeight) + 'px';
-    send.classList.toggle('off', !ta.value);
-    pill.setAttribute('data-len', String(ta.value.length));
+    send.classList.toggle('on', !!ta.value);
   });
 </script>
 </body>

@@ -105,6 +105,7 @@
     let scrollPassTimer = null;
     let changeListenerAttached = false;
     let transitionendListenerAttached = false;
+    let focusListenersAttached = false;
     let toggleListenerAttached = false;
     let userInputListenersAttached = false;
     // Reveal-animation properties worth forcing a repaint pass over —
@@ -1526,6 +1527,7 @@
             return;
         }
 
+        if (el.style.getPropertyValue('background-color') !== 'transparent') snapNextWrite(el);
         el.style.setProperty('background-color', 'transparent', 'important');
         brightModified.add(el);
     }
@@ -1592,7 +1594,19 @@
         return overlayModified.has(el) || brightModified.has(el) || shellModified.has(el)
             || chromeModified.has(el) || chromeAuthoredModified.has(el)
             || askAnythingModified.has(el) || googleAiChatModified.has(el)
-            || inlineHighlightModified.has(el) || maskPaints.has(el) || buttonFillKept.has(el);
+            || inlineHighlightModified.has(el) || maskPaints.has(el) || buttonFillKept.has(el)
+            || fadePaints.has(el);
+    }
+
+    // The write about to happen on el lands at once instead of animating
+    // through the site's own transitions (`transition: all .1s` on
+    // Walmart's tiles, `color .15s` on its text): an Aura fix fading in
+    // late reads as a flash (X-11). Transitions return next frame.
+    function snapNextWrite(el) {
+        if (el.hasAttribute('data-aura-notrans')) return;
+        el.setAttribute('data-aura-notrans', '');
+        notransPending.push(el);
+        if (!notransRaf) notransRaf = requestAnimationFrame(clearNotrans);
     }
 
     function clearNotrans() {
@@ -1637,6 +1651,7 @@
                     bg: cs.backgroundColor,
                     backdrop: cs.webkitBackdropFilter || cs.backdropFilter || 'none',
                     img: cs.backgroundImage,
+                    opacity: cs.opacity,
                 };
             } catch (e) {}
             out[todo[t]] = paint;
@@ -1667,7 +1682,12 @@
 
     function applyLayerPaint(el, rec) {
         const st = el.style;
+        // The layer rule owns this surface: an inline-highlight write
+        // (text pinned dark against the authored white) would leave dark
+        // text on the theme fill (Session 8, a white share disc on a photo).
+        if (rec.opaque && inlineHighlightModified.has(el)) revertInlineHighlightElement(el);
         if (st.getPropertyValue('background-color') !== rec.bg || st.getPropertyPriority('background-color') !== 'important') {
+            snapNextWrite(el);
             st.setProperty('background-color', rec.bg, 'important');
         }
         // A gradient-painted surface: the gradient in the theme color.
@@ -2588,6 +2608,9 @@
         const hasGradient = !!(H && H.isGradientBackgroundImage
             && H.isGradientBackgroundImage(style.backgroundImage));
         if (!hasOpaque && !hasGradient) return;
+        // The band behind the pill fades the answer out under the
+        // composer: the fade rule repaints it in the theme color.
+        if (!hasOpaque && isFadePaint(style.backgroundColor, style.backgroundImage)) return;
         clearAskAnythingFill(sib);
     }
 
@@ -3491,6 +3514,11 @@
     }
 
     function writeContrastColor(el, picked) {
+        // A late text-color fix snaps instead of fading through the site's
+        // own `transition: color` (Walmart: 24 elements): the old color
+        // animating into the new one read as a flash (X-11). Transitions
+        // come back next frame, as after a probe.
+        if (el.style.getPropertyValue('color') !== picked) snapNextWrite(el);
         el.style.setProperty('color', picked, 'important');
         contrastModified.add(el);
     }
@@ -4172,6 +4200,314 @@
         maskPaints.clear();
     }
 
+    // 3d-quinquies. FADES — a gradient from transparent into the color of
+    // what it sits on, laid over the end of a scrolling row or of clipped
+    // text (GitHub's carousel rows, Airbnb's category row, WebMD's tab row:
+    // ::before/::after; Google's AI Overview "Show more" collapse: a div).
+    // The strip leaves gradients alone, so a white fade stayed white on a
+    // dark page; a large div fade was cleared as a layout gradient, so the
+    // collapsed text ran under the "Show more" button (G-6). Same idea as
+    // the mask rule: when the fade's opaque color matches the authored
+    // paint behind it, repaint the gradient in the themed color of what's
+    // behind it now (H.themeGradient keeps each stop's alpha). Anything
+    // else (a dark text scrim over a photo) keeps its authored gradient.
+    // Element fades are written inline; pseudo-element fades as rules in
+    // the pseudo override sheet (document only: that sheet doesn't reach
+    // into shadow roots).
+    const fadePaints = new Map();        // element -> saved inline background-image
+    const fadePseudoRules = new Map();   // "token::before" -> rule
+    let fadeTokenCounter = 0;
+    const FADE_MAX_PER_PASS = 80;
+    const FADE_ANCESTOR_DEPTH = 8;
+
+    function isFadePaint(bg, img) {
+        return !!(img && img !== 'none' && H.classifyAuthoredPaint
+            && H.classifyAuthoredPaint({ bg, img }, 'layer') === 'fade');
+    }
+
+    // Nominates [el, pseudo|null, img]. Pseudo-elements are read only on
+    // positioned hosts: an absolutely positioned fade is laid out against
+    // its host, and reading ::before/::after on every static element would
+    // double the walk's style reads.
+    function visitFadeElement(el, out) {
+        if (out.length >= FADE_MAX_PER_PASS) return;
+        if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[el.tagName] && el.tagName !== 'BUTTON') return;
+        let cs;
+        try { cs = getComputedStyle(el); } catch (e) { return; }
+        if (fadePaints.has(el)) {
+            out.push([el, null]);
+        } else if (cs.backgroundImage !== 'none' && isFadePaint(cs.backgroundColor, cs.backgroundImage)) {
+            out.push([el, null]);
+        } else if (cs.position === 'absolute' && !el.firstChild) {
+            // An empty overlay whose gradient one of our rules hides (the
+            // Google answer-card rule clears every block's background-image,
+            // the AI Overview's collapse fade included): settleFades reads
+            // its authored paint through the probe.
+            out.push([el, null]);
+        }
+        if (cs.position === 'static' || el.getRootNode() !== document) return;
+        for (let i = 0; i < 2; i++) {
+            const pseudo = i === 0 ? '::before' : '::after';
+            const token = el.getAttribute('data-aura-fade');
+            if (token && fadePseudoRules.has(token + pseudo)) { out.push([el, pseudo]); continue; }
+            let ps;
+            try { ps = getComputedStyle(el, pseudo); } catch (e) { continue; }
+            if (ps.content === 'none' || ps.content === 'normal' || ps.backgroundImage === 'none') continue;
+            if (ps.position !== 'absolute' && ps.position !== 'fixed') continue;
+            if (isFadePaint(ps.backgroundColor, ps.backgroundImage)) out.push([el, pseudo]);
+        }
+    }
+
+    function writeFadePseudoRules() {
+        pseudoBgRulesByToken.set('fades', Array.from(fadePseudoRules.values()).join('\n'));
+        const css = Array.from(pseudoBgRulesByToken.values()).join('\n');
+        const sheet = ensurePseudoBgStyleEl();
+        if (sheet.textContent !== css) sheet.textContent = css;
+    }
+
+    function releaseFade(el, pseudo) {
+        if (pseudo) {
+            const token = el.getAttribute('data-aura-fade');
+            return !!(token && fadePseudoRules.delete(token + pseudo));
+        }
+        const saved = fadePaints.get(el);
+        if (!saved) return false;
+        try {
+            if (saved[0]) el.style.setProperty('background-image', saved[0], saved[1]);
+            else el.style.removeProperty('background-image');
+        } catch (e) {}
+        fadePaints.delete(el);
+        return false;
+    }
+
+    function settleFades(cands) {
+        if (!cands.length || !currentTheme || !H || !H.gradientFadeColor) return;
+        // The authored gradient: element fades are read through the probe
+        // (our inline repaint is lifted); a pseudo-element's gradient is
+        // read with our rule off.
+        const els = [];
+        const elIndex = new Map();
+        const pseudos = [];
+        for (let i = 0; i < cands.length; i++) {
+            const [el, pseudo] = cands[i];
+            if (!el.isConnected) { releaseFade(el, pseudo); continue; }
+            if (pseudo) pseudos.push(i);
+            else if (!elIndex.has(el)) { elIndex.set(el, els.length); els.push(el); }
+        }
+        let rulesChanged = false;
+        const pseudoImg = new Map();
+        if (pseudos.length) {
+            const sheet = pseudoBgStyleEl;
+            if (sheet && fadePseudoRules.size) sheet.disabled = true;
+            for (const i of pseudos) {
+                const [el, pseudo] = cands[i];
+                let ps;
+                try { ps = getComputedStyle(el, pseudo); } catch (e) { continue; }
+                pseudoImg.set(i, isFadePaint(ps.backgroundColor, ps.backgroundImage) ? ps.backgroundImage : null);
+            }
+            if (sheet) sheet.disabled = false;
+        }
+        const own = els.length ? readAuthoredPaint(els) : [];
+        // What each fade sits on: the host for a pseudo-element, else the
+        // parent, up the tree.
+        const chains = cands.map(([el, pseudo]) => {
+            const chain = [];
+            for (let n = pseudo ? el : maskParentOf(el), d = 0; n && d < FADE_ANCESTOR_DEPTH
+                && n !== document.body && n !== document.documentElement; n = maskParentOf(n), d++) chain.push(n);
+            return chain;
+        });
+        const flat = [].concat(...chains);
+        const behindPaint = flat.length ? readAuthoredPaint(flat) : [];
+        for (let i = 0, k = 0; i < cands.length; k += chains[i].length, i++) {
+            const [el, pseudo] = cands[i];
+            if (!el.isConnected) continue;
+            const img = pseudo ? pseudoImg.get(i) : (own[elIndex.get(el)] && isFadePaint(own[elIndex.get(el)].bg, own[elIndex.get(el)].img) ? own[elIndex.get(el)].img : null);
+            const chain = chains[i];
+            // What it sits on: the nearest authored fill. A photo (a url()
+            // background) first means it's a text scrim over an image, not
+            // a fade into the page: kept as authored.
+            let behind = null;
+            let onImage = false;
+            for (let j = 0; j < chain.length && !behind && !onImage; j++) {
+                const p = behindPaint[k + j];
+                const c = H.parseCssRgb(p && p.bg);
+                if (c && c.a >= 0.5) behind = c;
+                else if (p && p.img && /url\(/i.test(p.img)) onImage = true;
+            }
+            if (!img || onImage || !H.isMaskFill(H.gradientFadeColor(img), behind)) {
+                if (releaseFade(el, pseudo)) rulesChanged = true;
+                continue;
+            }
+            // Fade into what's behind it now: the nearest painted node (a
+            // themed layer, a kept card or button), else the page. A
+            // button's own pseudo fade (Airbnb's row arrow) fades the row
+            // into what's behind the button, not into the button.
+            let color = 'var(--aura-bg)';
+            const from = pseudo && isButtonLikeElement(el) ? 1 : 0;
+            for (let j = from; j < chain.length; j++) {
+                let bg = '';
+                try { bg = getComputedStyle(chain[j]).backgroundColor; } catch (e) { continue; }
+                const c = H.parseCssRgb(bg);
+                if (c && c.a >= 0.5) { color = bg; break; }
+            }
+            const themed = H.themeGradient(img, color);
+            if (!themed) continue;
+            if (pseudo) {
+                let token = el.getAttribute('data-aura-fade');
+                if (!token) { token = String(++fadeTokenCounter); el.setAttribute('data-aura-fade', token); }
+                const rule = `[data-aura-fade="${token}"]${pseudo} { background-image: ${themed} !important; }`;
+                if (fadePseudoRules.get(token + pseudo) !== rule) { fadePseudoRules.set(token + pseudo, rule); rulesChanged = true; }
+            } else {
+                if (!fadePaints.has(el)) fadePaints.set(el, [el.style.getPropertyValue('background-image'), el.style.getPropertyPriority('background-image')]);
+                if (el.style.getPropertyValue('background-image') !== themed || el.style.getPropertyPriority('background-image') !== 'important') {
+                    el.style.setProperty('background-image', themed, 'important');
+                }
+            }
+        }
+        if (rulesChanged) writeFadePseudoRules();
+    }
+
+    // 3d-sexies. BACKGROUND IMAGES UNDER TEXT (X-10, decided Nov 14) — a
+    // large text section painted with a url() background keeps it while its
+    // text is themed (light on a dark theme): WebMD's drug-page hero is
+    // near-white decorative art under now-white text. A decorative image
+    // (flat: its pixels barely vary) is dropped so the section themes like
+    // any stripped fill; a photo, or an image that can't be read (no CORS),
+    // is kept with a scrim of the theme color under the text. The image is
+    // sampled once per URL, off the pass (async decode).
+    const bgImagePaints = new Map();     // element -> { saved: [value, priority], wrote }
+    const bgImageStats = new Map();      // url -> 'pending' | { flat: bool } | null (unreadable)
+    const bgImageWaiting = new Map();    // url -> Set of elements
+    const BG_IMAGE_MAX_PER_PASS = 12;
+    const BG_IMAGE_MIN_TEXT = 20;
+    const BG_IMAGE_FLAT_MAX_SD = 14;
+    const BG_IMAGE_SCRIM = 'linear-gradient(color-mix(in srgb, var(--aura-bg) 62%, transparent), color-mix(in srgb, var(--aura-bg) 62%, transparent))';
+    const URL_IN_BG_RE = /url\(\s*["']?([^"')]+)["']?\s*\)/i;
+
+    function visitBackgroundImageElement(el, vh, vw, out) {
+        if (out.length >= BG_IMAGE_MAX_PER_PASS) return;
+        if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[el.tagName]) return;
+        if (el === document.documentElement || el === document.body) return;
+        const rec = bgImagePaints.get(el);
+        let cs;
+        try { cs = getComputedStyle(el); } catch (e) { return; }
+        const img = cs.backgroundImage;
+        if (rec) {
+            // Still ours: nothing to do. Rewritten by the site: decide again.
+            if (img === rec.wrote) return;
+            releaseBackgroundImage(el);
+        }
+        if (!img || img === 'none' || !URL_IN_BG_RE.test(img) || /gradient\(/i.test(img)) return;
+        let rect;
+        try { rect = el.getBoundingClientRect(); } catch (e) { return; }
+        if (rect.width < vw * 0.5 || rect.height < 80) return;
+        let text = 0;
+        try { text = String(el.textContent || '').trim().length; } catch (e) {}
+        if (text < BG_IMAGE_MIN_TEXT) return;
+        out.push([el, img]);
+    }
+
+    function sampleBackgroundImage(url) {
+        bgImageStats.set(url, 'pending');
+        const done = (stats) => {
+            bgImageStats.set(url, stats);
+            const els = bgImageWaiting.get(url);
+            bgImageWaiting.delete(url);
+            if (!els || !currentTheme) return;
+            els.forEach(el => { if (el.isConnected) applyBackgroundImageDecision(el, url); });
+            discardOwnMutationRecords();
+        };
+        try {
+            const im = new Image();
+            im.crossOrigin = 'anonymous';
+            im.onload = () => {
+                let stats = null;
+                try {
+                    const c = document.createElement('canvas');
+                    c.width = 24;
+                    c.height = 24;
+                    const x = c.getContext('2d');
+                    x.drawImage(im, 0, 0, 24, 24);
+                    const d = x.getImageData(0, 0, 24, 24).data;
+                    let s = 0, s2 = 0, n = 0;
+                    for (let i = 0; i < d.length; i += 4) {
+                        if (d[i + 3] < 128) continue;
+                        const l = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+                        s += l; s2 += l * l; n++;
+                    }
+                    if (n) {
+                        const mean = s / n;
+                        stats = { flat: Math.sqrt(Math.max(0, s2 / n - mean * mean)) <= BG_IMAGE_FLAT_MAX_SD };
+                    }
+                } catch (e) { stats = null; }
+                done(stats);
+            };
+            im.onerror = () => done(null);
+            im.src = url;
+        } catch (e) {
+            done(null);
+        }
+    }
+
+    function applyBackgroundImageDecision(el, url) {
+        const stats = bgImageStats.get(url);
+        if (stats === 'pending' || stats === undefined) return;
+        let rec = bgImagePaints.get(el);
+        if (!rec) {
+            rec = { saved: [el.style.getPropertyValue('background-image'), el.style.getPropertyPriority('background-image')], wrote: '' };
+            bgImagePaints.set(el, rec);
+        }
+        let authored = '';
+        try { authored = getComputedStyle(el).backgroundImage; } catch (e) { return; }
+        const value = stats && stats.flat ? 'none' : BG_IMAGE_SCRIM + ', ' + authored;
+        el.style.setProperty('background-image', value, 'important');
+        rec.wrote = el.style.getPropertyValue('background-image') === 'none' ? 'none' : getComputedStyle(el).backgroundImage;
+    }
+
+    function settleBackgroundImages(cands) {
+        if (!cands.length || !currentTheme) return;
+        for (let i = 0; i < cands.length; i++) {
+            const [el, img] = cands[i];
+            const m = URL_IN_BG_RE.exec(img);
+            if (!m) continue;
+            let url;
+            try { url = new URL(m[1], document.baseURI).href; } catch (e) { continue; }
+            const stats = bgImageStats.get(url);
+            if (stats === undefined || stats === 'pending') {
+                if (!bgImageWaiting.has(url)) bgImageWaiting.set(url, new Set());
+                bgImageWaiting.get(url).add(el);
+                if (stats === undefined) sampleBackgroundImage(url);
+                continue;
+            }
+            applyBackgroundImageDecision(el, url);
+        }
+    }
+
+    function releaseBackgroundImage(el) {
+        const rec = bgImagePaints.get(el);
+        if (!rec) return;
+        try {
+            if (rec.saved[0]) el.style.setProperty('background-image', rec.saved[0], rec.saved[1]);
+            else el.style.removeProperty('background-image');
+        } catch (e) {}
+        bgImagePaints.delete(el);
+    }
+
+    function revertBackgroundImages() {
+        Array.from(bgImagePaints.keys()).forEach(releaseBackgroundImage);
+        bgImageWaiting.clear();
+    }
+
+    function revertFadePaints() {
+        Array.from(fadePaints.keys()).forEach(el => releaseFade(el, null));
+        fadePaints.clear();
+        fadePseudoRules.forEach((rule, key) => {
+            const el = document.querySelector(`[data-aura-fade="${key.replace(/::.*$/, '')}"]`);
+            if (el) el.removeAttribute('data-aura-fade');
+        });
+        fadePseudoRules.clear();
+    }
+
     // 3e. SPA SHELL / GRADIENT SAFETY NET
     // Sites like Discord paint #app with a gradient or ID+!important fill after
     // first paint. Inline !important beats those rules; never clear photos.
@@ -4295,6 +4631,15 @@
         } catch (e) { return false; }
     }
 
+    function isInsidePinnedLayer(el) {
+        for (let n = el; n && n !== document.body && n !== document.documentElement; n = maskParentOf(n)) {
+            let pos = '';
+            try { pos = getComputedStyle(n).position; } catch (e) { return false; }
+            if (pos === 'fixed' || pos === 'sticky') return true;
+        }
+        return false;
+    }
+
     function visitPseudoBgElement(el, vh, vw) {
         if (!el || el.nodeType !== 1 || !H) return;
         if (pseudoBgCleared.has(el)) return;
@@ -4318,6 +4663,7 @@
             const hasOpaqueColor = !!(parsed && parsed.a >= 0.4);
             const hasBgImage = pStyle.backgroundImage && pStyle.backgroundImage !== 'none';
             if (!hasOpaqueColor && !hasBgImage) continue;
+            if (!hasOpaqueColor && isFadePaint(pStyle.backgroundColor, pStyle.backgroundImage)) continue;
             matched = pseudo;
             break;
         }
@@ -4355,8 +4701,16 @@
             // this visit), never permanently locked to whatever state it
             // happened to be sampled in first.
         } else {
+            // Inside a fixed/sticky layer, a covering pseudo fill is that
+            // layer's authored-opaque surface (Google's AI Mode composer
+            // pill is `.d4HWzd::before`, inset 0, under a transparent
+            // textarea): themed opaque, as the layer rule paints any
+            // authored-opaque surface. Clearing it showed the answer
+            // through the field (G-5). In page flow it's still a stale
+            // card layer over themed content: cleared.
+            const fill = isInsidePinnedLayer(el) ? 'var(--aura-overlay)' : 'transparent';
             pseudoBgRulesByToken.set(token,
-                `[data-aura-pbg="${token}"]${matched} { background-color: transparent !important; background-image: none !important; }`
+                `[data-aura-pbg="${token}"]${matched} { background-color: ${fill} !important; background-image: none !important; }`
             );
             pseudoBgCleared.add(el);
         }
@@ -4654,6 +5008,7 @@
 
     function visitInlineHighlightElement(el) {
         if (!el || el.nodeType !== 1 || el.tagName !== 'SPAN' || !H || !H.isLikelyInlineHighlightSpanInfo) return;
+        if (layerPaints.has(el)) return;
         if (inlineHighlightModified.has(el)) {
             if (inlineHighlightKeyAtPaint.get(el) === inlineHighlightKey(el)
                 && el.style.getPropertyValue('background-color') === 'var(--aura-elevated)') return;
@@ -4771,6 +5126,8 @@
         const buttonCandidates = [];
         const stateCandidates = [];
         const maskCandidates = [];
+        const fadeCandidates = [];
+        const bgImageCandidates = [];
         const skipContrast = isActiveSplitTheme(currentTheme);
         let effectiveBgCache = null;
 
@@ -4855,13 +5212,19 @@
                     visitFloatingIconControlElement(el, vh, vw, iconCandidates);
                     visitControlElement(el, buttonCandidates, stateCandidates);
                     visitMaskElement(el, maskCandidates);
+                    visitFadeElement(el, fadeCandidates);
+                    visitBackgroundImageElement(el, vh, vw, bgImageCandidates);
                     visitBlendElement(el);
                 },
             },
             ...smallSurfaceSteps(iconCandidates, popoverCandidates),
             () => settleButtons(buttonCandidates),
             () => settleStateControls(stateCandidates),
-            () => settleMasks(maskCandidates)
+            () => settleMasks(maskCandidates),
+            // After buttons and masks: a fade takes the themed color of
+            // what's behind it, which those may have painted.
+            () => settleFades(fadeCandidates),
+            () => settleBackgroundImages(bgImageCandidates)
         );
         // Contrast must run after bright/shell clears so muted spans are
         // judged against the theme background, not a still-white ancestor.
@@ -5269,6 +5632,8 @@
         revertButtonPaints();
         revertStateControls();
         revertMaskPaints();
+        revertFadePaints();
+        revertBackgroundImages();
         revertBlendedMedia();
         if (!keepSheetCopies) removeSheetCopies();
     }
@@ -5299,8 +5664,25 @@
             });
         }
         try {
-            const mo = new MutationObserver(() => {
+            const mo = new MutationObserver((records) => {
                 if (!currentTheme || !host.isConnected) return;
+                // A component nested in this root that attached its own
+                // shadow root after this one was themed (Reddit-style
+                // nested comments hydrate later): attachShadow makes no
+                // mutation the document observer sees, so theme it now
+                // through a pass scoped to it (Session 8: nested cards kept
+                // their white fill under themed white text).
+                for (let i = 0; i < records.length; i++) {
+                    const r = records[i];
+                    const cands = r.type === 'attributes' ? [r.target] : r.addedNodes;
+                    for (let k = 0; k < cands.length; k++) {
+                        const n = cands[k];
+                        if (n.nodeType === 1 && n.shadowRoot && !n.shadowRoot.querySelector(':scope > style[data-aura-shadow]')) {
+                            pendingMutationRecords.push({ target: n, addedNodes: [], removedNodes: [] });
+                            scheduleSafetyPassDispatch();
+                        }
+                    }
+                }
                 if (shadow.querySelector(':scope > style[data-aura-shadow]')) return;
                 const style = document.createElement('style');
                 style.setAttribute('data-aura-shadow', 'true');
@@ -5311,7 +5693,7 @@
                 pendingMutationRecords.push({ target: host, addedNodes: [], removedNodes: [] });
                 scheduleSafetyPassDispatch();
             });
-            mo.observe(shadow, { childList: true });
+            mo.observe(shadow, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
             shadowCopyWatchers.set(shadow, mo);
         } catch (e) {}
     }
@@ -5440,7 +5822,13 @@
     // sliced like the light DOM instead of running in one task — Reddit
     // has hundreds of these, and walking them all synchronously on every
     // full-document pass was the main source of input lag during load.
-    function shadowRootSteps(host) {
+    // nested: a shadow root inside another shadow root. Those were never
+    // reached before Session 8 (their white cards kept their fill under
+    // themed text); they get the sheet copy (the strip and text colors)
+    // and their own nested roots, not the per-element steps, which on a
+    // Reddit-sized comment tree tripled Aura's time on the hydration
+    // fixture.
+    function shadowRootSteps(host, nested) {
         const shadow = host.shadowRoot;
         if (!shadow) return null;
         const css = getFullStyleSheetCached(currentTheme, lastAppliedThemeKey);
@@ -5461,6 +5849,12 @@
             auraSheetCopies.add(style);
         }
         watchShadowCopy(host, shadow);
+        if (nested) {
+            const inner = [];
+            const all = shadow.querySelectorAll('*');
+            for (let i = 0; i < all.length; i++) if (all[i].shadowRoot) inner.push(all[i]);
+            return inner.map(el => () => shadowRootSteps(el, true));
+        }
 
         // The universal stylesheet just injected strips background-color
         // from every layout tag inside this shadow root too — but none
@@ -5487,7 +5881,14 @@
         const shadowButtons = [];
         const shadowStates = [];
         const shadowMasks = [];
+        const shadowFades = [];
+        // Components nested in this root carry their own shadow roots.
+        const nestedHosts = [];
+        for (let i = 0; i < shadowElements.length; i++) {
+            if (shadowElements[i].shadowRoot) nestedHosts.push(shadowElements[i]);
+        }
         return [
+            ...nestedHosts.map(el => () => shadowRootSteps(el, true)),
             {
                 items: shadowElements,
                 visit: function (shadowEl) {
@@ -5506,6 +5907,7 @@
                     safeVisit(e => visitFloatingIconControlElement(e, vh, vw, shadowIcons), shadowEl);
                     safeVisit(e => visitControlElement(e, shadowButtons, shadowStates), shadowEl);
                     safeVisit(e => visitMaskElement(e, shadowMasks), shadowEl);
+                    safeVisit(e => visitFadeElement(e, shadowFades), shadowEl);
                     safeVisit(visitBlendElement, shadowEl);
                 },
             },
@@ -5513,6 +5915,7 @@
             () => settleButtons(shadowButtons),
             () => settleStateControls(shadowStates),
             () => settleMasks(shadowMasks),
+            () => settleFades(shadowFades),
             // ARIA-role overlay roots (dialog/menu/listbox/aria-modal)
             // get their own direct pass too — visitOverlayModalWalk
             // above only handles the position:fixed/nav-drawer shapes,
@@ -6027,6 +6430,32 @@
                 document.addEventListener('toggle', (event) => {
                     queueScopedSafetyPass(event);
                 }, { capture: true, passive: true });
+            }
+            // Focus changes paint through :focus / :focus-within / `:focus +
+            // label` rules with no mutation (Urban Plates' floating label
+            // gets its white fill only while the input is focused, F-2).
+            // One scoped pass per focus change, on the field's parent (the
+            // label is the input's sibling), never per keystroke; plus the
+            // mask rule right away on that parent's children, so a label
+            // that isn't animating doesn't show the site's white for the
+            // debounce.
+            if (!focusListenersAttached) {
+                focusListenersAttached = true;
+                const onFocusChange = (event) => {
+                    if (!currentTheme) return;
+                    const parent = event.target && event.target.nodeType === 1 && event.target.parentElement;
+                    if (!parent || parent === document.body || parent === document.documentElement) return;
+                    const cands = [];
+                    const kids = parent.children;
+                    for (let i = 0; i < kids.length && i < MASK_MAX_NEIGHBORS; i++) safeVisit(e => visitMaskElement(e, cands), kids[i]);
+                    if (cands.length) {
+                        safePass(() => settleMasks(cands));
+                        discardOwnMutationRecords();
+                    }
+                    queueScopedSafetyPass(event);
+                };
+                document.addEventListener('focusin', onFocusChange, { capture: true, passive: true });
+                document.addEventListener('focusout', onFocusChange, { capture: true, passive: true });
             }
         }
 

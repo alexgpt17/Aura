@@ -14,6 +14,13 @@
     - a Bearbottom-style chat launcher: a transparent 64x64 position:fixed
       wrapper (cursor:pointer) around a round, authored-opaque button.
       Painting the wrapper draws a square around the circle.
+  Session 8 (X-9), read live on airbnb.com (desktop Chrome, 500 px):
+    - category pills under the search bar: a[role=tab] (relative, radius
+      40, 1 px rgba(255,255,255,.5) border, no fill) > two absolute
+      pointer-events:none spans painting the pill with a near-white
+      gradient (one at opacity 0, the other state) + a relative label
+      span with authored #222 text. Being inside an <a>, the label takes
+      the theme's link color; the gradient fill stays white.
   Controls that must keep working:
     - a close button over a photo with a dark translucent scrim
       (rgba(0,0,0,.5), Google Shopping's shape): keep the scrim.
@@ -28,6 +35,12 @@
   .tabs a[aria-selected="true"] { color: #222; border-bottom: 2px solid #222; }
   .tabs .ico { position: absolute; top: 2px; left: 50%; margin-left: -14px; width: 28px; height: 28px; }
   .tabs .ico video { display: block; width: 28px; height: 28px; background: #f3c26b; border-radius: 50%; }
+  .pills { display: flex; gap: 8px; padding: 12px 16px; overflow: hidden; }
+  .p34ezkr { position: relative; display: inline-flex; align-items: center; height: 40px; padding: 0 14px; border: 1px solid rgba(255,255,255,.5); border-radius: 40px; color: #222; text-decoration: none; font-size: 14px; white-space: nowrap; }
+  .p2oqqqt { position: absolute; inset: 0; border-radius: 40px; pointer-events: none; }
+  .p2oqqqt.a { opacity: 0; box-shadow: rgba(0,0,0,.1) 0 3px 2.5px; background-image: linear-gradient(175.11deg, rgb(243,243,243) 8.327%, #fff 53.126%); }
+  .p2oqqqt.b { box-shadow: #fff 0 1px .5px inset, rgba(0,0,0,.12) 0 1px 2px; background-image: linear-gradient(163.04deg, #fff 16.985%, rgb(245,245,245) 82.516%); }
+  .p1y73bgx { position: relative; }
   main { padding: 16px; }
   .photo { position: relative; height: 280px; border-radius: 14px; background: linear-gradient(135deg, #6a8caf, #c5d6e8); margin-bottom: 22px; }
   .photo .close { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 50%; background: rgba(0,0,0,.5); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; }
@@ -45,6 +58,11 @@
     <a role="tab" href="#beach"><span class="ico"><video muted playsinline></video></span>Beach</a>
     <a role="tab" href="#cabins"><span class="ico"><video muted playsinline></video></span>Cabins</a>
   </div>
+</div>
+<div class="pills" role="tablist">
+  <a class="p34ezkr" role="tab" href="#all"><span class="p2oqqqt a"></span><span class="p2oqqqt b"></span><span class="p1y73bgx">All</span></a>
+  <a class="p34ezkr" role="tab" href="#homes"><span class="p2oqqqt a"></span><span class="p2oqqqt b"></span><span class="p1y73bgx">Homes</span></a>
+  <a class="p34ezkr" role="tab" href="#hotels"><span class="p2oqqqt a"></span><span class="p2oqqqt b"></span><span class="p1y73bgx">Hotels</span></a>
 </div>
 <main id="list">
   <div class="photo"><span class="share" role="button" aria-label="Share">↗</span><span class="close" role="button" aria-label="Close">×</span></div>

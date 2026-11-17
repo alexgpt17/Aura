@@ -1529,6 +1529,33 @@ describe('isOverlayChrome / isInsideFloatingBanner (jsdom)', () => {
 });
 
 describe('effectiveBackground (jsdom)', () => {
+  // Session 8 (X-9): Airbnb's category pill is a gradient span under a
+  // position:relative label. jsdom doesn't parse gradients, so styles are
+  // stubbed by id; jsdom rects are all zero, so "covers" holds.
+  test('sees an opaque gradient and a fill layer under a positioned node', () => {
+    document.body.innerHTML = `
+      <a id="chip"><span id="fill"></span><span id="label">Homes</span><span id="flat">Static</span></a>
+      <div id="grad"><span id="ongrad">x</span></div>
+      <div id="fade"><span id="onfade">x</span></div>
+    `;
+    const base = { backgroundColor: 'rgba(0, 0, 0, 0)', backgroundImage: 'none', position: 'static', visibility: 'visible', opacity: '1' };
+    const styles = {
+      chip: { position: 'relative' },
+      fill: { position: 'absolute', backgroundImage: 'linear-gradient(rgb(255, 255, 255), rgb(245, 245, 245))' },
+      label: { position: 'relative' },
+      grad: { backgroundImage: 'linear-gradient(rgb(255, 255, 255), rgb(255, 255, 255))' },
+      fade: { backgroundImage: 'linear-gradient(rgba(255, 255, 255, 0), rgb(255, 255, 255))' },
+    };
+    const getStyle = el => ({ ...base, ...(styles[el.id] || {}) });
+    const bg = id => H.effectiveBackground(document.getElementById(id), getStyle, '#112233');
+    expect(bg('label')).toEqual({ r: 250, g: 250, b: 250, a: 1 });
+    // A static node never looks for a layer under it.
+    expect(bg('flat')).toEqual({ r: 17, g: 34, b: 51, a: 1 });
+    expect(bg('ongrad')).toEqual({ r: 255, g: 255, b: 255, a: 1 });
+    // A fade isn't a fill.
+    expect(bg('onfade')).toEqual({ r: 17, g: 34, b: 51, a: 1 });
+  });
+
   test('walks to the first opaque ancestor, else theme hex', () => {
     document.body.innerHTML = `
       <div id="card" style="background-color: rgb(232, 232, 232);">
@@ -2400,6 +2427,32 @@ describe('covering backdrops', () => {
     expect(H.classifyAuthoredPaint(p, 'overlay', true)).toBe('scrim');
     expect(H.classifyAuthoredPaint(p, 'overlay', false)).toBe('opaque');
   });
+  // Session 8 (G-7): Google dims the page behind its expanded composer
+  // with an opaque #000 layer at opacity .6.
+  test('opacity makes an opaque black covering layer a scrim', () => {
+    expect(H.classifyAuthoredPaint({ bg: 'rgb(0, 0, 0)', opacity: '0.6' }, 'overlay', true)).toBe('scrim');
+    expect(H.classifyAuthoredPaint({ bg: 'rgb(0, 0, 0)', opacity: '1' }, 'overlay', true)).toBe('opaque');
+    // Only a covering dark layer: a card mid fade-in stays a card.
+    expect(H.classifyAuthoredPaint({ bg: 'rgb(0, 0, 0)', opacity: '0.6' }, 'overlay', false)).toBe('opaque');
+    expect(H.classifyAuthoredPaint({ bg: 'rgb(255, 255, 255)', opacity: '0.6' }, 'overlay', true)).toBe('opaque');
+  });
+});
+
+describe('fades (Session 8, G-6 / X-8)', () => {
+  const big = { tag: 'DIV', width: 468, height: 148, vh: 800, vw: 400 };
+  test('a fade is never cleared as a layout gradient', () => {
+    const fade = { ...big, backgroundImage: 'linear-gradient(rgba(0, 0, 0, 0) 0px, rgba(255, 255, 255, 0.9) 52px, rgb(255, 255, 255) 80px)' };
+    expect(H.shouldClearLayoutGradient(fade)).toBe(false);
+    expect(H.shouldClearShellBackground(fade)).toBe(false);
+    // An opaque decorative gradient still is.
+    expect(H.shouldClearLayoutGradient({ ...big, backgroundImage: 'linear-gradient(rgb(255, 255, 255), rgb(238, 238, 238))' })).toBe(true);
+  });
+  test('gradientFadeColor is the most opaque stop', () => {
+    expect(H.gradientFadeColor('linear-gradient(to left, rgb(237, 240, 255) 0%, rgb(237, 240, 255) 50%, rgba(237, 240, 255, 0))'))
+      .toEqual({ r: 237, g: 240, b: 255, a: 1 });
+    expect(H.gradientFadeColor('linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.3))')).toBeNull();
+    expect(H.gradientFadeColor('url("a.png")')).toBeNull();
+  });
 });
 
 describe('themeGradient', () => {
@@ -2485,6 +2538,15 @@ describe('buttons and stateful controls', () => {
     expect(H.buttonPaintDecision({ ...dark, ...sheet, fill: rgb(229, 235, 238), text: rgb(255, 255, 255), widthFrac: 1 }).mode).toBe('text');
     // The Walmart strip blended into its white section: still a surface.
     expect(H.buttonPaintDecision({ ...dark, fill: rgb(255, 255, 255), text: rgb(46, 47, 50), widthFrac: 1, container: rgb(255, 255, 255), themedContainer: rgb(28, 28, 30), distinctFill: rgb(64, 64, 66) }).mode).toBe('surface');
+  });
+
+  // Session 8 (X-8/X-9): Airbnb's row arrow, a white button on a white row.
+  test('a narrow neutral button that blended into its container blends into the themed one', () => {
+    const row = { container: rgb(255, 255, 255), themedContainer: rgb(28, 28, 30), distinctFill: rgb(64, 64, 66) };
+    expect(H.buttonPaintDecision({ ...dark, ...row, fill: rgb(255, 255, 255), text: rgb(34, 34, 34), widthFrac: 0.05 }))
+      .toEqual({ mode: 'surface', color: '#FFFFFF' });
+    // Container unknown (the page): only a full-width strip.
+    expect(H.buttonPaintDecision({ ...dark, fill: rgb(255, 255, 255), text: rgb(34, 34, 34), widthFrac: 0.05 }).mode).toBe('none');
   });
 
   test('a fill that stood apart but blends into the themed container gets the distinct fill', () => {

@@ -1902,8 +1902,11 @@
      * text.
      * A layer that covers the screen (`covering`) is a backdrop, not a
      * card: in overlay mode a dark translucent one stays 'scrim' even
-     * behind a blur (Reddit's "Save draft?" backdrop).
-     * @param {{ bg?: string, backdrop?: string, img?: string }|null} paint
+     * behind a blur (Reddit's "Save draft?" backdrop). Its own CSS
+     * `opacity` counts toward how translucent it is: Google dims the page
+     * behind its expanded composer with an opaque #000 layer at opacity .6
+     * (G-7), which read as an opaque card and was painted the theme color.
+     * @param {{ bg?: string, backdrop?: string, img?: string, opacity?: string }|null} paint
      * @param {'layer'|'overlay'} mode
      * @param {boolean} [covering]
      * @returns {'opaque'|'scrim'|'fade'|'clear'}
@@ -1925,6 +1928,10 @@
         }
         var blurred = !!paint.backdrop && paint.backdrop !== 'none';
         var dark = Math.max(c.r, c.g, c.b) <= AUTHORED_SCRIM_MAX_CHANNEL;
+        if (mode === 'overlay' && covering && dark && paint.opacity != null) {
+            var op = parseFloat(paint.opacity);
+            if (op >= 0 && op < 1) a *= op;
+        }
         if (mode === 'overlay' && dark && a < AUTHORED_SCRIM_MAX_ALPHA && (!blurred || covering)) return 'scrim';
         if (a >= 0.5 || blurred) return 'opaque';
         return 'clear';
@@ -1964,6 +1971,20 @@
             if (a >= 1) return token;
             return 'color-mix(in srgb, ' + token + ' ' + Math.round(a * 100) + '%, transparent)';
         });
+    }
+    /**
+     * The color a fade fades into: its most opaque stop (null unless the
+     * value is a pure gradient with a stop at >= 0.5 alpha).
+     */
+    function gradientFadeColor(value) {
+        if (!gradientStopAlphas(value)) return null;
+        var m = String(value).match(CSS_COLOR_RE);
+        var best = null;
+        for (var i = 0; m && i < m.length; i++) {
+            var c = parseCssRgb(m[i]);
+            if (c && (!best || c.a > best.a)) best = c;
+        }
+        return best && best.a >= 0.5 ? best : null;
     }
     var AUTHORED_SCRIM_MAX_ALPHA = 0.95;
     var AUTHORED_SCRIM_MAX_CHANNEL = 96;
@@ -2049,7 +2070,41 @@
     /**
      * First opaque computed background walking from el up to html.
      * Falls back to `fallbackHex` (theme background) when the stack is glass.
+     * Session 8 (X-9): a node's fill can also be an opaque gradient (all
+     * stops >= 0.5 alpha, averaged), or a fill layer under it: an earlier
+     * absolutely positioned sibling that paints and covers the node, the
+     * way Airbnb's category pill is two pointer-events:none gradient spans
+     * under a position:relative label. Only a positioned node can sit on
+     * such a layer, so static nodes (most of a page) skip the sibling look.
      */
+    var FILL_LAYER_MAX_SIBLINGS = 4;
+    function opaqueFillOf(style) {
+        var parsed = parseCssRgb(style.backgroundColor);
+        if (parsed && parsed.a >= 0.5) return parsed;
+        var stops = gradientStopAlphas(style.backgroundImage);
+        if (!stops || stops.min < 0.5) return null;
+        var m = String(style.backgroundImage).match(CSS_COLOR_RE);
+        var r = 0, g = 0, b = 0;
+        for (var i = 0; i < m.length; i++) { var c = parseCssRgb(m[i]); r += c.r; g += c.g; b += c.b; }
+        return { r: Math.round(r / m.length), g: Math.round(g / m.length), b: Math.round(b / m.length), a: 1 };
+    }
+    function fillLayerUnder(node, style, styleFn) {
+        if (!style || !style.position || style.position === 'static' || typeof node.getBoundingClientRect !== 'function') return null;
+        var sib = node.previousElementSibling;
+        var rect = null;
+        for (var n = 0; sib && n < FILL_LAYER_MAX_SIBLINGS; n++, sib = sib.previousElementSibling) {
+            var s;
+            try { s = styleFn(sib); } catch (e) { continue; }
+            if (!s || s.position !== 'absolute' || s.visibility === 'hidden' || parseFloat(s.opacity) < 0.5) continue;
+            var fill = opaqueFillOf(s);
+            if (!fill) continue;
+            if (!rect) rect = node.getBoundingClientRect();
+            var r = sib.getBoundingClientRect();
+            var cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+            if (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom) return fill;
+        }
+        return null;
+    }
     /**
      * `cache` (optional WeakMap<Element, parsedColor|null>) memoizes the
      * ancestor walk per element for the lifetime of a single caller-owned
@@ -2076,8 +2131,8 @@
                 var style;
                 try { style = styleFn(node); } catch (e) { style = null; }
                 if (style) {
-                    var parsed = parseCssRgb(style.backgroundColor);
-                    if (parsed && parsed.a >= 0.5) { result = parsed; node = null; break; }
+                    var fill = opaqueFillOf(style) || fillLayerUnder(node, style, styleFn);
+                    if (fill) { result = fill; node = null; break; }
                 }
             }
             if (typeof document !== 'undefined') {
@@ -2301,8 +2356,9 @@
      *             with a readable text color
      * A button that stood apart from its container (`container`: the
      * authored paint of the nearest ancestor that has one; null = the
-     * page, unknown) is a control, never a theme surface: only a strip
-     * that blended into its container becomes 'surface'.
+     * page, unknown) is a control, never a theme surface. One that
+     * blended into its container becomes 'surface' (Session 8: at any
+     * width; with the container unknown, only a full-width strip).
      * info: { fill, gradientStop, text, themeBg, themeText, widthFrac,
      *         container?, themedContainer?, distinctFill? }
      */
@@ -2314,7 +2370,10 @@
         var fill = stop || (info.fill && info.fill.a >= 0.5 ? info.fill : null);
         if (!fill) return { mode: 'none' };
         var apart = info.container ? fillStandsApart(fill, info.container) : null;
-        if (!stop && apart !== true && info.widthFrac >= 0.8 && isNeutralFill(fill) && fillAgainstTheme(fill, info.themeBg)) {
+        // A neutral button that blended into its authored container (a
+        // white arrow button on a white row) blends into the themed one, at
+        // any width; with the container unknown (the page), only a strip.
+        if (!stop && (apart === false || (apart === null && info.widthFrac >= 0.8)) && isNeutralFill(fill) && fillAgainstTheme(fill, info.themeBg)) {
             return { mode: 'surface', color: info.themeText };
         }
         if (apart === true && info.themedContainer && info.distinctFill
@@ -2544,6 +2603,19 @@
             && stats.bSpread <= LOGO_MONOCHROME_MAX_SPREAD;
     }
 
+    /**
+     * A fade (transparent and opaque stops, no opaque fill under it) is
+     * never cleared as a layout gradient: content.js's fade rule repaints
+     * it in the theme color, or leaves it authored (Session 8, G-6/X-8).
+     * Clearing Google's AI Overview collapse fade left the clipped text
+     * running under a see-through "Show more".
+     */
+    function isFadeGradientInfo(info) {
+        if (info.opaqueFill) return false;
+        var stops = gradientStopAlphas(info.backgroundImage);
+        return !!stops && stops.min < 0.5 && stops.max >= 0.5;
+    }
+
     function shouldClearShellBackground(info) {
         if (!info) return false;
         var tag = (info.tag || '').toUpperCase();
@@ -2551,6 +2623,7 @@
         if (info.overlayRoot || info.overlayChrome) return false;
         if (info.isControl) return false;
         if (isPhotographicBackgroundImage(info.backgroundImage)) return false;
+        if (isFadeGradientInfo(info)) return false;
         if (isGradientBackgroundImage(info.backgroundImage) && shouldClearLayoutGradient(info)) {
             return true;
         }
@@ -2574,6 +2647,7 @@
         if (info.collapseFade) return false;
         if (!isGradientBackgroundImage(info.backgroundImage)) return false;
         if (isPhotographicBackgroundImage(info.backgroundImage)) return false;
+        if (isFadeGradientInfo(info)) return false;
         return isLargeLayoutShell(info) || isLargeLayoutNode(info) || isCustomLayoutElement(info);
     }
 
@@ -2653,6 +2727,7 @@
         stickySkipReason: stickySkipReason,
         classifyAuthoredPaint: classifyAuthoredPaint,
         themeGradient: themeGradient,
+        gradientFadeColor: gradientFadeColor,
         isMaskShape: isMaskShape,
         fillStandsApart: fillStandsApart,
         fillContrast: fillContrast,

@@ -58,7 +58,7 @@ module.exports = [
     { id: 'x', rows: ['X-1'], url: 'https://x.com/' },
     { id: 'fox5', rows: ['X-2'], url: 'https://fox5sandiego.com/' },
     // Nov 14 phone findings (record with --har record, see RELEASE_PLAN Session 8).
-    { id: 'webmd', rows: ['X-8', 'X-10', 'Load-4'], url: 'https://www.webmd.com/vitamins/ai/ingredientmono-1564/alpha-gpc' },
+    { id: 'webmd', rows: ['X-8', 'X-10', 'Load-4'], url: 'https://www.webmd.com/vitamins-supplements/alpha-gpc' },
     { id: 'urbanplates', rows: ['F-2', 'U-1'], url: 'https://urbanplates.com/menu/' },
     { id: 'walmart', rows: ['X-6', 'X-11'], url: 'https://www.walmart.com/', actions: [{ click: 'button[aria-label*="Menu" i], [data-automation-id="hamburger-menu"]' }, { wait: 1000 }, { shot: 'menu' }] },
     { id: 'gmaps', rows: ['X-3'], url: 'https://www.google.com/maps' },
@@ -83,10 +83,11 @@ module.exports = [
     { id: 'fixture-theme-color', rows: ['Load-3 (synthetic)'], fixture: true },
     {
         id: 'fixture-google-aimode',
-        rows: ['Type-2', 'G-1', 'G-2 (synthetic)'],
+        rows: ['Type-2', 'G-1', 'G-2', 'G-5', 'G-6', 'G-7 (from the live DOM, Session 8)'],
         fixture: true,
         origin: 'https://www.google.com',
         type: { selectors: ['textarea[aria-label="Ask anything"]'] },
+        actions: [{ click: 'textarea[aria-label="Ask anything"]' }, { wait: 600 }, { shot: 'focus', contrast: true }],
     },
     { id: 'fixture-late-text', rows: ['Load-1 (synthetic, text colors)'], fixture: true },
     {
@@ -105,6 +106,13 @@ module.exports = [
         id: 'fixture-github-chrome', rows: ['X-7 (synthetic)'], fixture: true, origin: 'https://github.com',
         actions: [{ click: 'button[aria-label="Toggle navigation"]' }, { wait: 800 }, { shot: 'menu' }],
     },
-    { id: 'fixture-masks', rows: ['F-2', 'R-4 (synthetic)'], fixture: true },
+    { id: 'fixture-masks', rows: ['F-2', 'R-4 (synthetic)'], fixture: true, actions: [{ click: '#fn' }, { wait: 600 }, { shot: 'focus', contrast: true }] },
     { id: 'fixture-portal-banner', rows: ['W-5 (synthetic)'], fixture: true, origin: 'https://www.wikipedia.org' },
+    // Session 8 (from the live DOM read in Chrome; see each file's header).
+    { id: 'fixture-fades', rows: ['X-8'], fixture: true, origin: 'https://github.com' },
+    { id: 'fixture-webmd', rows: ['X-8', 'X-10', 'Load-4'], fixture: true, origin: 'https://www.webmd.com' },
+    {
+        id: 'fixture-walmart-menu', rows: ['X-11'], fixture: true, origin: 'https://www.walmart.com',
+        actions: [{ click: '#menu' }, { wait: 800 }, { shot: 'menu', contrast: true }],
+    },
 ];

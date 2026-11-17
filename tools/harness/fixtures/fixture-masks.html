@@ -20,6 +20,13 @@
       painted the page's #0e1113 that hides the rest of the line. Inside a
       shadow root, as on shreddit. On a light Aura theme the span stays
       #0e1113: the black squares
+  Session 8 (F-2 on focus): Urban Plates' order page stylesheet has
+  `.listboxLabelInput:focus + .listboxLabelVisualLabel, …:autofill + …
+  { background: #fff }` (read live in desktop Chrome; the checkout form
+  needs a cart, so its own label rule is assumed to be the same shape).
+  The label sits inside the empty field at rest with no fill; focusing
+  the input moves it onto the top border and gives it the white fill,
+  with no DOM mutation. The harness clicks the field (action "focus").
 -->
 <style>
   body { margin: 0; font: 16px -apple-system, sans-serif; background: #fff; color: #1f1f1f; }
@@ -27,6 +34,10 @@
   .fld { position: relative; margin: 22px 0; }
   .in { box-sizing: border-box; width: 100%; height: 48px; padding: 0 12px; border: 1px solid #8a8a8a; border-radius: 6px; background: #fff; color: #1f1f1f; font: 16px sans-serif; }
   .fl { position: absolute; top: -9px; left: 10px; padding: 0 4px; background: #fff; color: #555; font-size: 12px; line-height: 18px; }
+  .fv { position: relative; margin: 22px 0; }
+  .listboxLabelInput { box-sizing: border-box; width: 100%; height: 48px; padding: 0 12px; border: 1px solid #8a8a8a; border-radius: 6px; background: #fff; color: #1f1f1f; font: 16px sans-serif; }
+  .listboxLabelVisualLabel { position: absolute; top: 14px; left: 10px; padding: 0 4px; color: #555; font-size: 16px; line-height: 18px; pointer-events: none; transition: top .15s, font-size .15s; }
+  .listboxLabelInput:focus + .listboxLabelVisualLabel { top: -9px; font-size: 12px; background: #fff; }
   .dark { padding: 12px 16px 40px; background: #0e1113; color: #d7dadc; }
   .dark h3 { margin: 0 0 8px; font-size: 15px; }
 </style>
@@ -36,6 +47,7 @@
   <div class="fld"><input class="in" id="em" value="ada@example.com"><label class="fl" for="em">Email address</label></div>
   <div class="fld"><input class="in" value="Ada"><span class="fl">First name</span></div>
   <div class="fld"><input class="in" value="Lovelace"><div class="fl">Last name</div></div>
+  <div class="fv"><input class="listboxLabelInput" id="fn"><label class="listboxLabelVisualLabel" for="fn">First Name</label></div>
 </form>
 <div class="dark">
   <h3>Comments</h3>
