@@ -330,6 +330,26 @@
         nameCache.set(src, hit);
         return hit;
     };
+    AH.timeVisit = function (name, fn) {
+        var t0 = now();
+        try { return fn(); } finally {
+            var d = now() - t0;
+            var s = AH.subPasses['  · ' + name] || (AH.subPasses['  · ' + name] = { n: 0, ms: 0, max: 0, early: 0 });
+            s.n++; s.ms += d; if (d > s.max) s.max = d;
+        }
+    };
+    // Item steps ({ items, visit }) are timed per visit call, named
+    // "items: <visit>" (Session 8c).
+    AH.itemVisit = function (visit, el) {
+        var name = 'items: ' + AH.subPassName(visit);
+        var t0 = now();
+        try { visit(el); } catch (e) {} finally {
+            var d = now() - t0;
+            var s = AH.subPasses[name] || (AH.subPasses[name] = { n: 0, ms: 0, max: 0, early: 0 });
+            s.n++; s.ms += d;
+            if (d > s.max) { s.max = d; s.maxAt = Math.round(t0); if (d > 20) s.maxEl = el.localName + (el.id ? '#' + el.id : '') + (typeof el.className === 'string' && el.className ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '') + ' kids' + el.childElementCount + ' desc' + el.getElementsByTagName('*').length; }
+        }
+    };
 
     if (!isTop) return;
 
@@ -417,6 +437,13 @@
         // Serializable summary for run.js: each change with the latest Aura
         // write on that element (or, for text color, an ancestor within 4
         // levels) at or before the sample that saw it.
+        // Writes per Aura call chain (Session 8c: each write followed by a
+        // read costs a style recalc).
+        AH.writeCounts = function () {
+            var o = {};
+            AH.writes.forEach(function (w) { var k = w.chain.split('<').slice(0, 3).join('<') + ' ' + w.prop; o[k] = (o[k] || 0) + 1; });
+            return Object.keys(o).map(function (k) { return [k, o[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 25);
+        };
         AH.timelineSummary = function () {
             var byEl = new Map();
             AH.writes.forEach(function (w) { var a = byEl.get(w.el); if (!a) byEl.set(w.el, a = []); a.push(w); });
@@ -516,6 +543,98 @@
             out.sort(function (a, b) { return a.first - b.first; });
             return { frames: AH.flashFrames, marks: AH.marks, transient: out.length, items: out.slice(0, 60) };
         };
+    }
+
+    // ---- text settle (Session 8c, Load-6; opt-in: cfg.textSettle) ---------
+    // "Some text stays black for 2-3 s on a dark theme": every 100 ms until
+    // 8 s, the same 9 x 18 grid's topmost elements that hold their own text
+    // are checked against the first opaque fill behind them (ancestors,
+    // crossing shadow hosts). Low = contrast under 3:1. settledMs = the last
+    // sample with more low elements than the final sample has (what's still
+    // low at the end is the page's steady state, counted separately).
+    if (cfg.textSettle && cfg.themed) {
+        var tLum = function (c) {
+            var m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?/.exec(c) || /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?: \/ ([\d.]+))?/.exec(c);
+            if (!m) return null;
+            var srgb = /^color/.test(c);
+            var ch = [1, 2, 3].map(function (i) { var v = parseFloat(m[i]) / (srgb ? 1 : 255); return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+            return { a: m[4] == null ? 1 : parseFloat(m[4]), l: 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2] };
+        };
+        var ownText = function (el) {
+            for (var n = el.firstChild; n; n = n.nextSibling) if (n.nodeType === 3 && /\S/.test(n.data)) return true;
+            return false;
+        };
+        var fillBehind = function (el) {
+            for (var n = el, d = 0; n && d < 40; d++) {
+                if (n.nodeType === 1 && !/^url|gradient/.test(getComputedStyle(n).backgroundImage)) {
+                    var c = tLum(getComputedStyle(n).backgroundColor);
+                    if (c && c.a >= 0.5) return c.l;
+                } else if (n.nodeType === 1) return null; // an image or gradient: unknown, skip
+                n = n.parentElement || (n.parentNode && n.parentNode.host) || null;
+            }
+            var root = tLum(getComputedStyle(document.documentElement).backgroundColor);
+            return root && root.a >= 0.5 ? root.l : 1;
+        };
+        var samples = [];
+        AH.textSettleSample = function () {
+            var t = now(), low = 0, checked = 0, seenEls = new Set(), vw = innerWidth, vh = innerHeight, lowDesc = null;
+            try {
+                for (var gy = 0; gy < 18; gy++) for (var gx = 0; gx < 9; gx++) {
+                    var el = document.elementFromPoint((gx + 0.5) * vw / 9, (gy + 0.5) * vh / 18);
+                    while (el && el.shadowRoot) { var inner = el.shadowRoot.elementFromPoint((gx + 0.5) * vw / 9, (gy + 0.5) * vh / 18); if (!inner || inner === el) break; el = inner; }
+                    if (!el || seenEls.has(el) || !ownText(el)) continue;
+                    seenEls.add(el);
+                    var cs = getComputedStyle(el);
+                    if (cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.3) continue;
+                    var fg = tLum(cs.color), bg = fillBehind(el);
+                    if (!fg || bg == null) continue;
+                    checked++;
+                    var hi = Math.max(fg.l, bg), lo = Math.min(fg.l, bg);
+                    if ((hi + 0.05) / (lo + 0.05) < 3) { low++; if (!lowDesc) lowDesc = el.localName + (typeof el.className === 'string' && el.className ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '') + ' ' + cs.color + ' "' + el.textContent.trim().slice(0, 24) + '"'; }
+                }
+            } catch (e) {}
+            samples.push(lowDesc ? [Math.round(t), low, checked, lowDesc] : [Math.round(t), low, checked]);
+        };
+        var textStopped = false;
+        var textTick = function () { if (textStopped) return; AH.textSettleSample(); if (now() < 8000) origSetTimeout(textTick, 100); };
+        origSetTimeout(textTick, 100);
+        AH.textSettleSummary = function () {
+            textStopped = true;
+            if (!samples.length) return null;
+            var fin = samples[samples.length - 1][1], settled = 0, peak = 0;
+            // lowMs: low elements x time (100 ms per sample), the exposure
+            // to unreadable text, comparable even when the end state differs.
+            var lowMs = 0;
+            samples.forEach(function (s) { if (s[1] > fin) settled = s[0]; if (s[1] > peak) peak = s[1]; lowMs += s[1] * 100; });
+            return { settledMs: settled, finalLow: fin, peakLow: peak, lowMs: lowMs, samples: samples.length, trace: samples.filter(function (x, i) { return i === 0 || x[1] !== samples[i - 1][1]; }).slice(0, 30) };
+        };
+    }
+
+    // ---- element watch (debug; AURA_HARNESS_WATCH=<exact text>) ----------
+    // Logs [ms, color, nearest ancestor fill, inline style] for the first
+    // element whose trimmed text is the given text, every 100 ms to 8 s and
+    // on each change of its style attribute.
+    if (cfg.watchText) {
+        AH.watchLog = [];
+        var watched = null, lastW = '';
+        var findWatched = function () {
+            if (watched && watched.isConnected) return watched;
+            var all = document.getElementsByTagName('*');
+            for (var i = 0; i < all.length; i++) if (all[i].children.length === 0 && all[i].textContent.trim() === cfg.watchText) return (watched = all[i]);
+            return null;
+        };
+        var watchTick = function () {
+            var el = findWatched();
+            if (el) {
+                var cs = getComputedStyle(el), fill = '';
+                for (var n = el; n; n = n.parentElement) { var b = getComputedStyle(n).backgroundColor; if (b !== 'rgba(0, 0, 0, 0)') { fill = n.localName + ' ' + b; break; } }
+                var r = el.getBoundingClientRect();
+                var line = cs.color + ' | ' + fill + ' | y' + Math.round(r.top) + ' | ' + (el.getAttribute('style') || '');
+                if (line !== lastW) { AH.watchLog.push([Math.round(now()), line]); lastW = line; }
+            }
+            if (now() < 8000) origSetTimeout(watchTick, 100);
+        };
+        origSetTimeout(watchTick, 100);
     }
 
     // ---- site mutation counter (independent of Aura, also when unthemed) --

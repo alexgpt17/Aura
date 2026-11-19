@@ -1402,13 +1402,18 @@ describe('background-image classification', () => {
       height: 120,
       vh: 844,
       vw: 390,
-      backgroundImage: 'linear-gradient(transparent, rgb(34, 36, 42))',
+      backgroundImage: 'linear-gradient(rgb(255, 255, 255), rgb(34, 36, 42))',
       opaqueFill: false,
     };
     expect(H.shouldClearLayoutGradient(fade)).toBe(true);
     expect(H.shouldClearLayoutGradient({ ...fade, collapseFade: true })).toBe(false);
     expect(H.shouldClearShellBackground(fade)).toBe(true);
     expect(H.shouldClearShellBackground({ ...fade, collapseFade: true })).toBe(false);
+    // Session 8c: Safari's `transparent` stop counts, so a fade from it is
+    // a fade (kept for the fade rule), not an opaque band to clear.
+    const safariFade = { ...fade, backgroundImage: 'linear-gradient(transparent, rgb(34, 36, 42))' };
+    expect(H.shouldClearLayoutGradient(safariFade)).toBe(false);
+    expect(H.shouldClearShellBackground(safariFade)).toBe(false);
   });
 });
 
@@ -2596,5 +2601,43 @@ describe('buttons and stateful controls', () => {
     expect(H.stateControlDecision({ ...dark, fill: rgb(40, 40, 40), on: true })).toBe('keep');
     expect(H.stateControlDecision({ ...light, fill: rgb(30, 30, 30), on: false })).toBe('clear');
     expect(H.stateControlDecision({ ...dark, fill: null, on: true })).toBe('keep');
+  });
+});
+
+describe('Session 8c: cover fades over an element\'s own fill', () => {
+  test('scroll shadows: white covers over a white fill fade into that fill', () => {
+    const img = 'linear-gradient(to right, rgb(255, 255, 255) 30%, rgba(255, 255, 255, 0)), linear-gradient(to right, rgba(255, 255, 255, 0), rgb(255, 255, 255) 70%), radial-gradient(farthest-side at 0% 50%, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0))';
+    expect(H.selfCoverFadeFill({ bg: 'rgb(255, 255, 255)', img })).toEqual(expect.objectContaining({ r: 255, g: 255, b: 255 }));
+  });
+  test('a gradient that does not fade into the fill, or no fill, is not one', () => {
+    expect(H.selfCoverFadeFill({ bg: 'rgb(255, 255, 255)', img: 'linear-gradient(rgb(0, 0, 0), rgba(0, 0, 0, 0))' })).toBeNull();
+    expect(H.selfCoverFadeFill({ bg: 'rgba(0, 0, 0, 0)', img: 'linear-gradient(rgb(255, 255, 255), rgba(255, 255, 255, 0))' })).toBeNull();
+    expect(H.selfCoverFadeFill({ bg: 'rgb(255, 255, 255)', img: 'linear-gradient(rgb(255, 255, 255), rgb(250, 250, 250))' })).toBeNull();
+    expect(H.selfCoverFadeFill({ bg: 'rgb(255, 255, 255)', img: 'url(a.png)' })).toBeNull();
+  });
+});
+
+describe('Session 8c: color forms Safari can serialize (G-6)', () => {
+  const H = require('../ios/TintExtension Extension/Resources/themeHeuristics.js');
+  test('parseCssRgb reads color(srgb …) and hex', () => {
+    expect(H.parseCssRgb('color(srgb 0.109804 0.109804 0.117647)')).toEqual({ r: 28, g: 28, b: 30, a: 1 });
+    expect(H.parseCssRgb('color(srgb 1 1 1 / 0.5)')).toEqual({ r: 255, g: 255, b: 255, a: 0.5 });
+    expect(H.parseCssRgb('#22242a')).toEqual({ r: 34, g: 36, b: 42, a: 1 });
+    expect(H.parseCssRgb('#fff')).toEqual({ r: 255, g: 255, b: 255, a: 1 });
+    expect(H.parseCssRgb('#22242ae6').a).toBeCloseTo(0.9, 2);
+    expect(H.parseCssRgb('transparent')).toBe(null);
+  });
+  test("Google's dark collapse fade is a fade in every stop form", () => {
+    const forms = [
+      'linear-gradient(rgba(0, 0, 0, 0) 0px, rgba(34, 36, 42, 0.9) 52px, rgb(34, 36, 42) 80px)',
+      'linear-gradient(transparent 0px, rgba(34, 36, 42, 0.9) 52px, rgb(34, 36, 42) 80px)',
+      'linear-gradient(transparent 0px, #22242ae6 52px, #22242a 80px)',
+      'linear-gradient(color(srgb 0 0 0 / 0) 0px, color(srgb 0.133 0.141 0.165 / 0.9) 52px, color(srgb 0.133 0.141 0.165) 80px)',
+    ];
+    for (const img of forms) {
+      expect(H.classifyAuthoredPaint({ bg: 'rgba(0, 0, 0, 0)', img }, 'layer')).toBe('fade');
+      expect(H.gradientFadeColor(img)).toMatchObject({ r: 34, g: 36, b: 42 });
+      expect(H.themeGradient(img, 'var(--aura-bg)')).toBe('linear-gradient(transparent 0px, color-mix(in srgb, var(--aura-bg) 90%, transparent) 52px, var(--aura-bg) 80px)');
+    }
   });
 });

@@ -97,6 +97,38 @@ Your build of the uncommitted Session 8 tree, dark (incl. a green and a gray pre
   9. **White flashes over buttons/text on dark themes** [Load-5, new]: during load, when new content appears, and on tap / opening menus. Likely the site's own CSS transitions animating from the authored white to Aura's paint (sheet apply, the site's class toggles, JS writes not snapped) and surfaces only Aura's JS paints, which wait for the debounced pass. Needs a per-frame background metric before fixing.
 - **Decided Nov 16:** (1) contrast pass inside shadow roots: yes, if Reddit/hydration typing holds; (2) keep the blended-button change; (3) U-1 and the popups in Session 8b.
 
+## Nov 19 phone findings (Session 8c build)
+Your build of the uncommitted 8c tree, iOS in dark mode; green theme on Google, Reddit and Walmart, black theme on Gmail. Screenshots: `~/Downloads/IMG_0728…0731` (first pass) and `IMG_0739…0748` (second pass). The numbers below are the files as saved (the second pass's numbering in the hand-off was shifted).
+- **Passed:** G-6 "Show more" (the Safari gradient-stop cause confirmed); F-2 Urban Plates field labels; lag better (Airbnb and the earlier sites).
+- **Still failing / new** (fix by category; TEST_SITES row in brackets):
+
+| Row | Site | What the phone shows | Screenshot |
+|---|---|---|---|
+| R-4 | Reddit post | Black squares at the "N more replies" thread-connector corners, and at the "+" expand nodes. You asked what kind of element this is and which other sites it would hit. | 0741 (+ 0728, 0730, 0731) |
+| X-12 | Walmart home | "Spanish / Español now available!" popover is transparent: its text overlaps "How do you want your items?"; the arrow is a dark-blue diamond. | 0742 |
+| X-11 | Walmart ☰ menu | While the drawer opens, the "English" row and the "language and currency" pill flash white (light text on white). | 0743 |
+| GM-1 (new) | Gmail mobile web | Light buttons on the dark theme: the arrow-shaped "Primary" back button (white, text nearly invisible) and the account selector at the top of the menu. | 0747, 0745 |
+| GM-2 (new) | Gmail menu | A light strip at the bottom of the menu, holding a second white account selector. | 0746, 0745 |
+| GM-3 (new) | Gmail, opened email | With Details expanded, the "To:" value is invisible on the black theme. | 0748 |
+| GM-4 (new) | Gmail | The sticky header (app banner + toolbar) is sometimes transparent: the list or menu scrolls visibly under it. Not known how often or why. | 0744, 0746 |
+| G-8 (new, low) | Google AI Mode | With the composer focused, the strip below it (the "uc davis" search-pill bar) is dark gray, not the theme. The dim tint over the page is right. You are happy with AI Mode overall: fix only if low-risk. | 0739 (focused) vs 0740 (unfocused, fine) |
+
+- **Two ab4 regressions** (Session 8c A/B) to explain before committing 8c: fixture-hydration Aura ms ~2×, fixture-walmart-menu light 100 ms dark text.
+- **Deadline:** Session 9 (release) Nov 21–22, deadline Nov 23. If Gmail runs long, it goes on a v1.0.1 list instead of blocking the release (your call).
+
+## Nov 18 phone findings (Session 8b build)
+Your build of the uncommitted 8b tree (committed at the start of 8c as `00a063a`). Screenshots: `~/Downloads/IMG_0710…0726.PNG`; 0710–0712 and 0717/0718 (gray theme) were taken before the 8b build.
+- **Passed:** Urban Plates sticky headers (U-1).
+- **Still failing / new** (TEST_SITES row in brackets):
+  1. **Google "Show more" a big regression** [G-6]: a white fade and a white bar under the button (IMG_0719, AI Overview), or a gray band over the text and a dark bar (IMG_0725, entity panel). Target: Google's own dark mode (IMG_0726), the text fading into the page color.
+  2. **Labels in outlined fields** [F-4, new; F-2]: the outline runs through the label on accounts.google.com ("Email or phone", "Enter your password": IMG_0720, 0721); a white box behind the label at Urban Plates checkout ("First Name": IMG_0723).
+  3. **Walmart ☰ menu** [X-11]: white bars still flash over the text when it opens.
+  4. **Text stays black for 2–3 s** [Load-6, new] on content-heavy sites (airbnb.com) on dark themes.
+  5. **Reddit "Save Draft?" Save** [X-9/R-3] (IMG_0722): light text on a light button.
+  6. **Airbnb "Guest favorite" pills** [A-5] (IMG_0724).
+  7. Before 8b, gray theme: white scroll-edge fades on a table (registrar.ucdavis.edu, IMG_0710) [X-14]; light-yellow header bars with white text (appointments.ucdavis.edu, IMG_0711/0712) [X-13]; see-through header (sky.shiiyu.moe, IMG_0717/0718) [X-15].
+- **Asked for:** fix G-6 and both label shapes; then a self-directed audit of the whole engine with the emphasis on lag and delay.
+
 ## Engine principles (Oct 23 — apply to every fix from here on)
 - **Fixed/sticky layers** (headers, toolbars, tab bars, search bars, sidebars): if the original was opaque, the themed one is opaque, including after scroll, resize, and late-loading content. Decide from the **authored paint**, never from geometry.
 - **Overlays** (modals, cookie/consent, dropdowns, drawers): backdrop and card are handled separately (dark translucent scrim kept, opaque card painted, transparent wrapper left alone). Never clipped.
@@ -123,8 +155,12 @@ Your build of the uncommitted Session 8 tree, dark (incl. a green and a gray pre
 | 8 | Nov 15 ✓ | Nov 14 phone findings (Google AI first), live DOM read through Claude in Chrome; phone check Nov 16 (AI Mode passed); commit at the start of 8b |
 | — | Nov 16 ✓ | Phone check of Session 8: Google AI Mode passed; G-6, X-9 Reddit, F-2 still failing; new popups/flash rows (see "Nov 16 phone findings") |
 | 8b | Nov 17 ✓ (code + A/B; phone check next, then commit) | Commit Session 8; G-6 from phone-shaped DOM, Reddit Save (nested shadow), shadow-root contrast, Urban Plates (F-2, U-1, F-3), Walmart popups, Airbnb photo pills, white flashes, load flash |
-| 9 | Nov 19–20 | Regression + App Store submission |
-| — | Nov 21–22 | Buffer / resubmission |
+| — | Nov 18 ✓ | Phone check of 8b: only U-1 passed; G-6 a regression; labels, Walmart menu, Load-6 (see "Nov 18 phone findings") |
+| 8c | Nov 18–19 (code + A/B; phone check next, then commit) | Commit 8b; dark-scheme harness and snapshots; G-6 under Google's dark CSS and Safari's gradient forms; label masks (F-4, F-2); lag audit (Load-6) |
+| — | Nov 19 ✓ | Partial phone check of 8c: G-6 passed, lag better, R-4 failing |
+| — | Nov 19 ✓ | Second phone check of 8c: F-2 passed; R-4, X-11, X-12 still failing; new Gmail rows GM-1…GM-4 and G-8 (see "Nov 19 phone findings") |
+| 8d | Nov 19–20 | Explain the ab4 regressions; commit 8c; Walmart X-12/X-11 from the real dark page; R-4 under Reddit's dark CSS; Gmail GM-1…4 (v1.0.1 if it runs long); G-8 only if safe |
+| 9 | Nov 21–22 | Regression + App Store submission |
 | — | Nov 23 | Deadline |
 
 - **Cut:**
@@ -760,6 +796,50 @@ Scope, in priority order:
 Report at the end: what changed with before/after numbers and every paint difference explained; per item the cause, which DOM source it rests on (phone-shaped, desktop or a guess) and what only the phone can confirm; decisions needed from me; a phone check list (site, what to look at, theme). Update RELEASE_PLAN.md (Session 8b section, session log, schedule). Don't commit 8b until I've checked it on the phone.
 ```
 
+## Session 8c — Nov 18 phone findings + lag audit — done Nov 18–19; phone check Nov 19: G-6, F-2 passed, lag better; R-4, X-11, X-12 failing (see "Nov 19 phone findings")
+- [x] Session 8b committed as `00a063a` (the A/B baseline); worktree `../Aura-s8b`.
+- **Biggest finding: the phone gets sites' dark CSS.** iOS is in dark mode, so sites with a dark scheme send their dark CSS; Google decides on the server. Every fixture, HAR and Chrome read before 8c had the light CSS. The harness now has `--scheme dark` and `--cpu N`, and `tools/harness/snapshot.js` freezes real pages (iPhone profile, dark scheme) as offline `snapshot-*` sites (README "Snapshots"). Google was read in Claude in Chrome with macOS in dark appearance.
+
+### 8c-1 G-6 "Show more" (Google's dark CSS read in Chrome; Safari part not reproducible here)
+- DOM (dark CSS): the fade is a child, `.RDmXvc > .iIXkZe { linear-gradient(transparent 0px, #22242ae6 52px, var(--xhUGwc) 80px) }`, with `--xhUGwc: #22242a` on `:root`; the button's backing `.zNsLfb` is `var(--xhUGwc)`.
+- In Chromium the engine themes this markup correctly (new `fixture-google-dark`, dark and gray themes: fade into the theme color, backing in the theme color). On the phone, neither IMG_0719 (white) nor IMG_0725 (gray) has the fade themed; the "bar" under the button is the fade's unthemed opaque end.
+- Cause (the one difference left between the two engines): the gradient parser only read `rgb()`/`rgba()` stops. Safari can serialize a computed gradient's stops as written: `transparent` was skipped (the fade then read as **opaque**), hex stops like `#22242ae6` and `color(srgb …)` read as no color (the fade read as **clear**). Either way the fade rule left Google's paint. Fixed: `parseCssRgb` reads `color(srgb …)` and hex, and the stop pattern matches every form (`CSS_COLOR_RE`, `firstGradientStop`). `color(srgb …)` is also how any computed `color-mix()` serializes (Aura's own fills included), in both engines.
+- Phone only: confirm on both "uc davis" and "what is ashwagandha", iPhone in dark mode (and once in light).
+
+### 8c-2 Field labels (real DOM: accounts.google.com snapshot; Urban Plates CSS)
+- **Line through the label (F-4, accounts.google.com):** the outline `.mIZh1c` and focus ring `.cXrdqd` are siblings of the label's *parent* `.Xb9hP`, so the mask rule never saw a line under `.snByac`. The rule's neighbours now include the label parent's siblings; a field's label is also a mask candidate while its sibling control has focus. Verified on the snapshot: 8b draws the line through the label, 8c shows the notch.
+- **White box (F-2, Urban Plates checkout):** the label gets its fill only under `:focus`, and the authored-paint cache is keyed by class name, which focus doesn't change: the focus re-run kept reading "no fill". The focus path now reads fresh. On the real CSS the focused label now paints the theme surface on both themes (before: transparent on dark, `#f7f8f4` on light).
+
+### 8c-3 Load-6 and lag (measured on snapshots at 1× and 4× CPU)
+Text-settle metric (`AURA_HARNESS_TEXT`) and per-element step timing with the slowest element named. Causes found and fixed, in order of effect:
+1. **Contrast check read the whole page's text per element.** The duplicate-label check ran first, for every element, and built `textContent` of `<head>`/`<body>`/wrappers: megabytes of inline CSS and JSON (70–150 ms single calls). Now it runs only for elements with poor contrast, and reads at most 4 kB (`boundedText`).
+2. **Forced style + layout per parser chunk.** A pass started mid-parse turned on the added-nodes fast path, and each parser chunk then forced a recalc and layout of the growing page (GitHub: 30 in one 500 ms task). Off while parsing.
+3. **The parse-time pass is restarted at the end of parsing** (DOMContentLoaded), instead of finishing on a third of the page and waiting for a debounced second pass.
+4. **First-screen text first:** each pass decides visible text sitting on the theme background before its other steps, over *all* elements (a cookie sheet at the end of `<body>` was past the 4,000-element cap). Text in an element that starts a CSS animation (a sheet sliding in) is decided as it starts.
+5. Contrast writes batched (a write then a read cost a recalc each); per-element helpers reordered so the cheap rejection comes first (floating icons, modal cards, nav panels as one O(n) sweep, ads cached, inline highlights).
+6. Per-sheet cache for the `!important` background scan (15,000 rules re-read every 5 s), cache for the authored border read (two recalcs a pass on Airbnb).
+7. Mutation debounce capped at 300 ms (Walmart menu: a stream of mutations kept restarting the 150 ms quiet wait), and a large batch inside one container is scoped to it.
+- Also: Wikipedia's infobox SITE_FIX used `border:` shorthand, which resized the mobile infobox (layout Δ 4,697 → 0). The registrar table's white edge fades (CSS scroll shadows over the element's own fill) take the fill's theme color.
+- **Correctness found by the A/Bs:** contrast overwrote `color` on a button's spans after `settleButtons` had decided them (GitHub branch button: black icon); the contrast step now leaves text `settleButtons` owns, and a button's themed fill is written without the site's transition.
+
+### A/B vs Session 8b (`00a063a`)
+ab4 finished Nov 18 23:10 (4 rounds, medians, 8b → 8c). Full numbers: `absum4.py` output in the session scratchpad; raw runs in `tools/harness/out/*ab4-r*`.
+- **Better:** layout Δ 0 on every site, both schemes. Longest task is down or flat almost everywhere. Dark-text time: snapshot-airbnb dark 3350 → 0 ms, github dark 2700 → 150, urbanplates dark 1250 → 100, google-signin-focus light 700 → 100, reddit-post light 1350 → 900.
+- **Explained in 8d (Nov 19) before committing:**
+  - **fixture-hydration Aura ms 323 → 660 (dark) / 703 (light): the 300 ms debounce cap (item 7), not typing.** Typing p95 and Aura-while-typing are unchanged; the extra time is in the load. 8b ran 3 passes (one full pass at 2.9 s, because ~3 s of hydration mutations kept restarting the 150 ms quiet wait); 8c runs a full-document pass every ~480 ms during hydration (8 passes). Proven with a scratch copy that only removes the cap: 691 → 294 ms, 8 → 3 passes. Text exposure (`AURA_HARNESS_TEXT`) is 0 either way on this fixture, so the extra passes bought nothing there. **Fixed:** the cap doubles for each pass it forces in a row (300 → 600 → 1200 → 2400 ms) and resets after real quiet. A menu slide still gets its pass at 300 ms (walmart-menu pass list unchanged); hydration drops to 6 passes, ~465–570 ms (single runs; the 8d A/B has the medians).
+  - **fixture-walmart-menu light, 100 ms dark text: harmless, the site's own color transition at load.** The one low sample is the ☰ link at ~130 ms (page load, not the menu at 2 s), colored `rgb(38,142,255)`: exactly 85 % of the way from Walmart's `#fff` to the light theme's link `rgb(0,122,255)` on every channel, i.e. mid-way through the fixture's `transition: color .15s`. 8b wrote a redundant inline `color !important` on it (which hid the fade from the sampler); 8c's contrast step correctly leaves it, since the sheet's link color is already readable. Same final color; a 150 ms fade in on load.
+  - ucdavis-registrar dark lowMs 4700 → 4800 with final 1: unchanged from 8b, a known leftover.
+
+### Decisions needed
+1. **Ship the content scripts minified / without comments?** ~560 KB per frame, about 40 % comments, parsed in every frame (`all_frames: true`). Stripping costs nothing at runtime but makes Safari's Web Inspector harder to read.
+2. **Subframes:** the full engine runs in every iframe except known ad/chat hosts. Theme embeds with the static sheet only (no passes/observers)? Cheaper on ad-heavy pages; embedded widgets would get less fixing.
+3. Open from 8b: overlay elevation, Walmart arrow, Airbnb pills, subtle borders.
+
+### Not reproducible here
+- G-6's Safari serialization (Chromium normalizes stops): the phone confirms.
+- Reddit "Save Draft?" (X-9): the logged-out iPhone page has no comment composer; still the 8b guess.
+- appointments.ucdavis.edu headers (X-13), Walmart's real menu (captcha page): need a login or a real device.
+
 ## Session 9 — Regression + App Store submission (was Session 7)
 - [ ] Full TEST_SITES pass (dark + light + one split preset). Fix only regressions. Includes the Nov 5 rows: B-2 Bearbottom Find my size, F-1 Google Form, X-6 Walmart order page, A-4 Airbnb chips.
 - [ ] Release build: verify the debug stub was swapped in (HUD unreachable), no console noise, version/build bumped.
@@ -834,6 +914,9 @@ Report at the end: what changed with before/after numbers and every paint differ
 - **Nov 16 phone check of Session 8:** Google AI Mode passed (G-5, G-7, Type-2), plus X-8, X-10, X-11 menu, Airbnb chips and the regression rows; typing lag at most very slight. Still failing: G-6 (every search), Reddit Save, F-2 on the real page; new: Urban Plates bars/popups, Walmart "Spanish / Español" popup, Airbnb photo pills, white flashes and original-color flash on load. Decisions: shadow-root contrast yes if typing holds, keep blended buttons, U-1/popups in 8b. New TEST_SITES rows A-5, X-12, F-3, Load-5. Session 8b prompt written.
 
 - **Session 8b (Nov 17):** committed Session 8 (`67ea538`, worktree `../Aura-s8`). Live iPhone-profile capture in Playwright (outside the sandbox): Urban Plates, Airbnb; Google captcha'd, Reddit not read. G-6 stacked covers, nested-root buttons (X-9, guessed DOM), shadow-root contrast, Urban Plates F-2 (transition), U-1 (sticky in dialog), F-3 (frosted glass, subtle borders), Walmart popups (hanging absolute layers), Airbnb pills, immediate nested shadow sheets (Load-5: bright frames 80 → 21), HUD cache line (Load-1). Harness: flash metric, `type`/`eval` actions; fixtures urbanplates, walmart-popup; google-aimode, buttons, airbnb-chips extended. Two A/Bs vs Session 8 (the first found two regressions, fixed). Border dump caught currentColor icon rings, fixed. Not committed; phone check next.
+- **Nov 18 phone check of 8b:** only U-1 passed; G-6 a regression, labels (F-4/F-2), Walmart menu flash, Load-6 (2–3 s dark text), Reddit Save. Asked: G-6, labels, then a self-directed lag audit.
+- **Session 8c (Nov 18–19):** committed 8b (`00a063a`). Dark-scheme harness (`--scheme`, `--cpu`, text-settle metric, snapshots of 10 real pages). G-6 traced to Google's dark CSS plus Safari gradient stop forms; label masks (F-4 neighbours, F-2 fresh focus read); lag audit (whole-page text reads, parser-chunk recalcs, parse-time pass restart, first-screen text, caches). A/B vs 8b below. Not committed; phone check next.
+- **Nov 19 phone check of 8c:** G-6 and F-2 passed, lag better; R-4 Reddit connectors, X-12 Walmart popover and X-11 Walmart menu flash still failing; new Gmail rows GM-1…GM-4 and G-8 (AI Mode composer strip). Schedule: release Nov 21–22, deadline Nov 23. Next: Session 8d.
 
 ## Root-cause details (Session 1 audit)
 Line numbers are from baseline commit `0d47537`. Paths are relative to `ios/TintExtension Extension/Resources/`. Confidence levels are stated per item. "Hypothesis" means the HUD (Session 2) must confirm it.

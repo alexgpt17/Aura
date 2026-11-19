@@ -27,8 +27,6 @@ const GEOMETRY = new RegExp('^(?:' + [
 
 // [file, property, value pattern, why it can't change layout]
 const ALLOWED = [
-  ['content.js', 'border', /^1px solid var\(--aura-border\)/,
-    'Wikipedia SITE_FIX (.infobox/.navbox/.wikitable/...): Minerva already draws a 1px border on these; only its color changes.'],
   ['splitTheme.js', 'position', /^fixed/, 'html::before split-theme paint layer: a pseudo-element, out of flow, pointer-events:none.'],
   ['splitTheme.js', 'top', /^0/, 'same html::before layer'],
   ['splitTheme.js', 'left', /^0/, 'same html::before layer'],
@@ -84,7 +82,7 @@ describe('layout invariance', () => {
 
   test('the scan sees real declarations (guards against a silently empty scan)', () => {
     const props = declarations(cssStrings('content.js', read('content.js'))).map(([p]) => p);
-    expect(props).toEqual(expect.arrayContaining(['background-color', 'color', 'border']));
+    expect(props).toEqual(expect.arrayContaining(['background-color', 'color', 'border-color']));
     expect(GEOMETRY.test('padding-top')).toBe(true);
     expect(GEOMETRY.test('background-color')).toBe(false);
   });

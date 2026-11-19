@@ -187,6 +187,8 @@
     const AUTHORED_OPAQUE_CACHE_TTL = 5000;
     const AUTHORED_OPAQUE_MAX_RULES_SCANNED = 15000;
     const AUTHORED_OPAQUE_MAX_SELECTORS = 300;
+    // CSSStyleSheet -> its last scan (see getAuthoredOpaqueBgSelectors).
+    const importantBgSheetScans = new WeakMap();
     let walkGeneration = 0;
     let walkSliceTimer = 0;
     const WALK_SLICE = 4000; // cap for the per-pass element loops (unrelated to yielding — see SLICE_BUDGET_MS)
@@ -393,7 +395,14 @@
                         if (el && el.nodeType === 1) safeVisit(step.visit, el);
                         if ((i & 15) === 15 && performance.now() >= deadline) { i++; break; }
                     }
-                    if (i >= items.length) { s++; i = 0; }
+                    // A batching step writes what it queued (see
+                    // contrastBatchStep) when its items are done; the queue
+                    // stays open across slices, since a slice that starts
+                    // after writes pays a style recalc on its first read.
+                    if (i >= items.length) {
+                        if (step.flush) safePass(step.flush);
+                        s++; i = 0;
+                    }
                 }
                 if (performance.now() >= deadline) break;
             }
@@ -551,7 +560,10 @@
                 .infobox, .navbox, .sidebar, .wikitable, .metadata, .mbox, .catlinks {
                     background-color: var(--aura-surface) !important;
                     color: var(--aura-text) !important;
-                    border: 1px solid var(--aura-border) !important;
+                    /* Color only: a 1px border shorthand here resized the
+                       infobox on mobile Wikipedia (no authored border),
+                       re-wrapping every cell below it (Session 8c). */
+                    border-color: var(--aura-border) !important;
                 }
 
                 /* Section headers only (Men's, Women's, etc.). Do NOT include
@@ -1455,6 +1467,12 @@
 
         let style;
         try { style = getComputedStyle(el); } catch (e) { return; }
+        // The only writes below need a background image (the layout-gradient
+        // clear) or a light fill: anything else is skipped before the rect,
+        // modal-card and search-field reads (Session 8c: most elements).
+        const isLight = H.isLightContentSurface || H.isNearWhiteSurface;
+        const parsed = H.parseCssRgb(style.backgroundColor);
+        if (style.backgroundImage === 'none' && !isLight(parsed)) return;
 
         let rect;
         try { rect = el.getBoundingClientRect(); } catch (e) { return; }
@@ -1516,8 +1534,6 @@
             brightModified.add(el);
         }
 
-        const isLight = H.isLightContentSurface || H.isNearWhiteSurface;
-        const parsed = H.parseCssRgb(style.backgroundColor);
         if (!isLight(parsed)) return;
 
         // Light themes (Sepia, Paper, Light Mode): Google Images viewer cards
@@ -2252,9 +2268,34 @@
     // Curtains (fox5sandiego.com / usopen.com-class CMP wrappers) stay
     // unpainted because their authored paint is transparent, not because
     // of their size.
+    // H.isInsideAdSurface, with each node's own verdict cached (Session 8c:
+    // the walk asked this for every element from several visitors, each a
+    // dozen regexes on 8 ancestors). The cache is keyed on the strings the
+    // verdict reads, so a class/id/aria change is a fresh read.
+    const adSelfCache = new WeakMap(); // node -> [key, isAd]
+    function isAdSurfaceSelf(node) {
+        const info = H.adSurfaceInfoFromElement(node);
+        if (!info) return false;
+        const key = info.className + '|' + (info.id || '') + '|' + (info.ariaLabel || '') + '|' + (info.ariaRoledescription || '') + '|' + info.tag;
+        const hit = adSelfCache.get(node);
+        if (hit && hit[0] === key) return hit[1];
+        const v = !!H.isLikelyAdSurfaceInfo(info);
+        adSelfCache.set(node, [key, v]);
+        return v;
+    }
+
     function isAdThemingSkipped(el) {
         if (!el || !H) return false;
         try {
+            if (H.adSurfaceInfoFromElement && H.isLikelyAdSurfaceInfo) {
+                // Same walk as H.isInsideAdSurface: el and up to 7
+                // ancestors, stopping at <html>.
+                const root = document.documentElement;
+                for (let node = el, depth = 0; node && node.nodeType === 1 && node !== root && depth < 8; node = node.parentElement, depth++) {
+                    if (isAdSurfaceSelf(node)) return true;
+                }
+                return false;
+            }
             if (H.isInsideAdSurface && H.isInsideAdSurface(el)) return true;
         } catch (e) {}
         return false;
@@ -2506,8 +2547,10 @@
         const entry = layerRoots.get(el);
         if (entry && entry.source !== 'icon') return;
         if (layerPaints.has(el) && !entry) return;
-        if (!isChromeRepaintDisabledForHost() && !isAdThemingSkipped(el)
-            && H.isLikelyFloatingIconControl(el, getComputedStyle, { vh, vw })) {
+        // The shape test first: it rejects nearly every element on cheap
+        // style reads (Session 8c).
+        if (H.isLikelyFloatingIconControl(el, getComputedStyle, { vh, vw })
+            && !isChromeRepaintDisabledForHost() && !isAdThemingSkipped(el)) {
             out.push(el);
             return;
         }
@@ -3358,12 +3401,31 @@
                 // !important rules nominated elements Aura itself paints
                 // (Google's "Show more" row), and a rule without the probe
                 // exemption then read back as "authored opaque".
-                const owner = sheets[i].ownerNode;
+                const sheet = sheets[i];
+                const owner = sheet.ownerNode;
                 if (owner && owner.id && owner.id.indexOf('aura-') === 0) continue;
                 let rules;
-                try { rules = sheets[i].cssRules || sheets[i].rules; } catch (e) { continue; }
+                try { rules = sheet.cssRules || sheet.rules; } catch (e) { continue; }
                 if (!rules) continue;
+                // A sheet whose rule count and starting budget are unchanged
+                // gives the same selectors: reused instead of reading four
+                // CSSOM values per rule again every TTL (Session 8c:
+                // 15,000 rules, 20-60 ms, on Airbnb/GitHub/Reddit).
+                const len = rules.length;
+                const prev = importantBgSheetScans.get(sheet);
+                if (prev && prev.len === len && prev.scannedBefore === budget.scanned && prev.outBefore === selectors.length) {
+                    budget.scanned += prev.scanned;
+                    for (let k = 0; k < prev.selectors.length; k++) selectors.push(prev.selectors[k]);
+                    continue;
+                }
+                const scannedBefore = budget.scanned;
+                const outBefore = selectors.length;
                 collectImportantBgSelectors(rules, selectors, budget);
+                importantBgSheetScans.set(sheet, {
+                    len, scannedBefore, outBefore,
+                    scanned: budget.scanned - scannedBefore,
+                    selectors: selectors.slice(outBefore),
+                });
             }
         } catch (e) {}
         authoredOpaqueSelectorsCache = selectors;
@@ -3414,10 +3476,41 @@
         navMenuPanelOpaqueModified.delete(el);
     }
 
-    function visitNavMenuPanelElement(el, vh, vw) {
+    // H.navSignalsFromElement for every element of a walk in one sweep:
+    // visited in reverse document order, each element's descendants are
+    // already counted when it is reached. Same values as the per-element
+    // subtree queries (links: a[href] descendants; nav: a nav/navigation
+    // descendant), O(n) instead of O(n x subtree).
+    function navSignalSweep(elements) {
+        const map = new WeakMap();
+        const reversed = elements.slice().reverse();
+        return {
+            get: el => map.get(el) || null,
+            step: {
+                items: reversed,
+                visit(el) {
+                    let links = 0;
+                    let navDesc = false;
+                    for (let c = el.firstElementChild; c; c = c.nextElementSibling) {
+                        if (c.localName === 'a' && c.hasAttribute('href')) links++;
+                        const tag = c.tagName;
+                        if (tag === 'NAV' || c.getAttribute('role') === 'navigation') navDesc = true;
+                        const sub = map.get(c);
+                        if (sub) { links += sub.linkCount; navDesc = navDesc || sub.hasNavDescendant || sub.isNavTagOrRole; }
+                    }
+                    const isNavTagOrRole = el.tagName === 'NAV' || el.getAttribute('role') === 'navigation';
+                    // navSignalsFromElement only looks for a nav descendant
+                    // when the element isn't one itself.
+                    map.set(el, { isNavTagOrRole, hasNavDescendant: !isNavTagOrRole && navDesc, linkCount: links });
+                },
+            },
+        };
+    }
+
+    function visitNavMenuPanelElement(el, vh, vw, navSignals) {
         if (!el || el.nodeType !== 1 || !H || !H.classifyNavMenuPanelState) return;
         if (isChromeRepaintDisabledForHost()) return;
-        const navState = H.classifyNavMenuPanelState(el, getComputedStyle, { vh, vw });
+        const navState = H.classifyNavMenuPanelState(el, getComputedStyle, { vh, vw }, navSignals);
         if (navState === 'expanded') {
             const prevNavState = navMenuPanelStateHistory.get(el);
             // Deliberately has no "freshly mounted" fallback (the removed
@@ -3554,6 +3647,79 @@
         if (picked != null) writeContrastColor(el, picked);
     }
 
+    // First-screen text first (Session 8c, Load-6): the contrast step is a
+    // pass's last, after every surface step, so on a big page at phone
+    // speed visible text kept the site's dark color for seconds. These
+    // steps run at the start of a pass, for elements on the first screen
+    // (1.25 viewports), and decide only text sitting straight on the theme
+    // background, as contrastAddedNodes does: the steps after this can't
+    // change that background, so the final contrast step agrees and
+    // nothing changes twice.
+    const FIRST_SCREEN_VH = 1.25;
+    function firstScreenContrastSteps(elements, vh) {
+        if (!currentTheme || !H || !H.effectiveBackground || isActiveSplitTheme(currentTheme)) return [];
+        const themeBg = H.parseHexColor && H.parseHexColor(currentTheme.background);
+        if (!themeBg) return [];
+        const onScreen = [];
+        const bottom = vh * FIRST_SCREEN_VH;
+        const bgCache = new WeakMap();
+        return [
+            {
+                items: elements,
+                visit(el) {
+                    if (!el.firstChild) return;
+                    const r = el.getBoundingClientRect();
+                    if (r.bottom > 0 && r.top < bottom && r.width > 0 && r.height > 0) onScreen.push(el);
+                },
+            },
+            () => [{
+                items: onScreen,
+                visit(el) {
+                    const picked = contrastDecision(el, bgCache);
+                    if (picked == null) return;
+                    const bg = H.effectiveBackground(el, getComputedStyle, currentTheme.background, bgCache);
+                    if (!bg || bg.r !== themeBg.r || bg.g !== themeBg.g || bg.b !== themeBg.b) return;
+                    writeContrastColor(el, picked);
+                    // Its descendants inherit the new color: cached
+                    // backgrounds stay valid, but their own decisions
+                    // must read it (a style read after a write is one
+                    // recalc, paid only where text was fixed).
+                },
+            }],
+        ];
+    }
+
+    // The pass's contrast step decides first and writes in batches
+    // (Session 8c): a write followed by the next element's reads cost a
+    // style recalc per write (late-text: 1500 writes, the step that left
+    // visible text dark for seconds at phone speed). A queued write's
+    // descendants inherit its color, so the queue is written out before
+    // one of them is decided; and at the end of every slice (runSteps
+    // calls `flush`), so no frame shows a half-applied batch.
+    function contrastBatchStep(items, getCache) {
+        const queue = [];
+        const open = []; // queued elements, in document order, that may still contain what comes next
+        function flush() {
+            for (let i = 0; i < queue.length; i += 2) {
+                try { writeContrastColor(queue[i], queue[i + 1]); } catch (e) {}
+            }
+            queue.length = 0;
+            open.length = 0;
+        }
+        return {
+            items,
+            flush,
+            visit(el) {
+                while (open.length && !open[open.length - 1].contains(el)) open.pop();
+                if (open.length) flush();
+                const picked = contrastDecision(el, getCache());
+                if (picked == null) return;
+                queue.push(el, picked);
+                open.push(el);
+            },
+        };
+    }
+
     function writeContrastColor(el, picked) {
         // A late text-color fix snaps instead of fading through the site's
         // own `transition: color` (Walmart: 24 elements): the old color
@@ -3579,11 +3745,16 @@
     // Off until the first full-document pass has collected its elements:
     // everything parsed before then is in that pass, and running here on
     // every parser batch of a cache-applied load forced style recalcs of
-    // the half-built page (a 25-30 ms task).
+    // the half-built page (a 25-30 ms task). Off, too, while the document
+    // is still parsing (Session 8c): a pass started mid-parse turned it
+    // on, and each parser chunk then forced a style recalc and layout of
+    // the growing page (GitHub: 30 of them in one 500 ms task); the end of
+    // parsing restarts the full pass, first-screen text first
+    // (watchParseEnd).
     const FAST_CONTRAST_MAX_ELEMENTS = 300;
     let fullPassCollected = false;
     function contrastAddedNodes(records) {
-        if (!fullPassCollected || !currentTheme || !H || !H.effectiveBackground || isUserTyping() || isActiveSplitTheme(currentTheme)) return;
+        if (!fullPassCollected || document.readyState === 'loading' || !currentTheme || !H || !H.effectiveBackground || isUserTyping() || isActiveSplitTheme(currentTheme)) return;
         const els = [];
         for (let r = 0; r < records.length; r++) {
             const rec = records[r];
@@ -3597,6 +3768,32 @@
                 for (let k = 0; k < inner.length; k++) els.push(inner[k]);
             }
         }
+        fastContrast(els);
+    }
+
+    // Text in an element that starts a CSS animation (a cookie sheet or
+    // toast sliding in): decided as it starts, the same way as added
+    // nodes. A first-screen pass can miss it while it's still translated
+    // below the screen, leaving its text to the pass's last step (Airbnb's
+    // cookie sheet: dark text for up to 3 s, Session 8c).
+    function contrastAnimatedSubtree(event) {
+        if (!fullPassCollected || !currentTheme || !H || !H.effectiveBackground || isUserTyping() || isActiveSplitTheme(currentTheme)) return;
+        const root = event.target;
+        if (!root || root.nodeType !== 1 || !root.isConnected || isOwnNode(root)) return;
+        // Once a second per element: a pulsing or repeating animation
+        // restarts often, a sheet opened again later is decided again.
+        const now = performance.now();
+        if (now - (animatedContrastAt.get(root) || -Infinity) < 1000) return;
+        animatedContrastAt.set(root, now);
+        const inner = root.getElementsByTagName('*');
+        if (!inner.length || inner.length + 1 > FAST_CONTRAST_MAX_ELEMENTS) return;
+        const els = [root];
+        for (let k = 0; k < inner.length; k++) els.push(inner[k]);
+        fastContrast(els);
+    }
+    const animatedContrastAt = new WeakMap();
+
+    function fastContrast(els) {
         if (!els.length) return;
         const themeBg = H.parseHexColor && H.parseHexColor(currentTheme.background);
         if (!themeBg) return;
@@ -3645,9 +3842,8 @@
         // user-typed content where forcing a color is more likely to look
         // broken than helpful.
         if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[tag] && tag !== 'BUTTON') return null;
-        if (buttonPaints.has(el)) return null;
+        if (buttonPaints.has(el) || buttonTextEls.has(el)) return null;
         if (typeof el.className === 'string' && /icon/i.test(el.className)) return null;
-        if (H.isStackedDuplicateLabel && H.isStackedDuplicateLabel(el, dupCache || duplicateLabelCache)) return null;
         let style;
         try { style = getComputedStyle(el); } catch (e) { return null; }
         // A button whose own visible surface comes from a background-image
@@ -3707,6 +3903,10 @@
             : (H.parseHexColor && H.parseHexColor(currentTheme.background));
         if (!fg || !bgParsed) return null;
         if (!H.hasPoorContrast(fg, bgParsed, 3.0)) return null;
+        // Last, for the few elements with poor contrast: it reads the
+        // element's and its siblings' text (Session 8c: it ran first, for
+        // every element, <head> and <body> included).
+        if (H.isStackedDuplicateLabel && H.isStackedDuplicateLabel(el, dupCache || duplicateLabelCache)) return null;
         const themeText = currentTheme.text || '#ffffff';
         const themeLink = currentTheme.link || '#8ab4f8';
         const isLink = tag === 'A' || (el.closest && el.closest('a'));
@@ -3727,6 +3927,12 @@
     // and off stay distinct. Light DOM and shadow roots both.
     // button -> { els: [written elements], surface: bool }
     const buttonPaints = new Map();
+    // Elements whose text color settleButtons wrote (the button and the
+    // descendants it recolored). The contrast step leaves them alone: it
+    // judged a GitHub button's spans against a fill read mid-pass and
+    // wrote black `color` under settleButtons' white text-fill, turning
+    // the icon black (Session 8c).
+    const buttonTextEls = new WeakSet();
     // element -> true (inline background written by settleStateControls)
     const stateControlModified = new Set();
     const BUTTON_MAX_PER_PASS = 400;
@@ -3783,6 +3989,7 @@
         }
         for (let i = 0; i < entry.els.length; i++) {
             const el = entry.els[i];
+            buttonTextEls.delete(el);
             try {
                 el.style.removeProperty('color');
                 el.style.removeProperty('-webkit-text-fill-color');
@@ -3940,7 +4147,14 @@
             const bg = d.mode === 'surface' ? 'var(--aura-elevated)' : d.mode === 'distinct' ? d.bg : '';
             buttonFillKept.delete(b);
             if (bg) {
-                if (b.style.getPropertyValue('background-color') !== bg) b.style.setProperty('background-color', bg, 'important');
+                // Snapped: the contrast step after this reads the fill
+                // behind the button's text, and a site transition
+                // (GitHub's `background-color .08s`) showed it a
+                // half-way light fill, so it wrote black text over ours.
+                if (b.style.getPropertyValue('background-color') !== bg) {
+                    snapNextWrite(b);
+                    b.style.setProperty('background-color', bg, 'important');
+                }
                 if (d.mode === 'distinct' && b.style.getPropertyValue('background-image') !== 'none') b.style.setProperty('background-image', 'none', 'important');
                 if (d.mode === 'surface' && b.style.getPropertyValue('background-image')) b.style.removeProperty('background-image');
             } else if (buttonPaints.has(b) && buttonPaints.get(b).surface) {
@@ -3950,6 +4164,7 @@
             for (let k = 0; k < els.length; k++) {
                 els[k].style.setProperty('color', d.color, 'important');
                 els[k].style.setProperty('-webkit-text-fill-color', d.color, 'important');
+                buttonTextEls.add(els[k]);
             }
             buttonPaints.set(b, { els, surface, mode: d.mode, bg, color: d.color });
         }
@@ -4164,6 +4379,15 @@
         for (let i = 0; i < kids.length && list.length < MASK_MAX_NEIGHBORS; i++) {
             if (kids[i] !== el) list.push(kids[i]);
         }
+        // One level up too (Session 8c, F-4): an outlined field often draws
+        // its box as a sibling of the input's wrapper (Google sign-in:
+        // .Xb9hP > input + label, its outline .mIZh1c beside .Xb9hP), so the
+        // line the label sits on isn't next to the label itself.
+        const outer = container.nodeType === 1 ? container.parentElement : null;
+        const outerKids = outer && outer !== document.body ? outer.children : [];
+        for (let i = 0; i < outerKids.length && list.length < MASK_MAX_NEIGHBORS; i++) {
+            if (outerKids[i] !== container) list.push(outerKids[i]);
+        }
         const out = [];
         for (let i = 0; i < list.length; i++) {
             const n = list[i];
@@ -4183,6 +4407,20 @@
         return out;
     }
 
+    // A floating label beside the field that has focus (Session 8c, F-2):
+    // it takes its fill on :focus and moves onto the border with a
+    // transition, so where it is now says nothing (mid-field when the focus
+    // settle runs; on the phone the settle after the transition didn't
+    // catch it either). The fill test below still decides: only a label
+    // that paints what's behind it is a mask. On blur the line check is
+    // back, and a label resting inside the box is released.
+    function isLabelOfFocusedField(el) {
+        const active = document.activeElement;
+        if (!active || active === el || active.parentElement !== el.parentElement) return false;
+        const tag = active.tagName;
+        return tag === 'INPUT' || tag === 'TEXTAREA' || active.isContentEditable === true;
+    }
+
     function releaseMaskPaint(el) {
         const saved = maskPaints.get(el);
         if (!saved) return;
@@ -4193,7 +4431,12 @@
         maskPaints.delete(el);
     }
 
-    function settleMasks(cands) {
+    // fresh: read the authored paint again instead of the per-class cache.
+    // A focus change repaints through :focus / :focus-within with no class
+    // change (Urban Plates' label is transparent at rest and fills on
+    // focus), so the cached rest paint said "no fill" for as long as the
+    // field had focus (F-2 on the phone, found Session 8c).
+    function settleMasks(cands, fresh) {
         if (!cands.length || !currentTheme || !H || !H.isMaskOverLine) return;
         const masks = [];
         for (let i = 0; i < cands.length; i++) {
@@ -4202,7 +4445,7 @@
             try { rect = el.isConnected ? el.getBoundingClientRect() : null; } catch (e) { rect = null; }
             if (rect && (stackedMasks.has(el)
                 ? H.isStackedCoverShape(rect) && !layerPaints.has(el) && isStackedCover(el, getComputedStyle(el))
-                : H.isMaskOverLine(rect, maskNeighbors(el)))) masks.push(el);
+                : H.isMaskShape(rect) && (isLabelOfFocusedField(el) || H.isMaskOverLine(rect, maskNeighbors(el))))) masks.push(el);
             else releaseMaskPaint(el);
         }
         if (!masks.length) return;
@@ -4212,9 +4455,9 @@
                 && n !== document.body && n !== document.documentElement; n = maskParentOf(n), d++) chain.push(n);
             return chain;
         });
-        const own = readAuthoredPaint(masks);
+        const own = readAuthoredPaint(masks, fresh);
         const flat = [].concat(...chains);
-        const ancestorPaint = flat.length ? readAuthoredPaint(flat) : [];
+        const ancestorPaint = flat.length ? readAuthoredPaint(flat, fresh) : [];
         const writes = [];
         for (let i = 0, k = 0; i < masks.length; k += chains[i].length, i++) {
             const chain = chains[i];
@@ -4301,6 +4544,7 @@
     // controls keep theirs (an input's outline is its shape). Nominated by
     // cheap reads in the walk, decided in one probe batch after it.
     const borderPaints = new Map();      // el -> [site inline border-color, priority]
+    const authoredBorders = new WeakMap(); // el -> { key: probeKey, color: the site's border (parsed) }
     const BORDER_MAX_PER_PASS = 80;
     const BORDER_SIDES = ['Top', 'Right', 'Bottom', 'Left'];
 
@@ -4344,23 +4588,37 @@
             return;
         }
         // Our own border-color is lifted for the read (a re-check of a
-        // painted card reads the site's border again).
+        // painted card reads the site's border again), unless the element's
+        // class is the one its border was read with: lifting, reading and
+        // re-writing every painted card cost two style recalcs a pass
+        // (Session 8c, Airbnb: 50-85 ms), like the probe's cache key.
         const els = cands.map(([el]) => el);
-        const lifted = els.map(el => borderPaints.has(el) ? el.style.getPropertyValue('border-color') : null);
-        els.forEach((el, i) => { if (lifted[i] != null) el.style.removeProperty('border-color'); });
-        const borders = els.map(el => {
+        const borders = new Array(els.length);
+        const read = [];
+        els.forEach((el, i) => {
+            const known = authoredBorders.get(el);
+            if (known && known.key === probeKey(el)) borders[i] = known.color;
+            else read.push(i);
+        });
+        const lifted = read.map(i => borderPaints.has(els[i]) ? els[i].style.getPropertyValue('border-color') : null);
+        read.forEach((i, r) => { if (lifted[r] != null) els[i].style.removeProperty('border-color'); });
+        read.forEach(i => {
+            const el = els[i];
+            let color = null;
             try {
                 const cs = getComputedStyle(el);
-                for (let i = 0; i < 4; i++) {
-                    const s = BORDER_SIDES[i];
+                for (let k = 0; k < 4; k++) {
+                    const s = BORDER_SIDES[k];
                     if (cs['border' + s + 'Style'] !== 'none' && parseFloat(cs['border' + s + 'Width']) > 0) {
-                        return cs['border' + s + 'Color'] === cs.color ? null : H.parseCssRgb(cs['border' + s + 'Color']);
+                        color = cs['border' + s + 'Color'] === cs.color ? null : H.parseCssRgb(cs['border' + s + 'Color']);
+                        break;
                     }
                 }
             } catch (e) {}
-            return null;
+            borders[i] = color;
+            authoredBorders.set(el, { key: probeKey(el), color });
         });
-        els.forEach((el, i) => { if (lifted[i] != null) el.style.setProperty('border-color', lifted[i], 'important'); });
+        read.forEach((i, r) => { if (lifted[r] != null) els[i].style.setProperty('border-color', lifted[r], 'important'); });
         const chains = els.map(el => {
             const chain = [el];
             for (let n = maskParentOf(el), d = 0; n && d < MASK_ANCESTOR_DEPTH
@@ -4505,12 +4763,22 @@
         for (let i = 0, k = 0; i < cands.length; k += chains[i].length, i++) {
             const [el, pseudo] = cands[i];
             if (!el.isConnected) continue;
-            const img = pseudo ? pseudoImg.get(i) : (own[elIndex.get(el)] && isFadePaint(own[elIndex.get(el)].bg, own[elIndex.get(el)].img) ? own[elIndex.get(el)].img : null);
+            const o = pseudo ? null : own[elIndex.get(el)];
+            // A cover over the element's own fill (scroll shadows) fades
+            // into that fill, which the strip removed: it sits on that.
+            let selfFill = o && !isFadePaint(o.bg, o.img) && H.selfCoverFadeFill ? H.selfCoverFadeFill(o) : null;
+            // Only once that fill is gone (a kept fill keeps its covers).
+            if (selfFill) {
+                let live = null;
+                try { live = H.parseCssRgb(getComputedStyle(el).backgroundColor); } catch (e) {}
+                if (live && live.a >= 0.5) selfFill = null;
+            }
+            const img = pseudo ? pseudoImg.get(i) : (o && (selfFill || isFadePaint(o.bg, o.img)) ? o.img : null);
             const chain = chains[i];
             // What it sits on: the nearest authored fill. A photo (a url()
             // background) first means it's a text scrim over an image, not
             // a fade into the page: kept as authored.
-            let behind = null;
+            let behind = selfFill;
             let onImage = false;
             for (let j = 0; j < chain.length && !behind && !onImage; j++) {
                 const p = behindPaint[k + j];
@@ -4714,12 +4982,15 @@
         let style;
         try { style = getComputedStyle(el); } catch (e) { return; }
         if (style.visibility === 'hidden' || style.opacity === '0') return;
+        const parsed = H.parseCssRgb(style.backgroundColor);
+        const opaqueFill = !!(parsed && parsed.a >= 0.5);
+        // shouldClearShellBackground only clears a fill or a gradient:
+        // nothing to clear, no rect or heuristics (Session 8c).
+        if (!opaqueFill && style.backgroundImage === 'none') return;
 
         let rect;
         try { rect = el.getBoundingClientRect(); } catch (e) { return; }
 
-        const parsed = H.parseCssRgb(style.backgroundColor);
-        const opaqueFill = !!(parsed && parsed.a >= 0.5);
         const collapseFade = isAiOverviewCollapseFade(el);
         if (collapseFade) return;
         const info = {
@@ -5203,11 +5474,19 @@
         }
         let style;
         try { style = getComputedStyle(el); } catch (e) { return; }
+        // No fill, no highlight (H.isLikelyInlineHighlightSpanInfo needs
+        // alpha >= 0.15): decided before the text and ancestor reads below,
+        // which ran for every span (Session 8c).
+        const backgroundColor = H.parseCssRgb(style.backgroundColor);
+        if (!backgroundColor || !(backgroundColor.a >= 0.15)) {
+            if (inlineHighlightModified.has(el)) revertInlineHighlightElement(el);
+            return;
+        }
         let ownText = '';
         try { ownText = String(el.textContent || '').replace(/\s+/g, ' ').trim(); } catch (e) {}
         const info = {
             tag: el.tagName,
-            backgroundColor: H.parseCssRgb(style.backgroundColor),
+            backgroundColor,
             ownTextLength: ownText.length,
             hasIconClassHint: typeof el.className === 'string' && /icon/i.test(el.className),
             inCodeOrPre: !!(el.closest && el.closest('pre, code')),
@@ -5267,6 +5546,28 @@
         try { return fn(); } catch (e) {}
     }
 
+    // A full pass that starts while the document is still parsing walks
+    // only what has arrived (Airbnb: 1300 of 5300 elements); the rest is
+    // queued for the next pass, which redoes all of it. At the end of
+    // parsing that pass is restarted, or the queued records dispatched,
+    // without the debounce: late-parsed first-screen text (a cookie sheet
+    // at the end of <body>) stayed dark until the first pass had finished
+    // (Session 8c, Load-6).
+    let parsePassGen = -1;
+    let parseEndListening = false;
+    function watchParseEnd(gen) {
+        parsePassGen = gen;
+        if (parseEndListening) return;
+        parseEndListening = true;
+        document.addEventListener('DOMContentLoaded', () => {
+            parseEndListening = false;
+            if (!currentTheme) return;
+            const running = parsePassGen === walkGeneration;
+            parsePassGen = -1;
+            if (running || pendingMutationRecords.length) runSafetyPasses(document.documentElement);
+        }, { once: true });
+    }
+
     function runSafetyPasses(root) {
         if (!root || !currentTheme) return;
         DBG?.passStart(root);
@@ -5296,7 +5597,10 @@
         }
         nestedButtons = [];
         const elements = collectElements(root);
-        if (root === document.documentElement) fullPassCollected = true;
+        if (root === document.documentElement) {
+            fullPassCollected = true;
+            if (document.readyState === 'loading') watchParseEnd(gen);
+        }
         const capped = elements.length > WALK_SLICE ? elements.slice(0, WALK_SLICE) : elements;
         DBG?.passElements(elements.length);
         // Shared across every isLikelyModalCard call this invocation makes
@@ -5316,10 +5620,12 @@
         const borderCandidates = [];
         const darkTheme = !(H.isThemeBackgroundLight && H.isThemeBackgroundLight(currentTheme.background || '#121212'));
         const skipContrast = isActiveSplitTheme(currentTheme);
+        const navSweep = navSignalSweep(elements);
         let effectiveBgCache = null;
 
         function finish() {
             if (gen !== walkGeneration) return;
+            if (parsePassGen === gen) parsePassGen = -1;
             DBG?.passEnd();
             safePass(() => paintGoogleImagesViewer(root));
             discardOwnMutationRecords();
@@ -5351,6 +5657,11 @@
             pendingLayerRecheck.clear();
             if (recheck.length) steps.push(() => recheckLayerRoots(recheck));
         }
+        // All elements, not the capped list: fixed banners and bottom bars
+        // are usually appended at the end of <body>, past the cap, yet on
+        // the first screen (Airbnb's cookie sheet: element 5000 of 5341).
+        // The collect step is one rect read per element.
+        if (!skipContrast) steps.push(...firstScreenContrastSteps(elements, vh));
         for (let i = 0; i < elements.length; i++) {
             const el = elements[i];
             if (el.shadowRoot) steps.push(() => shadowRootSteps(el));
@@ -5385,7 +5696,8 @@
             () => reopaqueTopChrome(root),
             () => restoreAuthoredChromeOpacity(root),
             () => recheckTracked(navMenuPanelOpaqueModified, el => visitNavMenuPanelElement(el, vh, vw)),
-            { items: capped, visit: el => visitNavMenuPanelElement(el, vh, vw) },
+            navSweep.step,
+            { items: capped, visit: el => visitNavMenuPanelElement(el, vh, vw, navSweep.get) },
             () => rethemeAskAnythingComposer(root),
             () => rethemeGoogleAiChatSurface(root),
             {
@@ -5437,7 +5749,7 @@
                 // effectiveBackground's doc comment in themeHeuristics.js
                 // for why that ordering is what makes caching safe here.
                 () => { effectiveBgCache = new WeakMap(); duplicateLabelCache = new WeakMap(); },
-                { items: elements, visit: el => visitContrastElement(el, effectiveBgCache) }
+                contrastBatchStep(elements, () => effectiveBgCache)
             );
         }
         runSteps(steps, finish);
@@ -6206,7 +6518,7 @@
             // the sheet and their buttons.
             ...(isActiveSplitTheme(currentTheme) ? [] : [
                 () => { shadowContrastCache = new WeakMap(); },
-                { items: shadowElements, visit: el => visitContrastElement(el, shadowContrastCache) },
+                contrastBatchStep(shadowElements, () => shadowContrastCache),
             ]),
         ];
     }
@@ -6374,13 +6686,34 @@
     // and by the 'change'/'transitionend'/'toggle' listeners in init() —
     // identical behavior either way, just named once so neither caller has
     // to duplicate the timer bookkeeping.
+    // 150 ms of quiet, but never more than MUTATION_MAX_WAIT_MS after the
+    // first queued change (Session 8c): a menu that animates with inline
+    // style writes every frame (Walmart's ☰ slide) restarted the debounce
+    // on each one, so its rows kept their authored white for the whole
+    // animation plus 150 ms (X-11 "white bars when the menu opens").
+    // Session 8d: the cap doubles for each pass it forces in a row (300,
+    // 600, 1200, 2400 ms) and resets once a pass runs after real quiet. A
+    // short stream (a menu slide) still gets its pass at 300 ms; a long one
+    // (Reddit-style hydration, ~3 s of mutations) got a full-document pass
+    // every ~480 ms with a flat cap, about twice the Aura time, for no text
+    // or surface that the end-of-stream pass doesn't fix anyway.
+    const MUTATION_QUIET_MS = 150;
+    const MUTATION_MAX_WAIT_MS = 300;
+    let mutationFirstQueuedAt = 0;
+    let mutationCappedStreak = 0;
     function scheduleSafetyPassDispatch() {
         if (ignoreMutations) return;
+        const now = performance.now();
         if (mutationDebounceTimer) clearTimeout(mutationDebounceTimer);
+        else mutationFirstQueuedAt = now;
+        const maxWait = MUTATION_MAX_WAIT_MS * (1 << Math.min(mutationCappedStreak, 3));
+        const wait = Math.max(0, Math.min(MUTATION_QUIET_MS, mutationFirstQueuedAt + maxWait - now));
+        const capped = wait < MUTATION_QUIET_MS;
         mutationDebounceTimer = setTimeout(() => {
             mutationDebounceTimer = null;
+            mutationCappedStreak = capped ? mutationCappedStreak + 1 : 0;
             dispatchSafetyPasses();
-        }, 150);
+        }, wait);
     }
 
     // Shared by the 'change'/'transitionend'/'toggle' listeners in init() —
@@ -6468,12 +6801,18 @@
                     host: String(window.location.hostname || ''),
                 });
             }
-            if (classification === 'scoped' && H && H.findCommonMutationAncestor) {
+            // A large batch is scoped too when it all landed inside one
+            // container below <body> (Session 8c: a feed appending 200 rows,
+            // a streamed answer): the common ancestor contains every change,
+            // and a page-wide change resolves to <body>/<html> anyway. Only
+            // a small batch may scope to <body> itself, as before.
+            if (H && H.findCommonMutationAncestor) {
                 const ancestor = H.findCommonMutationAncestor(
                     dedupeMutationTargets(records),
                     document.documentElement
                 );
-                if (ancestor && ancestor.nodeType === 1) root = ancestor;
+                if (ancestor && ancestor.nodeType === 1
+                    && (classification === 'scoped' || ancestor !== document.body)) root = ancestor;
             }
         } catch (e) {
             root = document.documentElement;
@@ -6647,6 +6986,7 @@
             // document).
             if (!changeListenerAttached) {
                 changeListenerAttached = true;
+                document.addEventListener('animationstart', contrastAnimatedSubtree, { capture: true, passive: true });
                 document.addEventListener('change', (event) => {
                     queueScopedSafetyPass(event);
                 }, { capture: true, passive: true });
@@ -6720,7 +7060,7 @@
                     const kids = parent.children;
                     for (let i = 0; i < kids.length && i < MASK_MAX_NEIGHBORS; i++) safeVisit(e => visitMaskElement(e, cands), kids[i]);
                     if (cands.length) {
-                        safePass(() => settleMasks(cands));
+                        safePass(() => settleMasks(cands, true));
                         discardOwnMutationRecords();
                         // The label is still where it was: its move onto the
                         // border is a transition (Urban Plates: `all .3s`),
@@ -6731,7 +7071,7 @@
                         if (wait > 0) {
                             setTimeout(() => {
                                 if (!currentTheme) return;
-                                safePass(() => settleMasks(cands.filter(el => el.isConnected)));
+                                safePass(() => settleMasks(cands.filter(el => el.isConnected), true));
                                 discardOwnMutationRecords();
                             }, wait + 34);
                         }

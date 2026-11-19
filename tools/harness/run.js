@@ -41,6 +41,10 @@ function parseArgs(argv) {
         else if (k === '--scenarios') a.scenarios = next();
         else if (k === '--repeat') a.repeat = parseInt(next(), 10);
         else if (k === '--keep-storage') a.keepStorage = true;
+        // Session 8c: the phone runs iOS in dark mode, so sites with a dark
+        // scheme serve their dark CSS; and its CPU is slower than the Mac's.
+        else if (k === '--scheme') a.scheme = next();
+        else if (k === '--cpu') a.cpu = parseFloat(next());
         else if (k === '--compare') { a.compare = [next(), next()]; }
         else if (k === '--help' || k === '-h') { a.help = true; }
         else throw new Error('Unknown arg ' + k);
@@ -77,6 +81,17 @@ function auraScripts() {
             const re = /function safePass\(fn\) \{\s*try \{ (return )?fn\(\); \} catch \(e\) \{\}\s*\}/;
             if (re.test(src)) src = src.replace(re, 'function safePass(fn) { try { return window.__AH ? window.__AH.subPass(fn) : fn(); } catch (e) {} }');
             else console.warn('[harness] safePass pattern not found; sub-pass timing disabled');
+            const re2 = /if \(el && el\.nodeType === 1\) safeVisit\(step\.visit, el\);/;
+            if (re2.test(src)) src = src.replace(re2, 'if (el && el.nodeType === 1) { if (window.__AH) window.__AH.itemVisit(step.visit, el); else safeVisit(step.visit, el); }');
+            else console.warn('[harness] runSteps item pattern not found; item-step timing disabled');
+            // The combined per-element visitor (the item step right before
+            // ...smallSurfaceSteps): time each visitor inside it.
+            const end = src.indexOf('...smallSurfaceSteps(iconCandidates');
+            const start = end > 0 ? src.lastIndexOf('visit: function (el) {', end) : -1;
+            if (start > 0) {
+                const body = src.slice(start, end).replace(/^(\s*)(if \([^)]*\) )?(visit\w+)\((.*)\);$/gm, (l, ind, cond, fn, argsTxt) => `${ind}${cond || ''}(window.__AH ? window.__AH.timeVisit('${fn}', () => ${fn}(${argsTxt})) : ${fn}(${argsTxt}));`);
+                src = src.slice(0, start) + body + src.slice(end);
+            } else console.warn('[harness] combined visitor not found; per-visitor timing disabled');
         }
         // Safari runs content scripts in an isolated world. Approximate that
         // with a function scope, and shadow the scheduling APIs with timed
@@ -156,11 +171,12 @@ function layoutDiffInPage() {
     const els = [];
     const collect = (root) => {
         const all = root.querySelectorAll('*');
-        for (let i = 0; i < all.length && els.length < 6000; i++) {
+        // The whole page (Session 8c: real pages run far past 6000 px).
+        for (let i = 0; i < all.length && els.length < 20000; i++) {
             const el = all[i];
             if (el.shadowRoot) collect(el.shadowRoot);
             const r = el.getBoundingClientRect();
-            if (r.width > 0 && r.height > 0 && r.bottom > -2000 && r.top < 6000) els.push(el);
+            if (r.width > 0 && r.height > 0) els.push(el);
         }
     };
     collect(document);
@@ -180,14 +196,17 @@ function layoutDiffInPage() {
         sheets.forEach(s => { s.disabled = false; });
         scrollTo(sx, sy);
     }
-    const diffs = [];
+    const diffs = [], changedEls = new Set();
     els.forEach((el, i) => {
         const a = on[i], b = off[i];
         const d = [a.left - b.left, a.top - b.top, a.width - b.width, a.height - b.height];
-        if (d.some(v => Math.abs(v) > 1)) diffs.push({ el: window.__AH.describeNode(el), d: d.map(Math.round) });
+        if (d.some(v => Math.abs(v) > 1)) { diffs.push({ el: window.__AH.describeNode(el), d: d.map(Math.round), node: el }); changedEls.add(el); }
     });
-    // Report the outermost changes: a resized parent moves all its children.
-    return { checked: els.length, sheets: sheets.length, changed: diffs.length, top: diffs.slice(0, 12) };
+    // The outermost changes (a resized parent moves all its children), and
+    // the innermost resized ones (no resized descendant): where a cause is.
+    const inner = diffs.filter(x => (x.d[2] || x.d[3]) && !Array.from(x.node.querySelectorAll('*')).some(c => changedEls.has(c) && (on[els.indexOf(c)].width !== off[els.indexOf(c)].width || on[els.indexOf(c)].height !== off[els.indexOf(c)].height)));
+    const strip = x => ({ el: x.el, d: x.d });
+    return { checked: els.length, sheets: sheets.length, changed: diffs.length, top: diffs.slice(0, 12).map(strip), inner: inner.slice(0, 8).map(strip) };
 }
 
 // Computed paint of every element (light + open shadow DOM), in document
@@ -405,8 +424,9 @@ async function runLoad(browser, opts) {
     const { site, theme, scenario, outDir, args } = opts;
     const device = pw.devices['iPhone 15 Pro'];
     const ctxOpts = { ...device };
+    if (args.scheme) ctxOpts.colorScheme = args.scheme;
     const harPath = path.join(HERE, 'har', site.id + '.har');
-    const harMode = site.fixture ? 'off' : args.har === 'auto' ? (fs.existsSync(harPath) ? 'replay' : 'live') : args.har;
+    const harMode = (site.fixture || site.snapshot) ? 'off' : args.har === 'auto' ? (fs.existsSync(harPath) ? 'replay' : 'live') : args.har;
     if (harMode === 'record') ctxOpts.recordHar = { path: harPath, mode: 'full', content: 'embed' };
     // --keep-storage: the page's localStorage (Aura's per-site theme cache)
     // carries over from the previous load of the same site and theme.
@@ -414,6 +434,16 @@ async function runLoad(browser, opts) {
     if (args.keepStorage && opts.storageStates && opts.storageStates[stateKey]) ctxOpts.storageState = opts.storageStates[stateKey];
     const ctx = await browser.newContext(ctxOpts);
     if (harMode === 'replay') await ctx.routeFromHAR(harPath, { notFound: 'abort' });
+    // A snapshot (snapshot.js) is the page document only: everything else
+    // it asks for (images, fonts, beacons) is aborted, offline.
+    if (site.snapshot) {
+        const docUrl = site.origin + site.path;
+        await ctx.route('**/*', route => {
+            const u = route.request().url();
+            if (u === docUrl || (route.request().isNavigationRequest() && u.startsWith(site.origin))) route.fulfill({ status: 200, contentType: 'text/html', body: fs.readFileSync(site.snapshot) });
+            else route.abort();
+        });
+    }
     // A fixture can be served from a real site's origin (`origin` in
     // sites.js) so host-gated engine code (SITE_FIXES, Google passes) runs.
     const fixtureOrigin = site.origin || FIXTURE_ORIGIN;
@@ -434,21 +464,34 @@ async function runLoad(browser, opts) {
     // AURA_HARNESS_STORAGE_MS simulates a slow storage.local read (a cold
     // extension process); the default is 5 ms, a warm cache.
     const storageDelayMs = process.env.AURA_HARNESS_STORAGE_MS ? Number(process.env.AURA_HARNESS_STORAGE_MS) : undefined;
-    await ctx.addInitScript({ content: 'window.__AH_CONFIG = ' + JSON.stringify({ themed, themeData: themed ? themeData(THEMES[theme]) : null, storageDelayMs, timeline: !!process.env.AURA_HARNESS_TIMELINE, flash: !!process.env.AURA_HARNESS_FLASH }) + ';' });
+    await ctx.addInitScript({ content: 'window.__AH_CONFIG = ' + JSON.stringify({ themed, themeData: themed ? themeData(THEMES[theme]) : null, storageDelayMs, timeline: !!process.env.AURA_HARNESS_TIMELINE, flash: !!process.env.AURA_HARNESS_FLASH, textSettle: !!process.env.AURA_HARNESS_TEXT, watchText: process.env.AURA_HARNESS_WATCH || null }) + ';' });
     await ctx.addInitScript({ path: path.join(HERE, 'probe.js') });
     if (themed) for (const s of auraScripts()) await ctx.addInitScript({ content: s });
 
     const page = await ctx.newPage();
     const errors = [];
     page.on('pageerror', e => errors.push(String(e.message).slice(0, 200)));
-    const res = { site: site.id, theme, scenario, har: harMode, url: null, errors };
+    const res = { site: site.id, theme, scenario, har: harMode, url: null, errors, scheme: args.scheme || 'light', cpu: args.cpu || 1 };
+    if (args.cpu > 1) {
+        try { const cdp = await ctx.newCDPSession(page); await cdp.send('Emulation.setCPUThrottlingRate', { rate: args.cpu }); }
+        catch (e) { res.cpu = 'unsupported: ' + String(e.message).slice(0, 60); }
+    }
+    // Debug: a Chromium timeline trace of the first 6 s (style recalcs and
+    // layouts with the JS stack that forced them), saved next to results.
+    let tracing = false;
+    if (process.env.AURA_HARNESS_TRACE && browser.startTracing) {
+        try { await browser.startTracing(page, { categories: ['devtools.timeline', 'disabled-by-default-devtools.timeline', 'disabled-by-default-devtools.timeline.stack', 'v8.execute'] }); tracing = true; } catch (e) {}
+        if (tracing) setTimeout(async () => {
+            try { const buf = await browser.stopTracing(); fs.writeFileSync(path.join(outDir, `${site.id}--${theme}--trace.json`), buf); } catch (e) {}
+        }, 6000);
+    }
     const shot = async (name) => {
         if (!args.shots) return;
         try { await page.screenshot({ path: path.join(outDir, `${site.id}--${theme}--${name}.png`) }); } catch (e) {}
     };
 
     try {
-        let url = site.fixture ? `${fixtureOrigin}/${site.id}` : site.url;
+        let url = site.snapshot ? site.origin + site.path : site.fixture ? `${fixtureOrigin}/${site.id}` : site.url;
         if (!url && site.resolve) url = opts.resolvedUrls[site.id];
         res.url = url;
         const navSentWall = wallNow();
@@ -468,6 +511,10 @@ async function runLoad(browser, opts) {
             const nowPage = toPage(wallNow());
             if (target > nowPage) await sleep(target - nowPage);
             await shot('5s');
+            // Read before actions and scroll (those change what's on screen).
+            if (process.env.AURA_HARNESS_WATCH) res.watch = await page.evaluate(() => window.__AH.watchLog || null).catch(() => null);
+            if (themed && process.env.AURA_HARNESS_TEXT) res.textSettle = await page.evaluate(() => window.__AH.textSettleSummary ? window.__AH.textSettleSummary() : null).catch(e => ({ error: String(e.message).slice(0, 200) }));
+            if (themed && process.env.AURA_HARNESS_TIMELINE) res.writeCounts = await page.evaluate(() => window.__AH.writeCounts ? window.__AH.writeCounts() : null).catch(() => null);
             if (themed && process.env.AURA_HARNESS_TIMELINE) res.timeline = await page.evaluate(() => window.__AH.timelineSummary ? window.__AH.timelineSummary() : null).catch(e => ({ error: String(e.message).slice(0, 200) }));
             if (themed) res.layout = await page.evaluate(layoutDiffInPage).catch(e => ({ error: String(e).slice(0, 200) }));
             try {
@@ -477,12 +524,27 @@ async function runLoad(browser, opts) {
             } catch (e) {}
             res.tint = { '5s': await page.evaluate(() => window.__AH.tint()).catch(e => ({ error: String(e.message).slice(0, 120) })) };
             res.lowContrast = await page.evaluate(lowContrastInPage).catch(e => ({ error: String(e.message).slice(0, 200) }));
+            // Session 8c: what one full-document style recalc costs with
+            // Aura's sheets on vs off (median of 5 forced recalcs each).
+            if (process.env.AURA_HARNESS_RECALC) res.recalc = await page.evaluate(() => {
+                const sheets = Array.from(document.querySelectorAll('style[id^="aura-"]'));
+                const html = document.documentElement;
+                const one = () => { html.classList.toggle('aura-h-recalc'); const t0 = performance.now(); getComputedStyle(document.body).color; document.body.getBoundingClientRect(); return performance.now() - t0; };
+                const med = (n) => { const a = []; for (let i = 0; i < n; i++) a.push(one()); a.sort((x, y) => x - y); return Math.round(a[n >> 1] * 10) / 10; };
+                const on = med(5);
+                sheets.forEach(s => { s.disabled = true; });
+                const off = med(5);
+                sheets.forEach(s => { s.disabled = false; });
+                med(1);
+                return { on, off, elements: document.getElementsByTagName('*').length, auraCssBytes: sheets.reduce((n, s) => n + (s.textContent || '').length, 0) };
+            }).catch(e => ({ error: String(e.message).slice(0, 200) }));
             const urlBeforeActions = page.url();
             if (site.actions && site.actions.length) await page.evaluate(() => window.__AH.mark && window.__AH.mark('actions')).catch(() => {});
             for (const act of site.actions || []) {
                 if (act.click) { try { await page.locator(act.click).first().click({ timeout: 3000 }); } catch (e) { res.actionError = (res.actionError || '') + `click ${act.click} failed; `; } }
                 if (act.type) await page.keyboard.type(act.type, { delay: 60 }).catch(() => {});
-                if (act.eval) await page.evaluate(act.eval).catch(e => { res.actionError = (res.actionError || '') + `eval failed: ${String(e.message).slice(0, 80)}; `; });
+                // An eval's result is kept (res.evals): a probe for debugging.
+                if (act.eval) { const v = await page.evaluate(act.eval).catch(e => { res.actionError = (res.actionError || '') + `eval failed: ${String(e.message).slice(0, 80)}; `; }); (res.evals = res.evals || []).push(v === undefined ? null : v); }
                 if (act.wait) await sleep(act.wait);
                 if (act.shot) {
                     await shot(act.shot);
@@ -721,8 +783,8 @@ async function runLoad(browser, opts) {
 
         // Sub-pass breakdown (whole load) and Aura errors.
         const extra = await page.evaluate(() => ({ sub: window.__AH.subPasses, errors: window.__AH.errors.slice(0, 5) }));
-        res.subPasses = Object.fromEntries(Object.entries(extra.sub).sort((a, b) => b[1].ms - a[1].ms).slice(0, 12)
-            .map(([k, v]) => [k, { n: v.n, ms: r1(v.ms), max: r1(v.max) }]));
+        res.subPasses = Object.fromEntries(Object.entries(extra.sub).sort((a, b) => b[1].ms - a[1].ms).slice(0, 30)
+            .map(([k, v]) => [k, { n: v.n, ms: r1(v.ms), max: r1(v.max), maxAt: v.maxAt, maxEl: v.maxEl }]));
         res.auraErrors = extra.errors;
     } catch (e) {
         res.error = String(e.message || e).split('\n')[0];
@@ -918,7 +980,7 @@ async function main() {
     if (args.compare) { process.stdout.write(compare(args.compare[0], args.compare[1])); return; }
 
     const want = args.sites ? args.sites.split(',') : null;
-    const sites = SITES.filter(s => (want ? want.includes(s.id) : !s.fixture));
+    const sites = SITES.filter(s => (want ? want.includes(s.id) : !s.fixture && !s.snapshot));
     if (!sites.length) throw new Error('No sites matched ' + args.sites);
     const themes = args.themes.split(',');
     const scenarios = args.scenarios.split(',');

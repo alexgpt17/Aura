@@ -3,3 +3,5 @@ out/
 # HAR snapshots hold full third-party responses (and any cookies set during
 # recording). Keep them local.
 har/
+# Offline page snapshots (snapshot.js): third-party pages, keep local.
+snapshots/

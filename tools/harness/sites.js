@@ -10,7 +10,7 @@
 //   fixture   true → served offline from fixtures/<id>.html
 //   origin    fixture only: serve it from this origin instead of
 //             https://fixture.aura.test (host-gated engine code runs)
-module.exports = [
+const SITES = [
     {
         id: 'reddit-post',
         rows: ['Type-1', 'R-1', 'R-3'],
@@ -89,6 +89,8 @@ module.exports = [
         type: { selectors: ['textarea[aria-label="Ask anything"]'] },
         actions: [{ click: 'textarea[aria-label="Ask anything"]' }, { wait: 600 }, { shot: 'focus', contrast: true }],
     },
+    // Session 8c: Google's dark CSS (what a phone in iOS dark mode gets).
+    { id: 'fixture-google-dark', rows: ['G-6 (dark CSS, read in Chrome)'], fixture: true, origin: 'https://www.google.com' },
     { id: 'fixture-late-text', rows: ['Load-1 (synthetic, text colors)'], fixture: true },
     {
         id: 'fixture-google-aimode-deep',
@@ -126,3 +128,18 @@ module.exports = [
     },
     { id: 'fixture-walmart-popup', rows: ['X-12'], fixture: true, origin: 'https://www.walmart.com' },
 ];
+
+// Session 8c: every saved snapshot (snapshot.js) is a site, served offline
+// from the page's own origin and path.
+const fs = require('fs');
+const path = require('path');
+const SNAP_DIR = path.join(__dirname, 'snapshots');
+try {
+    fs.readdirSync(SNAP_DIR).filter(f => f.endsWith('.json')).forEach(f => {
+        const m = JSON.parse(fs.readFileSync(path.join(SNAP_DIR, f), 'utf8'));
+        if (!fs.existsSync(path.join(SNAP_DIR, m.name + '.html'))) return;
+        SITES.push({ id: 'snapshot-' + m.name, rows: ['8c-audit'], snapshot: path.join(SNAP_DIR, m.name + '.html'), origin: m.origin, path: m.path || '/', scheme: m.scheme, actions: m.actions });
+    });
+} catch (e) {}
+
+module.exports = SITES;

@@ -44,6 +44,10 @@ The output goes to `out/<timestamp>/`: `report.md`, `results.json`, screenshots 
                      is the cold one and medians use the warm loads only
 --scenarios switch   theme-change check (see below)
 --scenarios settings the app's native Dark Mode and per-site Disabled switches (see below)
+--scheme light|dark  the page's prefers-color-scheme (Session 8c). An iPhone in dark mode
+                     gets sites' dark CSS (Google decides on the server); before 8c every
+                     run saw only the light CSS
+--cpu N              CPU throttling (CDP, Chromium only): 4 ≈ phone speed for Aura's tasks
 ```
 Environment variables:
 - `AURA_EXT_DIR=<Resources dir>` runs another copy of the engine. For A/B runs, point it at a `git worktree` of an older commit.
@@ -51,6 +55,14 @@ Environment variables:
 - `AURA_HARNESS_STORAGE_MS=<ms>` delays the stubbed storage read (see Load flash).
 - `AURA_HARNESS_DUMP_INLINE=1` adds each element's inline style and `data-aura-*` marks to the paint dumps (finds which pass wrote a paint; debug only, it changes the dump format).
 - `AURA_HARNESS_TIMELINE=1` records the color timeline (see below). Off by default: it captures a stack per Aura style write, which slows the engine.
+- `AURA_HARNESS_TEXT=1` (Session 8c, Load-6): every 100 ms to 8 s, the text in a 9 × 18 grid is checked against the first opaque fill behind it. `results.json` → `textSettle`: `settledMs` (last sample with more low-contrast text than the end state), `lowMs` (low elements × time: the exposure to unreadable text), `peakLow`, `finalLow`, and a `trace` naming the first low element at each change.
+- `AURA_HARNESS_WATCH=<exact text>` (debug): logs the color, nearest fill, position and inline style of the element with that text every 100 ms and on each change (`results.json` → `watch`). It slows the page enough to hide some races.
+- `AURA_HARNESS_TRACE=1` (debug): saves a Chromium timeline trace of the first 6 s next to the results (style recalcs and layouts with the JS stack that forced them).
+
+`results.json` → `subPasses` times each sliced step per element, with the slowest element (`maxEl`) and when it ran (`maxAt`).
+
+## Snapshots (`tools/harness/snapshots/`, Session 8c, gitignored)
+`node snapshot.js` (outside the sandbox: it needs the network; ask first) loads each listed site with the iPhone 15 Pro profile in **dark** scheme, waits 7 s, scrolls, runs view-only actions, then freezes the page: stylesheets inlined (with `@import`s and adopted sheets), scripts and `on*` attributes removed, images/video/iframes replaced by gray boxes, shadow roots serialized, custom elements defined (sites hide `:not(:defined)`). Each becomes a site `snapshot-<name>` (offline; every request but the document is aborted). They are real DOM and CSS, but frozen: no hydration, no site JS. Captured Nov 18: airbnb, wikipedia, google-signin(-focus), reddit-post, urbanplates, github, youtube, ucdavis-registrar, skycrypt, walmart (a captcha page).
 
 ## Typical session loop
 ```sh

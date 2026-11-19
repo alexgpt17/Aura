@@ -299,8 +299,39 @@
         return ':not(:is(' + fragments.join(', ') + '))';
     }
 
+    // Besides rgb()/rgba(), a computed color can serialize as
+    // color(srgb r g b / a) (any color-mix() result, in Chromium and
+    // Safari), and a gradient stop in Safari's computed background-image
+    // can keep its authored hex (Session 8c, G-6: Google's dark fade
+    // `#22242ae6`). Those read as "no color" before.
+    function parseCssColorFunction(s) {
+        var m = /color\(\s*srgb\s+([\d.e+-]+%?)\s+([\d.e+-]+%?)\s+([\d.e+-]+%?)(?:\s*\/\s*([\d.e+-]+%?))?\s*\)/i.exec(s);
+        if (!m) return null;
+        var ch = function (v) {
+            var n = String(v).indexOf('%') >= 0 ? parseFloat(v) / 100 : parseFloat(v);
+            return Math.max(0, Math.min(255, Math.round(n * 255)));
+        };
+        var a = m[4] == null ? 1 : (String(m[4]).indexOf('%') >= 0 ? parseFloat(m[4]) / 100 : parseFloat(m[4]));
+        return { r: ch(m[1]), g: ch(m[2]), b: ch(m[3]), a: Math.max(0, Math.min(1, a)) };
+    }
+    function parseCssHex(s) {
+        var m = /^\s*#([0-9a-f]{3,8})\s*$/i.exec(s);
+        if (!m) return null;
+        var h = m[1];
+        if (h.length === 3 || h.length === 4) h = h.replace(/./g, function (d) { return d + d; });
+        if (h.length !== 6 && h.length !== 8) return null;
+        return {
+            r: parseInt(h.slice(0, 2), 16),
+            g: parseInt(h.slice(2, 4), 16),
+            b: parseInt(h.slice(4, 6), 16),
+            a: h.length === 8 ? Math.round(parseInt(h.slice(6, 8), 16) / 255 * 1000) / 1000 : 1,
+        };
+    }
+
     function parseCssRgb(color) {
         if (!color || color === 'transparent') return null;
+        if (color.charCodeAt && color.charCodeAt(0) === 35) return parseCssHex(color); // '#'
+        if (/^\s*color\(/i.test(color)) return parseCssColorFunction(color);
         var m = String(color).match(
             /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/i
         );
@@ -881,11 +912,14 @@
 
     function isLikelyModalCard(el, getStyle, viewport) {
         if (!el || el.nodeType !== 1) return false;
-        if (isSearchChrome(el)) return false;
         var styleFn = resolveStyleFn(getStyle);
         if (!styleFn) return false;
         var style;
         try { style = styleFn(el); } catch (e) { return false; }
+        // (The position gate below runs before isSearchChrome since Session
+        // 8c: that lookup ran for every element first.)
+        if (style.position !== 'fixed') return false;
+        if (isSearchChrome(el)) return false;
         // Cheap gate before the expensive textContent/querySelector work in
         // modalCardInfoFromElement below: isLikelyModalCardInfo can only
         // ever return true when position === 'fixed' (see its own doc
@@ -1305,13 +1339,16 @@
     }
 
     /** @returns {'expanded'|'collapsed'|'ambiguous'|null} */
-    function classifyNavMenuPanelState(el, getStyle, viewport) {
+    // navSignals (optional): el -> navSignalsFromElement(el) precomputed for
+    // a whole walk in one sweep (Session 8c: the subtree link query per
+    // element was a pass's most expensive pre-step on big pages).
+    function classifyNavMenuPanelState(el, getStyle, viewport, navSignals) {
         if (!el || el.nodeType !== 1) return null;
-        if (isOverlayChrome(el)) return null;
-        var nav = navSignalsFromElement(el);
+        var nav = (navSignals && navSignals(el)) || navSignalsFromElement(el);
         var hasNavSignal = !!nav.isNavTagOrRole || !!nav.hasNavDescendant
             || (nav.linkCount || 0) >= NAV_MENU_PANEL_MIN_LINKS;
         if (!hasNavSignal) return null;
+        if (isOverlayChrome(el)) return null;
         var styleFn = resolveStyleFn(getStyle);
         if (!styleFn) return null;
         var style;
@@ -1821,19 +1858,20 @@
 
     function isLikelyFloatingIconControl(el, getStyle, viewport) {
         if (!el || el.nodeType !== 1) return false;
-        if (isOverlayChrome(el)) return false;
-        if (isSearchChrome(el)) return false;
         var styleFn = resolveStyleFn(getStyle);
         if (!styleFn) return false;
         var style;
         try { style = styleFn(el); } catch (e) { return false; }
-        // Cheap gates before the expensive rect/textContent work below —
-        // mirrors isLikelyFloatingIconControlInfo's own first two checks,
-        // so bailing here first changes no outcome, only skips
-        // getBoundingClientRect/textContent for elements that were always
-        // going to fail anyway (nearly everything not fixed/absolute).
+        // Cheap gates first — mirrors isLikelyFloatingIconControlInfo's own
+        // first two checks, so bailing here changes no outcome, only skips
+        // the overlay/search-chrome lookups (closest(), a layout read and a
+        // subtree query each) and getBoundingClientRect/textContent for
+        // nearly every element (not fixed/absolute). Session 8c: those
+        // lookups ran first and were the walk's most expensive visitor.
         if (style.visibility === 'hidden' || style.opacity === '0') return false;
         if (style.position !== 'fixed' && style.position !== 'absolute') return false;
+        if (isOverlayChrome(el)) return false;
+        if (isSearchChrome(el)) return false;
         var rect;
         try { rect = el.getBoundingClientRect(); } catch (e2) { return false; }
         var text = '';
@@ -1945,7 +1983,10 @@
 
     // { min, max } alpha over a pure gradient's color stops (null if the
     // value isn't a gradient, has a url() layer, or names no colors).
-    var CSS_COLOR_RE = /rgba?\([^)]*\)/gi;
+    // Every color stop form a computed gradient can carry (see
+    // parseCssColorFunction): Safari's `transparent` stop was skipped, so
+    // a fade from transparent read as opaque (all its matched stops were).
+    var CSS_COLOR_RE = /rgba?\([^)]*\)|color\([^)]*\)|#[0-9a-f]{3,8}\b|\btransparent\b/gi;
     function gradientStopAlphas(value) {
         if (!isGradientBackgroundImage(value)) return null;
         var m = String(value).match(CSS_COLOR_RE);
@@ -1990,6 +2031,24 @@
             if (c && (!best || c.a > best.a)) best = c;
         }
         return best && best.a >= 0.5 ? best : null;
+    }
+    /**
+     * A cover fade over the element's own fill (Session 8c, X-14: CSS
+     * "scroll shadows", `background: linear-gradient(white 30%, transparent)
+     * local, ..., white` on a scrolling table). The authored paint is an
+     * opaque color, so classifyAuthoredPaint calls it opaque; but the strip
+     * clears that color and leaves the white covers. Returns the fill the
+     * covers fade into when the gradient has a transparent stop and its
+     * opaque stop matches the element's own opaque fill, else null.
+     * @param {{ bg?: string, img?: string }} paint authored paint
+     */
+    function selfCoverFadeFill(paint) {
+        if (!paint || !paint.img || paint.img === 'none') return null;
+        var fill = parseCssRgb(paint.bg);
+        if (!fill || fill.a < 0.5) return null;
+        var stops = gradientStopAlphas(paint.img);
+        if (!stops || stops.min >= 0.5) return null;
+        return isMaskFill(gradientFadeColor(paint.img), fill) ? fill : null;
     }
     var AUTHORED_SCRIM_MAX_ALPHA = 0.95;
     var AUTHORED_SCRIM_MAX_CHANNEL = 96;
@@ -2253,10 +2312,35 @@
     // its children's short texts, built once per parent. Without it every
     // child re-reads every sibling's textContent, which is O(n^2) on a wide
     // list (1500 rows cost the contrast walk seconds).
+    // The text under `node`, or null once it passes `limit` characters:
+    // stops early instead of building textContent, which for <body> or a
+    // page wrapper is the whole page's text plus inline CSS and JSON
+    // (megabytes; Session 8c, 70-150 ms per container on GitHub/Airbnb).
+    var LABEL_TEXT_LIMIT = 4096;
+    function boundedText(node, limit) {
+        var out = '';
+        var n = node.firstChild;
+        while (n) {
+            if (n.nodeType === 3) {
+                out += n.data;
+                if (out.length > limit) return null;
+            } else if (n.nodeType === 1 && n.firstChild) {
+                n = n.firstChild;
+                continue;
+            }
+            while (n && n !== node && !n.nextSibling) n = n.parentNode;
+            if (!n || n === node) break;
+            n = n.nextSibling;
+        }
+        return out;
+    }
+
     function isStackedDuplicateLabel(el, cache) {
         if (!el || !el.parentElement || el.nodeType !== 1) return false;
         var text = '';
-        try { text = String(el.textContent || '').replace(/\s+/g, ' ').trim(); } catch (e) { return false; }
+        try { text = boundedText(el, LABEL_TEXT_LIMIT); } catch (e) { return false; }
+        if (text == null) return false;
+        text = text.replace(/\s+/g, ' ').trim();
         if (!text || text.length > 96) return false;
         var parent = el.parentElement;
         var kids = parent.children;
@@ -2266,10 +2350,10 @@
             counts = new Map();
             for (var i = 0; i < kids.length; i++) {
                 var t = '';
-                try { t = String(kids[i].textContent || ''); } catch (e2) { continue; }
                 // Only short texts can match (text.length <= 96 above);
-                // skip normalizing long ones.
-                if (t.length > 4096) continue;
+                // long ones are cut off unread.
+                try { t = boundedText(kids[i], LABEL_TEXT_LIMIT); } catch (e2) { continue; }
+                if (t == null) continue;
                 t = t.replace(/\s+/g, ' ').trim();
                 if (!t || t.length > 96) continue;
                 counts.set(t, (counts.get(t) || 0) + 1);
@@ -2333,15 +2417,10 @@
     /** First color stop of a CSS gradient (computed rgb()/rgba() or hex), or null. */
     function firstGradientStop(value) {
         if (!isGradientBackgroundImage(value)) return null;
-        var s = String(value);
-        var m = /rgba?\([^)]*\)/i.exec(s);
-        if (m) return parseCssRgb(m[0]);
-        var h = /#[0-9a-f]{3,8}\b/i.exec(s);
-        if (h) {
-            var c = parseHexColor(h[0]);
-            return c ? { r: c.r, g: c.g, b: c.b, a: 1 } : null;
-        }
-        return null;
+        var m = String(value).match(CSS_COLOR_RE);
+        if (!m) return null;
+        if (/^transparent$/i.test(m[0])) return { r: 0, g: 0, b: 0, a: 0 };
+        return parseCssRgb(m[0]);
     }
 
     // A fill is "against" the theme when it sits on the other side of
@@ -2716,6 +2795,7 @@
         hasAdNetworkIframeAmong: hasAdNetworkIframeAmong,
         isAdSafeFrameContext: isAdSafeFrameContext,
         isLikelyAdSurfaceInfo: isLikelyAdSurfaceInfo,
+        adSurfaceInfoFromElement: adSurfaceInfoFromElement,
         isInsideAdSurface: isInsideAdSurface,
         buildAdSurfaceCssNotSelector: buildAdSurfaceCssNotSelector,
         AD_NETWORK_HOST_SUFFIXES: AD_NETWORK_HOST_SUFFIXES,
@@ -2764,6 +2844,7 @@
         classifyAuthoredPaint: classifyAuthoredPaint,
         themeGradient: themeGradient,
         gradientFadeColor: gradientFadeColor,
+        selfCoverFadeFill: selfCoverFadeFill,
         isMaskShape: isMaskShape,
         fillStandsApart: fillStandsApart,
         fillContrast: fillContrast,
