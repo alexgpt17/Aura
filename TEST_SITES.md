@@ -4,7 +4,7 @@ Before testing, force-quit Safari once (cold start). In debug builds, add `#aura
 
 | # | Site / action | Pass criteria | D | L |
 |---|---|---|---|---|
-| Load-1 | Cold-launch Safari → open reddit.com (a site visited before) | No unthemed (white) or wrong-theme frame. Text colors are right in the first themed frame: no gray/dark text turning light 1–2 s later, including posts that load while you watch. Also repeat visits to airbnb.com: no frame in the site's original colors | | |
+| Load-1 | Cold-launch Safari → open reddit.com (a site visited before) | No unthemed (white) or wrong-theme frame. Text colors are right in the first themed frame: no gray/dark text turning light 1–2 s later, including posts that load while you watch. Also repeat visits to airbnb.com: no frame in the site's original colors. Debug build (added Nov 17): open the site once with `#aura-debug` in the tab; if a flash happens, read the HUD `cache` line (hit/miss + reason, `ok`/`LATE`, host) | | |
 | Load-2 | Type "wikipedia" in the address bar, tap the top hit (Preload Top Hit) | Same as Load-1 | | |
 | Load-4 | Theme off in the app → reload the Safari tab → theme on in the app, back to Safari (no reload) | Page and the bottom bar/status bar take the theme right away | | |
 | Load-5 | Dark theme: load a few sites (airbnb.com, walmart.com, reddit.com), scroll so new content loads, tap buttons and open menus | No white flash over buttons, text or surfaces at any point (added Nov 16) | | |
@@ -50,5 +50,5 @@ Before testing, force-quit Safari once (cold start). In debug builds, add `#aura
 | X-12 | walmart.com homepage: "Spanish / Español" popup and the "switch to another country" popup | Popup card opaque; no page text through it (added Nov 16) | | |
 | X-6 | walmart.com order / tracking page | "Spanish/Español" tooltip opaque; no white full-width strips; "Give feedback" readable | | |
 | F-2 | A checkout/login form with floating labels on the input border (urbanplates.com guest checkout, and the restaurant search field "Search by city or zip"); dark theme especially | Label text sits on the border cleanly like Aura-off: no white box over the label, label not shifted | | |
-| F-3 | urbanplates.com: restaurant search with no results ("No suggested addresses found" dropdown); guest checkout with empty fields ("Enter First Name, Last Name, Email, Phone" bar) | Dropdown and bar opaque, no text behind them showing through; no stray white lines up the card edges (added Nov 16) | | |
+| F-3 | urbanplates.com: restaurant search with no results ("No suggested addresses found" dropdown); guest checkout with empty fields ("Enter First Name, Last Name, Email, Phone" bar) | Dropdown and bar opaque, no text behind them showing through; no stray white lines up the card edges (added Nov 16); the bottom "Enter First Name…" bar is frosted with Aura off: themed it should be opaque | | |
 | F-1 | A Google Form with checkboxes (docs.google.com/forms) | Checked vs unchecked boxes clearly distinct; radio buttons and switches visible; "Autosave" dialog fully opaque, no overlapping text | | |

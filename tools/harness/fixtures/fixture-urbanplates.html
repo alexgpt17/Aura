@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order | Urban Plates</title>
+<!--
+  Urban Plates (TEST_SITES F-2, F-3, U-1). Session 8b, from the live DOM
+  read with Playwright Chromium + the iPhone 15 profile (urbanplates.com/
+  order/ and /order/menu/?store_id=009&service_type_id=2, Nov 16) and the
+  checkout page's own HTML/CSS (/order/checkout/: the page needs a cart, so
+  its DOM wasn't rendered; the bar's text and red "!" are from IMG_0705).
+    - The page scrolls in #page (overflow-y auto), not the document: #app is
+      100vh, header.header (relative, z 100, transparent) > .headerInner
+      (relative, z 2, #f7f8f4) on top, then #page (#f0f2ee).
+    - F-2: <listbox-input> (light DOM) > label.listboxLabel (relative) >
+      input + span.listboxLabelVisualLabel (absolute, `transition: all .3s`).
+      Only `input:focus + span` gives the span a fill (#f7f8f4, the sidebar's
+      --color-surface, not white) and moves it onto the border (top -2px).
+    - F-3: div.listboxList (absolute, top calc(100% + 12px), z 10, #FFF,
+      radius 12, `opacity: 0; transition: opacity .3s`); typing adds .open
+      (opacity 1) with "No suggested addresses found"; restaurant cards
+      under it. ARIA as on the page: the host is role=combobox
+      [aria-expanded], the list role=listbox > role=group.
+    - F-3 (checkout): .checkoutLeft card (#FFF, `border: 1px solid #e9e9e9`,
+      the white lines on a dark theme) and .checkoutStickyPaymentButtonsWrapper
+      .active (sticky, bottom 0, z 10, no fill, `backdrop-filter: blur(5px)`):
+      frosted glass over the card.
+    - U-1: "Plates" opens dialog.menuContentCategoryDialog[open] (not modal:
+      absolute, inset 0 of #page, z 1000, #f0f2ee) whose
+      .menuContentCategoryHeader is sticky (top 0, z 2, #f7f8f4, border-
+      bottom #DDD) inside the #page scroller, over white item cards.
+-->
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { background-color: #f7f8f4; font: 18px -apple-system, system-ui, sans-serif; color: #000; }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+  .header { position: relative; z-index: 100; }
+  .headerInner { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; height: 56px; padding: 0 16px; background-color: #f7f8f4; border-bottom: 1px solid #ddd; }
+  .headerLogo { font: 700 22px Georgia, serif; color: #287528; }
+  #page { flex: 1; overflow-y: auto; position: relative; background-color: #f0f2ee; }
+  .orderSidebar { background-color: #f7f8f4; padding: 20px; }
+  listbox-input { display: block; position: relative; color: #4b5563; }
+  .listboxLabel { display: block; position: relative; }
+  .listboxLabelInput { width: 100%; box-sizing: border-box; height: 56px; padding: 18px 16px 8px; border: 1px solid #ccc; border-radius: 12px; background: transparent; font: inherit; outline: 0; }
+  .listboxLabelInput:focus { border-color: #287528; }
+  .listboxLabelVisualLabel { position: absolute; top: 50%; left: 12px; transform: translateY(-50%); padding: 0 4px; font-size: 16px; color: #4b5563; pointer-events: none; transition: all .3s ease-in-out; }
+  .listboxLabelInput:focus + .listboxLabelVisualLabel, .listboxLabelInput:not(:placeholder-shown) + .listboxLabelVisualLabel { top: -2px; font-size: 13px; color: #287528; background-color: #f7f8f4; }
+  .listboxList { opacity: 0; pointer-events: none; position: absolute; top: calc(100% + 12px); left: 0; right: 0; background-color: #fff; border: 2px solid #287528; border-radius: 12px; max-height: 300px; overflow-y: auto; z-index: 10; transition: opacity .3s; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .listboxList.open { opacity: 1; pointer-events: auto; }
+  .listboxGroupLabel { padding: 8px 12px 0; font-size: 13px; font-weight: 700; }
+  .listboxGroupListEmpty { padding: 12px; text-align: center; color: #4b5563; }
+  .rest { margin: 12px 0 0; padding: 16px; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .rest b { display: block; font: 700 20px Georgia, serif; }
+  .checkoutInner { padding: 16px 16px 32px; }
+  .checkoutLeft { border: 1px solid #e9e9e9; padding: 0 20px; background-color: #fff; border-radius: 12px; }
+  .checkoutLeft h2 { font: 700 26px Georgia, serif; }
+  .field { height: 50px; margin: 0 0 16px; border: 1px solid #ccc; border-radius: 12px; }
+  .checkoutStickyPaymentButtonsWrapper { padding: 12px; display: none; position: sticky; bottom: 0; width: 100%; box-sizing: border-box; backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); z-index: 10; }
+  .checkoutStickyPaymentButtonsWrapper.active { display: block; }
+  .payMissing { display: flex; align-items: center; justify-content: space-between; font-weight: 600; color: #4b5563; }
+  .payMissing i { width: 24px; height: 24px; border-radius: 50%; background: #d64545; color: #fff; text-align: center; font-style: normal; }
+  .catBtn { display: block; width: calc(100% - 32px); margin: 12px 16px; padding: 24px; border: 0; border-radius: 12px; background: #fff; color: #287528; font: 700 20px Georgia, serif; text-align: left; }
+  .menuContentCategoryDialog { display: block; position: static; border: none; padding: 0; margin: 0; }
+  .menuContentCategoryDialog:not([open]) { display: none; }
+  .menuContentCategoryDialog[open] { display: flex; flex-direction: column; position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; background-color: #f0f2ee; }
+  .menuContentCategoryHeader { display: block; border-bottom: 1px solid #ddd; padding: 16px; position: sticky; top: 0; z-index: 2; background-color: #f7f8f4; text-align: center; }
+  .menuContentCategoryHeader h2 { margin: 0; font: 700 22px Georgia, serif; color: #287528; }
+  .item { display: flex; margin: 12px; border-radius: 12px; background: #fff; overflow: hidden; }
+  .item .ph { width: 140px; height: 130px; background: linear-gradient(135deg, #c8743c, #e8c27a); }
+  .item .tx { padding: 16px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="header"><div class="headerInner"><span>☰</span><span class="headerLogo">URBAN PLATES</span><span>👜</span></div></header>
+  <div id="page">
+    <div class="orderSidebar">
+      <listbox-input class="orderSidebarTopInput" data-label="Search by city or zip" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-owns="list">
+        <label class="listboxLabel"><input id="zip" class="listboxLabelInput" placeholder=" " autocomplete="off" aria-autocomplete="list" aria-controls="list" aria-activedescendant=""><span class="listboxLabelVisualLabel">Search by city or zip</span></label>
+        <div class="listboxList" id="list" role="listbox"><div role="group" aria-labelledby="sugg" class="listboxGroup"><div role="presentation" id="sugg" class="listboxGroupLabel">Suggested Addresses</div><div class="listboxGroupListEmpty">No suggested addresses found</div></div></div>
+      </listbox-input>
+      <div class="rest"><b>Laguna Niguel</b>26661 Aliso Creek Road CA 92656<br><strong>Open until 9:15 PM</strong></div>
+      <div class="rest"><b>Brea</b>3 East Imperial Highway CA 92821</div>
+    </div>
+    <button class="catBtn" id="plates">Plates</button>
+    <div class="checkoutInner">
+      <div class="checkoutLeft">
+        <h2>Pickup Location</h2>
+        <p>Davis<br>865 Russell Blvd, Davis CA 95616</p>
+        <hr>
+        <h2>Guest Checkout</h2>
+        <div class="field"></div><div class="field"></div><div class="field"></div><div class="field"></div>
+        <p>Order notes and utensils.</p><p>Pickup time: ASAP.</p><p>Payment: add a card.</p>
+      </div>
+    </div>
+    <div class="checkoutStickyPaymentButtonsWrapper active"><div class="checkoutStickyPaymentButtons"><div class="payMissing">Enter First Name, Last Name, Email, Phone <i>!</i></div></div></div>
+    <dialog class="menuContentCategoryDialog" id="cat">
+      <div class="menuContentCategoryHeader"><div class="menuContentCategoryHeaderWrapper"><h2 class="menuContentCategoryHeaderTitle">Plates</h2></div></div>
+      <div class="item"><div class="ph"></div><div class="tx">Chicken Tender Plate<br>520 cals/serving<br>$15.50</div></div>
+      <div class="item"><div class="ph"></div><div class="tx">Roasted Barramundi Seabass<br>790 cals/serving</div></div>
+      <div class="item"><div class="ph"></div><div class="tx">Steak Frites w. peppercorn sauce<br>1140 cals/serving</div></div>
+      <div class="item"><div class="ph"></div><div class="tx">Surf &amp; Turf</div></div>
+      <div class="item"><div class="ph"></div><div class="tx">Aleppo Chili Glazed Chicken</div></div>
+    </dialog>
+  </div>
+</div>
+<script>
+  document.getElementById('zip').addEventListener('input', function () { document.getElementById('list').classList.toggle('open', !!this.value); this.closest('listbox-input').setAttribute('aria-expanded', String(!!this.value)); });
+  document.getElementById('plates').addEventListener('click', function () { document.getElementById('cat').setAttribute('open', ''); document.getElementById('page').scrollTop = 0; });
+</script>
+</body>
+</html>

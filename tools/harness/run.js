@@ -434,7 +434,7 @@ async function runLoad(browser, opts) {
     // AURA_HARNESS_STORAGE_MS simulates a slow storage.local read (a cold
     // extension process); the default is 5 ms, a warm cache.
     const storageDelayMs = process.env.AURA_HARNESS_STORAGE_MS ? Number(process.env.AURA_HARNESS_STORAGE_MS) : undefined;
-    await ctx.addInitScript({ content: 'window.__AH_CONFIG = ' + JSON.stringify({ themed, themeData: themed ? themeData(THEMES[theme]) : null, storageDelayMs, timeline: !!process.env.AURA_HARNESS_TIMELINE }) + ';' });
+    await ctx.addInitScript({ content: 'window.__AH_CONFIG = ' + JSON.stringify({ themed, themeData: themed ? themeData(THEMES[theme]) : null, storageDelayMs, timeline: !!process.env.AURA_HARNESS_TIMELINE, flash: !!process.env.AURA_HARNESS_FLASH }) + ';' });
     await ctx.addInitScript({ path: path.join(HERE, 'probe.js') });
     if (themed) for (const s of auraScripts()) await ctx.addInitScript({ content: s });
 
@@ -478,8 +478,11 @@ async function runLoad(browser, opts) {
             res.tint = { '5s': await page.evaluate(() => window.__AH.tint()).catch(e => ({ error: String(e.message).slice(0, 120) })) };
             res.lowContrast = await page.evaluate(lowContrastInPage).catch(e => ({ error: String(e.message).slice(0, 200) }));
             const urlBeforeActions = page.url();
+            if (site.actions && site.actions.length) await page.evaluate(() => window.__AH.mark && window.__AH.mark('actions')).catch(() => {});
             for (const act of site.actions || []) {
                 if (act.click) { try { await page.locator(act.click).first().click({ timeout: 3000 }); } catch (e) { res.actionError = (res.actionError || '') + `click ${act.click} failed; `; } }
+                if (act.type) await page.keyboard.type(act.type, { delay: 60 }).catch(() => {});
+                if (act.eval) await page.evaluate(act.eval).catch(e => { res.actionError = (res.actionError || '') + `eval failed: ${String(e.message).slice(0, 80)}; `; });
                 if (act.wait) await sleep(act.wait);
                 if (act.shot) {
                     await shot(act.shot);
@@ -497,6 +500,7 @@ async function runLoad(browser, opts) {
             // the load metrics, on a blank page (fixed Session 8).
             if (site.actions && site.actions.length && page.url() !== urlBeforeActions) { await page.goBack().catch(() => {}); }
             // Scroll three screens like a thumb flick, then settle.
+            await page.evaluate(() => window.__AH.mark && window.__AH.mark('scroll')).catch(() => {});
             const scrollStart = toPage(wallNow());
             for (let i = 0; i < 12; i++) { await page.mouse.wheel(0, 200).catch(() => {}); await page.evaluate(() => window.scrollBy(0, 200)).catch(() => {}); await sleep(60); }
             await sleep(800);
@@ -508,6 +512,7 @@ async function runLoad(browser, opts) {
                 fs.writeFileSync(path.join(outDir, `${site.id}--${theme}--paint-scrolled${res.rep ? '-' + res.rep : ''}.json`), JSON.stringify(sig));
             } catch (e) {}
             const scrollEnd = toPage(wallNow());
+            if (themed && process.env.AURA_HARNESS_FLASH) res.flash = await page.evaluate(() => window.__AH.flashSummary ? window.__AH.flashSummary() : null).catch(e => ({ error: String(e.message).slice(0, 200) }));
             res.load = await page.evaluate(summarizeInPage, { from: 0, to: nav.load + 5000 });
             // The five longest Aura tasks [start ms, duration ms, kind]: which
             // task a "max task" regression is.
@@ -777,6 +782,25 @@ function report(results, meta) {
                 const edge = t => (t || []).map(x => String(x).replace(/^.*?: /, '')).join(', ') || '–';
                 L.push(`| ${s.label} | ${s.ms} | ${s.htmlBg}${s.htmlBgImage ? ' + img' : ''} | ${s.bodyBg} | ${s.colorScheme} | ${(s.themeColorMetas || []).join(' · ') || '–'} | ${s.shield ? 'yes' : '–'} | ${s.coreSheet || '–'} | ${j(s.shadowCopies)} | ${j(s.iframeCopies)} | ${s.cache ? s.cache.slice(0, 40) : '–'} | ${s.bottomStrip || '–'} | ${s.colorMode || '–'} | ${s.auraInline} | ${edge(s.tint && s.tint.top)} / ${edge(s.tint && s.tint.bottom)} |`);
             }
+        }
+        L.push('');
+    }
+    const fl = results.filter(r => r.flash && Array.isArray(r.flash.items));
+    if (fl.length) {
+        L.push('## Bright flashes (AURA_HARNESS_FLASH: after every frame, 9 x 18 grid, own fill luminance >= .6)');
+        L.push('Transient = bright in at least one frame, not bright at the end. Load = before the first action/scroll mark. Read with a dark theme.');
+        L.push('');
+        L.push('| Site | Theme | Frames | Transient (load / actions / scroll) | Elements (first–last ms, frames, transition, Aura paint at end) |');
+        L.push('|---|---|---|---|---|');
+        for (const r of fl) {
+            const marks = Object.fromEntries((r.flash.marks || []).map(([n, t]) => [n, t]));
+            const actAt = marks.actions != null ? marks.actions : Infinity;
+            const scrollAt = marks.scroll != null ? marks.scroll : Infinity;
+            const phase = it => it.first < Math.min(actAt, scrollAt) ? 0 : it.first < scrollAt ? 1 : 2;
+            const n = [0, 0, 0];
+            r.flash.items.forEach(it => n[phase(it)]++);
+            const els = r.flash.items.slice(0, 8).map(it => `${it.el} ${it.first}–${it.last} (${it.frames}${it.transition ? ', ' + it.transition : ''}${it.auraInline ? ', aura' : ''})`).join('; ');
+            L.push(`| ${r.site} | ${r.theme} | ${r.flash.frames} | ${r.flash.transient} (${n.join(' / ')}) | ${els} |`);
         }
         L.push('');
     }

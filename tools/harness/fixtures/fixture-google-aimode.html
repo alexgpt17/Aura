@@ -38,6 +38,14 @@
       { opacity: .6; visibility: inherit }` (the element wasn't in the
       desktop DOM; which element the phone shows is a guess). Focusing the
       composer adds .vKW4md, the way the phone dims the page.
+  Session 8b (G-6, IMG_0709 "uc davis"): Google blocks Playwright (/sorry
+  captcha) and desktop Chrome gets no entity-panel summary, so the phone's
+  markup wasn't read. A second collapse, .ent, is built from the phone
+  screenshot on the desktop parts above (A GUESS): the summary fades out
+  above the button and the next heading ("Campus Atmosphere & Highlights")
+  runs under the pill, so only .zNsLfb (relative, z 2, page color, inside
+  the absolute .lACQkd) hides it. Inserted at 1.2 s, the way the phone
+  streams it in after load.
 -->
 <style>
   body { margin: 0; font: 16px arial, sans-serif; background: #fff; color: #1f1f1f; }
@@ -53,6 +61,10 @@
   .lACQkd { position: absolute; left: 0; right: 0; bottom: 20px; }
   .zNsLfb { position: relative; z-index: 2; background-color: #fff; }
   .Jzkafd .pl { display: flex; justify-content: center; align-items: center; height: 48px; border: 1px solid #c4c7c5; border-radius: 9999px; color: #1f1f1f; }
+  .ent .h7Tj7e { max-height: 200px; }
+  .ent .RDmXvc { bottom: 48px; height: 72px; background-image: linear-gradient(rgba(0,0,0,0) 0px, #fff 72px); }
+  .ent .lACQkd { bottom: 0; }
+  .ent h3 { margin: 4px 0 8px; font-size: 22px; }
   .mZ3f { margin: 16px 0; padding: 16px; border-radius: 20px; background: #f8fafd; }
   .mZ3f .bub { margin: 0 0 12px auto; max-width: 70%; padding: 10px 14px; border-radius: 18px; background: #e9eef6; }
   .mZ3f ul { padding-left: 20px; }
@@ -98,6 +110,7 @@
       <div class="lACQkd"><div class="zNsLfb"><div class="Jzkafd" role="button" aria-expanded="false"><div class="pl">Show more ⌄</div></div></div></div>
     </div>
   </div>
+  <div class="ent" id="ent"></div>
   <div class="mZ3f" id="answer">
     <div class="bub">what is ashwagandha</div>
     <div class="body"><p id="stream">Ashwagandha</p></div>
@@ -119,6 +132,9 @@
 </div></div></div></div></div></div>
 <div class="viewer" aria-modal="true" role="dialog"><button aria-label="Close">×</button></div>
 <script>
+  setTimeout(function () {
+    document.getElementById('ent').innerHTML = '<div class="h7Tj7e"><div class="D5ad8b"><p>University of California, Davis is a premier public research and land-grant university renowned for its sprawling, bike-friendly campus and deep roots in sustainability, agriculture, and veterinary medicine.</p><h3>Campus Atmosphere &amp; Highlights</h3><p>The Arboretum, the Farmers Market and the bike barn.</p></div><div class="RDmXvc Jzkafd LrrQLb"></div><div class="lACQkd"><div class="zNsLfb"><div class="Jzkafd" role="button" aria-expanded="false"><div class="pl">Show more ⌄</div></div></div></div></div>';
+  }, 1200);
   var words = ' (Withania somnifera) is an evergreen shrub native to India, the Middle East and Africa. Often called Indian ginseng, it has been used for thousands of years in traditional Ayurvedic medicine as an adaptogen, a natural substance thought to help the body cope with stress'.split(' ');
   var stream = document.getElementById('stream'), body = stream.parentNode, w = 0, t0 = performance.now();
   var tick = setInterval(function () {

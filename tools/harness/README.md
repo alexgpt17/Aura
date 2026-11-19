@@ -94,6 +94,12 @@ Replays use the same DOM every time, so paint diffs and timings compare like for
   - `fixture-masks` (Session 8 addition): a floating label whose white fill exists only under `input:focus + label` (Urban Plates); action `focus` clicks the field (F-2).
   - `fixture-airbnb-chips` (Session 8 addition): Airbnb's category pills, `a[role=tab]` > two absolute gradient fill spans + a relative label (X-9).
 
+  - `fixture-google-aimode` (Session 8b addition, G-6): a second "Show more" collapse, the "uc davis" entity-panel summary, inserted at 1.2 s; its fade ends at the button's top edge and the next heading runs under the pill, so only `.zNsLfb` (relative, z 2, page color, inside the absolute `.lACQkd`) hides it. Built from the phone screenshot on Session 8's desktop parts (a guess: Google answers Playwright with its /sorry captcha).
+  - `fixture-buttons` (Session 8b addition, X-9): a Save/Discard pair two shadow roots deep, Save's text `color: inherit` (a guess: Reddit's composer needs a login).
+  - `fixture-masks` covers F-2's label shape; `fixture-urbanplates` (Session 8b, served as `urbanplates.com`, from the phone-shaped live DOM) covers it on the real component: the page scrolls in `#page`; `<listbox-input>` (role=combobox) with the floating label (`transition: all .3s`, fill only under `:focus +`) and the `role=listbox` dropdown (opacity transition); the checkout card (`border: 1px solid #e9e9e9`) under a frosted sticky bar (transparent + `backdrop-filter`); the "Plates" category in a non-modal open `<dialog>` with a sticky header. Actions: focus, type, open the category (F-2, F-3, U-1).
+  - `fixture-walmart-popup` (Session 8b, served as `www.walmart.com`, desktop Chrome at 500 px): the "Spanish / Español" popup, an absolute layer with no z-index hung below a 48 px anchor > `.BaseHighlight` (arrow = its `::before`) > a `#001e60` card, inserted at 1 s (X-12).
+  - `fixture-airbnb-chips` (Session 8b addition, A-5, phone-shaped live DOM): a listing photo with the frosted "Guest favorite" pill (`rgba(255,255,255,.8)` + blur) in a transparent absolute layer, and a "Prices include all fees" pill (same build, a guess).
+
   A fixture can be served from a real site's origin with `origin` in sites.js, so host-gated engine code (SITE_FIXES, Google passes) runs. Fixtures can reference images in `fixtures/img/` (served with their image type).
 
 ## Theme switch (`--scenarios switch`)
@@ -116,6 +122,12 @@ Before Session 8, run.js called `page.goBack()` after a site's actions unconditi
 
 ## Color timeline (`AURA_HARNESS_TIMELINE=1`)
 Samples the computed color/background of what's on screen (a 12 × 24 grid of points through `elementsFromPoint`, open shadow roots pierced) every 100 ms for 6 s, and records every Aura inline color/background write with its Aura call chain. `report.md` lists each visible change after the first full pass and the write that caused it ("site" when no Aura write precedes it).
+
+## Bright flashes (`AURA_HARNESS_FLASH=1`, Session 8b, Load-5)
+After every frame (rAF, then a message, so it reads what the frame showed) until 30 s: a 9 × 18 grid of points through `elementsFromPoint` (open shadow roots pierced); every element whose own background is bright (alpha ≥ .5, relative luminance ≥ .6) is counted for that frame. `results.json` → `flash`: the elements that were bright in at least one frame but aren't at the end (on a dark theme, a white flash), with first/last ms, frame count, a background/`all` transition if any, and whether Aura painted it in the end. `report.md` splits them into load / actions / scroll (marks set by run.js). Opt-in: a few ms per frame skews the timing metrics. Read it with a dark theme.
+
+## Actions
+`sites.js` actions: `{ click: selector }`, `{ wait: ms }`, `{ shot: name, contrast: true }`, and (Session 8b) `{ type: 'text' }` (keyboard into the focused element) and `{ eval: 'js' }` (e.g. scroll an inner scroller).
 
 ## Load flash
 `AURA_HARNESS_STORAGE_MS=<ms>` delays the stubbed `storage.local.get` (default 5 ms, a warm cache) to model a cold extension process. `results.json` → `themeTiming` has `firstPaint`, `storageResolved` and `cssApplied`; the report's "Unthemed ms" column is `cssApplied − firstPaint` (0 when the sheet landed first): how long the page showed without Aura's stylesheet. With the theme cache, measure the second load: `--keep-storage --repeat 3`.

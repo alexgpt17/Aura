@@ -115,4 +115,14 @@ module.exports = [
         id: 'fixture-walmart-menu', rows: ['X-11'], fixture: true, origin: 'https://www.walmart.com',
         actions: [{ click: '#menu' }, { wait: 800 }, { shot: 'menu', contrast: true }],
     },
+    // Session 8b (phone-shaped live DOM, Playwright + iPhone 15 profile).
+    {
+        id: 'fixture-urbanplates', rows: ['F-2', 'F-3', 'U-1'], fixture: true, origin: 'https://urbanplates.com',
+        actions: [
+            { click: '#zip' }, { wait: 700 }, { shot: 'focus', contrast: true },
+            { type: 'qqq' }, { wait: 800 }, { shot: 'dropdown', contrast: true },
+            { click: '#plates' }, { wait: 500 }, { eval: "document.getElementById('page').scrollTop = 160" }, { wait: 800 }, { shot: 'category', contrast: true },
+        ],
+    },
+    { id: 'fixture-walmart-popup', rows: ['X-12'], fixture: true, origin: 'https://www.walmart.com' },
 ];

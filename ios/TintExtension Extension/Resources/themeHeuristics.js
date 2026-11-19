@@ -1915,6 +1915,12 @@
         if (!paint) return 'clear';
         var c = parseCssRgb(paint.bg);
         var a = c ? c.a : 0;
+        var blurred = !!paint.backdrop && paint.backdrop !== 'none';
+        // Frosted glass with no fill of its own (Urban Plates' sticky
+        // checkout bar: transparent + backdrop-filter blur): the blur is
+        // what hides the content under it, and the strip removes the blur,
+        // so it's an opaque surface. A covering one is a backdrop, below.
+        if (a <= AUTHORED_PAINT_MIN_ALPHA && blurred && !covering) return 'opaque';
         if (a <= AUTHORED_PAINT_MIN_ALPHA) {
             // A surface painted with a gradient and no background color (a
             // solid `linear-gradient(#fff, #fff)` band, a fade into the
@@ -1926,7 +1932,6 @@
             if (stops.max >= 0.5) return 'fade';
             return 'clear';
         }
-        var blurred = !!paint.backdrop && paint.backdrop !== 'none';
         var dark = Math.max(c.r, c.g, c.b) <= AUTHORED_SCRIM_MAX_CHANNEL;
         if (mode === 'overlay' && covering && dark && paint.opacity != null) {
             var op = parseFloat(paint.opacity);
@@ -2018,6 +2023,35 @@
         if (n.right > 0 && yOverlap && inX(nr.right)) return true;
         var thin = (nr.right - nr.left) <= 2 || (nr.bottom - nr.top) <= 2;
         return !!n.hairline && thin && xOverlap && yOverlap;
+    }
+    /**
+     * A stacked cover (Session 8b, G-6): a bar lifted over the content
+     * around it, painted its container's color (Google's "Show more"
+     * backing). Bar-sized only: a full-page wrapper with a z-index isn't
+     * covering anything the page color wouldn't, and painting it would
+     * hide a gradient theme's background.
+     */
+    var STACKED_COVER_MIN_WIDTH = 40;
+    var STACKED_COVER_MAX_HEIGHT = 160;
+    function isStackedCoverShape(rect) {
+        return !!rect && rect.width >= STACKED_COVER_MIN_WIDTH
+            && rect.height >= MASK_MIN_SIZE && rect.height <= STACKED_COVER_MAX_HEIGHT;
+    }
+    /**
+     * A subtle light divider (Session 8b, F-3: Urban Plates' checkout card,
+     * `border: 1px solid #e9e9e9` on #fff): light, and barely different
+     * from the authored fill it edges (under 1.3:1). Kept as authored on a
+     * dark theme it's a bright line. fill: the element's own authored fill,
+     * else what's behind it (null = the page, read as white).
+     */
+    var SUBTLE_BORDER_MIN_LUM = 0.7;
+    var SUBTLE_BORDER_MAX_CONTRAST = 1.3;
+    function isSubtleLightBorder(border, fill) {
+        if (!border || border.a < 0.5) return false;
+        var lb = relativeLuminance(border.r, border.g, border.b);
+        if (lb < SUBTLE_BORDER_MIN_LUM) return false;
+        var f = fill && fill.a >= 0.5 ? fill : { r: 255, g: 255, b: 255 };
+        return contrastRatio(lb, relativeLuminance(f.r, f.g, f.b)) < SUBTLE_BORDER_MAX_CONTRAST;
     }
     function isMaskOverLine(rect, neighbors) {
         if (!isMaskShape(rect) || !neighbors) return false;
@@ -2138,7 +2172,9 @@
             if (typeof document !== 'undefined') {
                 if (node === document.documentElement || node === document.body) { node = null; break; }
             }
-            node = node.parentElement;
+            // Out of a shadow root to its host: text in a component sits on
+            // whatever the host sits on (Session 8b, contrast in shadow roots).
+            node = node.parentElement || (node.parentNode && node.parentNode.host) || null;
         }
         if (result === undefined) result = parseHexColor(fallbackHex) || null;
         if (visited) {
@@ -2733,6 +2769,8 @@
         fillContrast: fillContrast,
         isNeutralFill: isNeutralFill,
         isMaskOverLine: isMaskOverLine,
+        isStackedCoverShape: isStackedCoverShape,
+        isSubtleLightBorder: isSubtleLightBorder,
         isMaskFill: isMaskFill,
         isSpaShellId: isSpaShellId,
         isLargeLayoutShell: isLargeLayoutShell,

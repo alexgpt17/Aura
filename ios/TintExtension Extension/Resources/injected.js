@@ -65,13 +65,28 @@
     // Per-site theme cache (see themeResolve.js). Top frame only: a frame's
     // ad/SafeFrame status is only known after its own scripts run, and an
     // iframe shares the key with every page of its origin.
+    // What the read found, for the Debug HUD's "cache" line (Session 8b,
+    // Load-1): when this script ran (how far the page had parsed, whether
+    // anything had painted) and why a read missed.
     function readThemeCache() {
+        var state = {
+            t: (typeof performance !== 'undefined') ? performance.now() : 0,
+            readyState: document.readyState,
+            bodyNodes: document.body ? document.body.childElementCount : -1,
+            host: String(location.host || ''),
+            result: 'miss: not top frame',
+        };
+        window.__AURA_CACHE_STATE__ = state;
         try {
             if (window.top !== window) return null;
             var Resolve = typeof AuraThemeResolve !== 'undefined' ? AuraThemeResolve : null;
-            if (!Resolve || !Resolve.parseThemeCache) return null;
-            return Resolve.parseThemeCache(window.localStorage.getItem(Resolve.THEME_CACHE_KEY));
+            if (!Resolve || !Resolve.parseThemeCache) { state.result = 'miss: no resolver'; return null; }
+            var raw = window.localStorage.getItem(Resolve.THEME_CACHE_KEY);
+            var theme = Resolve.parseThemeCache(raw);
+            state.result = theme ? 'hit' : raw == null ? 'miss: no key' : 'miss: unreadable (' + String(raw).length + ' chars)';
+            return theme;
         } catch (e) {
+            state.result = 'miss: storage blocked';
             return null;
         }
     }

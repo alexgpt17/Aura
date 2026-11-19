@@ -122,7 +122,7 @@ Your build of the uncommitted Session 8 tree, dark (incl. a green and a gray pre
 | 7 | Nov 13 ✓ | Session 6 committed (`05121ac`); Nov 13 phone findings 1–9 incl. X-4 and X-5; phone check Nov 14 passed |
 | 8 | Nov 15 ✓ | Nov 14 phone findings (Google AI first), live DOM read through Claude in Chrome; phone check Nov 16 (AI Mode passed); commit at the start of 8b |
 | — | Nov 16 ✓ | Phone check of Session 8: Google AI Mode passed; G-6, X-9 Reddit, F-2 still failing; new popups/flash rows (see "Nov 16 phone findings") |
-| 8b | Nov 17–18 | Commit Session 8; G-6 from phone-shaped DOM, Reddit Save (nested shadow), shadow-root contrast, Urban Plates (F-2, U-1, F-3), Walmart popups, Airbnb photo pills, white flashes, load flash |
+| 8b | Nov 17 ✓ (code + A/B; phone check next, then commit) | Commit Session 8; G-6 from phone-shaped DOM, Reddit Save (nested shadow), shadow-root contrast, Urban Plates (F-2, U-1, F-3), Walmart popups, Airbnb photo pills, white flashes, load flash |
 | 9 | Nov 19–20 | Regression + App Store submission |
 | — | Nov 21–22 | Buffer / resubmission |
 | — | Nov 23 | Deadline |
@@ -653,17 +653,86 @@ Chromium headless, all 22 fixtures, dark + light, visual + typing, 4 rounds alte
 - Type-1 on Reddit (nested shadow roots now get the sheet: watch for typing lag and for nested comments looking different).
 - X-9 Airbnb: the arrow button at the row's right edge may still be a white square.
 
-## Session 8b — Nov 16 phone findings — Nov 17–18
-Prompt below. DOM sources in order: phone-shaped markup (Playwright Chromium with an iPhone profile against the live site, network outside the sandbox, asked first), then Claude in Chrome at ~390 px, then screenshots (marked a guess).
-- [ ] Commit Session 8 (the A/B baseline); worktree `../Aura-s8` replaces `../Aura-s7`; clear `tools/harness/out`.
-- [ ] 8b-1 G-6 "Show more": phone-shaped DOM for an AI Overview and an entity panel; why the fade and the button's container aren't painted, and why it varied. Rebuild `fixture-google-aimode`; G-5/G-7/Type-2 unchanged.
-- [ ] 8b-2 X-9 Reddit Save: buttons in nested shadow roots (not the full per-element steps).
-- [ ] 8b-3 Contrast pass in shadow roots (Decision 1), sliced; dropped if typing p95 regresses.
-- [ ] 8b-4 Urban Plates: F-2 on the real page, U-1 sticky bars and header, F-3 dropdown + validation bar, white edge lines.
-- [ ] 8b-5 Walmart popups (X-12): "Spanish / Español" and the country popup.
-- [ ] 8b-6 Airbnb photo pills (A-5).
-- [ ] 8b-7 White flashes (Load-5): harness metric first (bright background/text for ≥1 frame on a dark theme: load, added content, actions), then sources, then fixes by category.
-- [ ] 8b-8 Load flash (Load-1, repeat visits): cache miss vs late injection vs site CSS; a minimal debug-build readout for the phone part.
+## Session 8b — Nov 16 phone findings — done Nov 17; not committed (phone check first)
+DOM sources in order: phone-shaped markup (Playwright Chromium, iPhone 15 profile, against the live site, network outside the sandbox, asked first), then Claude in Chrome, then screenshots (marked a guess).
+- [x] Session 8 committed as `67ea538` (the A/B baseline); worktree `../Aura-s8` replaces `../Aura-s7`; `tools/harness/out` cleared.
+- **Sources.** Playwright's iPhone capture worked for urbanplates.com (order page, checkout with a cart, menu dialog) and airbnb.com (listing photos). Google answered both headless and headed Playwright with its `/sorry` captcha page (not worked around), so G-6 rests on **desktop** markup read in Chrome plus the screenshot. Walmart's popups: desktop markup at 500 px. Reddit: blocked in Claude in Chrome, so X-9 stays **a guess** (`fixture-buttons`).
+
+### 8b-1 G-6 "Show more" (desktop markup + screenshot)
+- Cause: the button sits on `.zNsLfb` (relative, z-index 2, page color) inside absolute `.lACQkd`. The strip clears it and no rule painted it back (the fade `.RDmXvc` was already themed by Session 8). Why it varied: on an AI Overview the fade's opaque end covers the button area, so the missing backing doesn't show; on an entity panel the text runs on under the button.
+- Fix (mask category): a **stacked cover**, i.e. a relative element with z-index > 0 directly inside an absolute layer (parent or grandparent), 40+ px wide and 4–160 px tall, whose authored paint matches the page, is painted the themed page color (`isStackedCover`, `H.isStackedCoverShape`). `fixture-google-aimode` gained the entity-panel collapse (`.ent`, inserted at 1.2 s; a guess at its markup).
+- Phone only: whether the phone's expander uses the same `.zNsLfb` backing (uc davis, ashwagandha).
+
+### 8b-2 X-9 Reddit Save (a guess)
+- Cause (assumed): the Save button sits two shadow roots deep. Nested roots got only Aura's sheet, so `settleButtons` never ran there, and Save's `color: inherit` gave white text on `#e5ebee`.
+- Fix: buttons inside nested roots are collected while the sheet is copied, then settled once per pass in chunks of 64 (`NESTED_BUTTON_CHUNK`). This is not the full per-element steps. Settling one root at a time took hydration's settle step from 24 to 96–146 ms; the single batch made a 28 ms task, hence the chunks.
+
+### 8b-3 Contrast pass in shadow roots (Decision 1)
+- The contrast visitor now runs over top-level shadow elements as one sliced step (skipped on split themes). Typing held (A/B below), so it stays.
+
+### 8b-4 Urban Plates (phone-shaped DOM)
+- **F-2:** `span.listboxLabelVisualLabel` gets its fill (`#f7f8f4`) only under `:focus`, with `transition: all .3s`. The focus settle and the scoped pass both ran mid-transition. Now the mask rule re-runs on the field's candidates after the longest transition plus two frames (capped at 1 s).
+- **U-1:** `.menuContentCategoryHeader` is sticky inside an open non-modal `<dialog>`. The sticky visitor treated anything inside a dialog as overlay chrome and skipped it. Now a sticky element is skipped only when it is itself an overlay root. The site header (`.headerInner`) isn't sticky on the phone page (`#page` scrolls under it); it is themed as before.
+- **F-3 validation bar:** `.checkoutStickyPaymentButtonsWrapper.active` is sticky, transparent and has a backdrop blur. `classifyAuthoredPaint` read it as clear. Frosted glass (transparent + backdrop blur, not covering) is now a surface: painted `--aura-overlay`.
+- **F-3 white lines:** `.checkoutLeft { border: 1px solid #e9e9e9 }`. New rule (dark themes only, controls and buttons excluded): a light border that barely differs from the authored fill it edges (contrast < 1.3) takes `--aura-border`. A border drawn in the text's color (an icon's ring) is left alone; the A/B's border dump caught Airbnb's tab-bar icons, fixed before the report.
+- **F-3 dropdown:** `div.listboxList[role=listbox]` *is* painted (static ARIA rule). It reads as see-through because `--aura-overlay` equals `--aura-bg` in the flat themes. Decision below.
+
+### 8b-5 Walmart popups X-12 (desktop markup at 500 px)
+- Cause: an absolute, z-index:auto layer hanging off a 48 px anchor > `.BaseHighlight` > a navy card. The popover rule only looked at elements with a z-index; smallSurfaceSteps released clear roots.
+- Fix: an absolute z-auto element is nominated when it hangs ≥ 16 px outside its offsetParent or sits over media in it (`hangingPopovers`); its clear roots are evaluated, not released. The card is now themed. The arrow (`.BaseHighlight::before`) stays navy (decision below).
+
+### 8b-6 Airbnb photo pills A-5 (phone-shaped DOM)
+- The pill is `rgba(255,255,255,.8)` with `blur(32px)` inside a transparent absolute layer over the photo; the strip made it clear (white text on the photo). Through 8b-5's over-media nomination plus the frosted-glass case it's now `--aura-overlay` with theme text. `fixture-airbnb-chips` gained a listing photo; the "Prices include all fees" pill is a guess.
+
+### 8b-7 White flashes Load-5
+- [x] Harness metric `AURA_HARNESS_FLASH=1` (README "Bright flashes"). After every frame until 30 s, it samples a 9×18 grid with `elementsFromPoint`, piercing shadow roots. Bright = alpha ≥ .5 and luminance ≥ .6, media skipped. It reports elements that were bright for a while and then weren't, with frames, the transition and whether Aura wrote inline.
+- **Session 8 → 8b, 23 fixtures, dark:** 21 → 19 transient bright elements, **80 → 21 bright frames**. All were at load; none after actions.
+  - The biggest source was hydration's nested shadow cards: white for ~54 frames, because a nested root got its sheet only at the next pass. Fixed: a nested root (≤ 3 deep, ≤ 64 per pass) gets the sheet copy and watcher as soon as its host is seen, whether by the shadow watcher or the main observer.
+  - The rest are 1–2 frames before the first pass. Tried: starting the first pass one frame earlier. Reverted: that slice then paid the page's first style/layout, a 45–90 ms Aura task.
+- Phone only: whether the flashes the phone shows are these (load) or something the fixtures don't have.
+
+### 8b-8 Load flash Load-1
+- Harness: on a warm load the cached theme CSS lands at 36–59 ms, before first paint (100–132 ms). A cold load or a cache miss stays unthemed until storage resolves (~330 ms with 300 ms storage latency).
+- [x] Debug HUD line 3 (`#aura-debug`): `cache hit|miss: <reason> @Xms ld|int|done/<body children> css Xms fcp Yms ok|LATE <host>`. Miss reasons are not top frame, no resolver, no key, unreadable (N chars) and storage blocked. LATE means the CSS landed after first paint or the body already had content.
+
+### A/B vs Session 8 (`67ea538`)
+Chromium headless, 24 fixtures (urbanplates and walmart-popup new), dark + light, visual + typing, 4 rounds with alternating order, each run gated on 1-min load < 6 (2–4 during the runs), medians. A first A/B found two regressions (the earlier first pass, per-root nested buttons), both fixed, then re-run.
+- **Longest Aura task:** no regression. late-text stays the longest at 30.2 → 30.3 (dark) and 30.5 → 30.4 (light). Other fixtures are 9–17 ms on both engines, differences both ways. airbnb-explore light had 22/18 ms in 2 of its 4 8b rounds. Three timeline reruns gave 14.3/13.6/9.6 against 11.3/11.7/16.0 on Session 8, so it's noise. 0 tasks ≥ 50 ms on either engine.
+- **Layout Δ:** 0 on every fixture, both engines (and after the border fix).
+- **Aura ms (load + 5 s):** hydration 285 → 306 (dark) and 284 → 326 (light), from shadow contrast and nested buttons. google-aimode(-deep) 214–219 → 228–248, from the stacked-cover visit. Everything else within about ±10 ms.
+- **Typing, p95 keystroke → next frame (first 4 s / settled):**
+  | Fixture | Dark | Light |
+  |---|---|---|
+  | google-aimode | 27.8 → 26.8 / 25.3 → 28.0 | 24.6 → 27.1 / 27.0 → 27.8 |
+  | google-aimode-deep | 29.1 → 29.5 / 28.5 → 28.1 | 28.5 → 28.6 / 29.7 → 28.5 |
+  | hydration | 31.1 → 29.0 / 31.9 → 30.8 | 34.4 → 32.5 / 33.2 → 32.6 |
+  - 0 keys over 100 ms. The Google fixtures run 0 Aura passes while typing on both engines (Aura time 10–12 ms on both), so their ±2.5 ms is run-to-run swing. Hydration runs 2 passes early on both; its Aura time while typing rose 250 → 311 / 270 → 309 ms (shadow contrast and nested buttons), and p95 went down. One Google typing load per engine per theme was invalid (typing didn't start) and is left out.
+- **Low-contrast text:** masks light 1 → 0. Others unchanged.
+- **Paint diff vs Session 8:** the same 17 elements in all 4 rounds, all intended; the other fixtures show 0 differences, hydration's 7,412 elements included.
+  - google-aimode: `div.zNsLfb` (×2) clear → theme page color (8b-1).
+  - buttons: nested `button.save` text white → black on dark (8b-2); on light its `#e5ebee` → the theme button fill `#dadade` (the button rule treats it like any light button).
+  - urbanplates: `.checkoutStickyPaymentButtonsWrapper.active` clear → theme (frosted glass); `.menuContentCategoryHeader` clear → theme (U-1); after focus on light, `span.listboxLabelVisualLabel` `#f7f8f4` → theme (F-2).
+  - walmart-popup: `div.card` clear → theme (8b-5).
+  - airbnb-chips: `div.pill`, `div.pill.fees` clear → theme with theme text (8b-6).
+  - masks light: `›div.more` (in a shadow root) `#82959b` → black (8b-3, "2 more replies" at 2.8:1).
+  - shadow-bars dark: `›span.av` white text on `#46d160` → black (8b-3: 1.9:1 → readable).
+  - The `google-aimode` light and `-deep` dark +5 s dumps weren't comparable in single rounds (141/144 and 119/122 nodes at the instant of capture, in both directions).
+- **Borders** (not in the paint diff, which compares bg/color/bg-image; an inline-style dump on dark): 48 elements on 13 fixtures take `--aura-border`. All of them are #e3e3e3–#eaecf0 hairlines on authored white (headers, tab bars, cards, late-text posts, the urbanplates checkout card, header and category header) plus Airbnb chips' 50 % white edge. Session 8 left them light on dark. The dump first showed 9 more: Airbnb's tab-bar icons, rings drawn with `border: 2px solid currentColor`. Fixed (a border in the text's color is skipped), re-dumped: only those went away, with 0 bg/color differences and layout Δ 0. That fix came after the A/B: one string compare per bordered side, so not re-timed.
+- Engine tests: 295 (`npm run test:engine`), green. 3 new cases: stacked covers, subtle borders, frosted glass. (`effectiveBackground` now also crosses from a shadow root into its host; no case of its own.)
+
+### Decisions needed
+1. **Popups and dropdowns look see-through** (F-3 dropdown, possibly others): `--aura-overlay` equals `--aura-bg` in the flat themes, so a themed popup has no edge. Give overlays a slight elevation (e.g. 6 % toward the text color) or a `--aura-border` outline?
+2. **Walmart arrow:** keep the navy pseudo-arrow on a themed card, or paint pseudo arrows with their card?
+3. **Airbnb pills:** themed `--aura-overlay` (now), or keep the authored frosted glass (white at 80 %) on photos?
+4. **Subtle borders:** keep the rule (dark themes only)? It touches many sites' hairlines, so it's worth a look on the phone.
+
+### Only the phone can confirm
+- G-6: the phone's expander markup (desktop-sourced).
+- X-9: Reddit's real Save markup (guessed).
+- X-12: the phone popup's markup (desktop at 500 px).
+- Load-5: whether the phone's flashes are the load ones measured here.
+- Load-1: the HUD cache line on a flash (hit/miss reason, ok/LATE, host).
+- Reddit typing with the shadow-root contrast pass.
 
 ### Prompt
 ```
@@ -763,6 +832,8 @@ Report at the end: what changed with before/after numbers and every paint differ
 - **Nov 14 phone check of Session 7:** passed, no regressions (R-4, B-3, X-4, X-5 confirmed). New/remaining findings in "Nov 14 phone findings"; Google AI first. Decided: drop decorative light background images on text sections; Session 8 reads live DOM through Claude in Chrome (no HARs/HUD). Harness: live site entries for webmd, urbanplates, walmart; google-search query → "what is ashwagandha".
 - **Session 8 (Nov 15):** committed Session 7 (`661dcd7`, worktree `../Aura-s7`). Live DOM read in Chrome (Reddit blocked). Google AI G-5/G-6/G-7 causes found and fixed; fades (X-8), fill layers and nested shadow roots (X-9), focus re-evaluation (F-2), decorative background images (X-10), snapped late writes (X-11 flash). Harness: `lowContrast` metric, `gray` theme, pseudo/opacity in paint dumps, dumps after actions, Load-4 switch steps, the goBack fix. New fixtures: fades, webmd, walmart-menu; google-aimode rebuilt. A/B vs Session 7 done (4 rounds; one discarded A/B after the laptop slept); its paint diff caught a photo-scrim bug, fixed. Not committed; phone check next.
 - **Nov 16 phone check of Session 8:** Google AI Mode passed (G-5, G-7, Type-2), plus X-8, X-10, X-11 menu, Airbnb chips and the regression rows; typing lag at most very slight. Still failing: G-6 (every search), Reddit Save, F-2 on the real page; new: Urban Plates bars/popups, Walmart "Spanish / Español" popup, Airbnb photo pills, white flashes and original-color flash on load. Decisions: shadow-root contrast yes if typing holds, keep blended buttons, U-1/popups in 8b. New TEST_SITES rows A-5, X-12, F-3, Load-5. Session 8b prompt written.
+
+- **Session 8b (Nov 17):** committed Session 8 (`67ea538`, worktree `../Aura-s8`). Live iPhone-profile capture in Playwright (outside the sandbox): Urban Plates, Airbnb; Google captcha'd, Reddit not read. G-6 stacked covers, nested-root buttons (X-9, guessed DOM), shadow-root contrast, Urban Plates F-2 (transition), U-1 (sticky in dialog), F-3 (frosted glass, subtle borders), Walmart popups (hanging absolute layers), Airbnb pills, immediate nested shadow sheets (Load-5: bright frames 80 → 21), HUD cache line (Load-1). Harness: flash metric, `type`/`eval` actions; fixtures urbanplates, walmart-popup; google-aimode, buttons, airbnb-chips extended. Two A/Bs vs Session 8 (the first found two regressions, fixed). Border dump caught currentColor icon rings, fixed. Not committed; phone check next.
 
 ## Root-cause details (Session 1 audit)
 Line numbers are from baseline commit `0d47537`. Paths are relative to `ios/TintExtension Extension/Resources/`. Confidence levels are stated per item. "Hypothesis" means the HUD (Session 2) must confirm it.

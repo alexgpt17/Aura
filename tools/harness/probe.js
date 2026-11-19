@@ -438,6 +438,86 @@
         };
     }
 
+    // ---- bright flashes (Session 8b, Load-5; opt-in: cfg.flash) -----------
+    // Every frame (rAF) from document start: a 9 x 18 grid of points
+    // (elementsFromPoint, every stacked element, open shadow roots
+    // pierced); an element whose own fill is bright (alpha >= .5, relative
+    // luminance >= .6) is counted per frame. Transient = bright in at least
+    // one frame and not bright in the last frame it was seen: on a dark
+    // theme that's a white flash. Media is skipped. Slow (a few ms per
+    // frame), so timing runs leave it off.
+    if (cfg.flash && cfg.themed) {
+        var lum = function (c) {
+            var m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?/.exec(c) || /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?: \/ ([\d.]+))?/.exec(c);
+            if (!m) return null;
+            var srgb = /^color/.test(c);
+            var ch = [1, 2, 3].map(function (i) { var v = parseFloat(m[i]) / (srgb ? 1 : 255); return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+            return { a: m[4] == null ? 1 : parseFloat(m[4]), l: 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2] };
+        };
+        var SKIP = { IMG: 1, VIDEO: 1, CANVAS: 1, PICTURE: 1, SVG: 1, IFRAME: 1, HTML: 1 };
+        var seen = new Map(); // el -> { frames, first, last, lastSeen, brightNow }
+        AH.flashFrames = 0;
+        AH.flashUntil = 30000;
+        var flashFrame = function () {
+            var t = now();
+            var vh = innerHeight, vw = innerWidth, set = new Set();
+            var add = function (root, x, y, depth) {
+                var list = root.elementsFromPoint(x, y);
+                for (var i = 0; i < list.length; i++) {
+                    var el = list[i];
+                    if (set.has(el)) continue;
+                    set.add(el);
+                    if (el.shadowRoot && depth < 4) add(el.shadowRoot, x, y, depth + 1);
+                }
+            };
+            try {
+                for (var gy = 0; gy < 18; gy++) for (var gx = 0; gx < 9; gx++) add(document, (gx + 0.5) * vw / 9, (gy + 0.5) * vh / 18, 0);
+                set.forEach(function (el) {
+                    if (SKIP[el.tagName] || el === document.body) return;
+                    var cs = getComputedStyle(el);
+                    if (cs.visibility === 'hidden' || cs.opacity === '0') return;
+                    var c = lum(cs.backgroundColor);
+                    var bright = !!(c && c.a >= 0.5 && c.l >= 0.6);
+                    var rec = seen.get(el);
+                    if (!rec) { if (!bright) { seen.set(el, { frames: 0, lastSeen: t, brightNow: false }); return; } rec = { frames: 0 }; seen.set(el, rec); }
+                    if (bright) { rec.frames++; if (rec.first == null) rec.first = t; rec.last = t; }
+                    rec.lastSeen = t;
+                    rec.brightNow = bright;
+                });
+            } catch (e) {}
+            AH.flashFrames++;
+            if (t < AH.flashUntil) origRaf(afterFrame);
+        };
+        // Sampled right after each frame (rAF, then a message: it runs once
+        // that frame's rAF callbacks, Aura's included, style and paint are
+        // done), so it reads what the frame showed.
+        var afterFrame = function () {
+            var ch = new MessageChannel();
+            ch.port1.onmessage = flashFrame;
+            ch.port2.postMessage(0);
+        };
+        origRaf(afterFrame);
+        AH.marks = [];
+        AH.mark = function (name) { AH.marks.push([name, Math.round(now())]); };
+        AH.flashSummary = function () {
+            var out = [];
+            seen.forEach(function (rec, el) {
+                if (!rec.frames || rec.brightNow) return;
+                var cs = getComputedStyle(el);
+                var root = el.getRootNode();
+                out.push({
+                    el: (root !== document ? '›' : '') + describeNode(el),
+                    first: Math.round(rec.first), last: Math.round(rec.last), frames: rec.frames,
+                    transition: /background|all/.test(cs.transitionProperty) && parseFloat(cs.transitionDuration) > 0 ? cs.transitionProperty + ' ' + cs.transitionDuration : '',
+                    auraInline: /background-color[^;]*!important/.test(el.getAttribute('style') || ''),
+                    endBg: cs.backgroundColor,
+                });
+            });
+            out.sort(function (a, b) { return a.first - b.first; });
+            return { frames: AH.flashFrames, marks: AH.marks, transient: out.length, items: out.slice(0, 60) };
+        };
+    }
+
     // ---- site mutation counter (independent of Aura, also when unthemed) --
     // Counts all records so unthemed runs have a site-churn baseline.
     AH.allMutations = [];

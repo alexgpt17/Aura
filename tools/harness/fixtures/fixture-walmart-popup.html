@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Walmart | Save Money. Live better.</title>
+<!--
+  Walmart's "Spanish / Español now available!" popup (TEST_SITES X-12,
+  IMG_0707). Session 8b, from the live DOM read in desktop Chrome at a
+  500 px window (walmart.com, Nov 16; Playwright with the iPhone profile
+  loads the page but never got the popup, in en-US or es-US). The phone
+  screenshot shows the same layout. The "switch to another country" popup
+  is the same component (Session 8).
+    - span.Highlight (relative, the 48 x 32 anchor around the globe) >
+      div.absolute.top-0.left-0 (absolute, z-index auto, translateY(32px):
+      hangs below the anchor) > div.BaseHighlight (relative, shadow, radius
+      4; its ::before is the arrow, a rotated #001e60 square) >
+      div.relative.br2 (the card: #001e60, white text) > globe + title +
+      a close button.
+    - Inserted at 1 s, over the "How do you want your items?" row.
+-->
+<style>
+  body { margin: 0; font: 15px -apple-system, system-ui, sans-serif; background: #fff; color: #2e2f32; }
+  .hdr { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 10px; height: 64px; padding: 0 16px; background: #0053e2; color: #fff; }
+  .hdr .q { flex: 1; height: 40px; border-radius: 20px; background: #fff; color: #74767c; display: flex; align-items: center; padding: 0 16px; }
+  .row { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px; background: #0053e2; color: #fff; font-weight: 700; }
+  .Highlight { position: relative; display: inline-block; width: 48px; height: 32px; border-radius: 8px; }
+  .layer { position: absolute; top: 0; left: 0; transform: translateY(32px); }
+  .BaseHighlight { position: relative; border-radius: 4px; box-shadow: 0 3px 5px 2px rgba(0,0,0,.15); }
+  .BaseHighlight::before { content: ''; position: absolute; top: 0; left: 24px; width: 11px; height: 11px; background-color: #001e60; transform: translate(-50%, -50%) rotate(45deg); }
+  .card { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 4px; background-color: #001e60; color: #fff; white-space: nowrap; font-weight: 700; }
+  .card button { border: 0; background: transparent; color: #fff; font: inherit; }
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px; }
+  .tiles div { height: 120px; border-radius: 8px; background: #f2f8fd; }
+</style>
+</head>
+<body>
+<div class="hdr"><span>☰</span><span>✳︎</span><div class="q">Search Walmart</div><span>🛒</span></div>
+<div class="row"><span class="Highlight" id="anchor">🌐</span><span>How do you want your items?</span><span style="margin-left:auto;font-weight:400">Washington…</span></div>
+<p style="padding:0 16px">Rollbacks &amp; More · Pharmacy · Holiday</p>
+<div class="tiles"><div></div><div></div><div></div><div></div></div>
+<script>
+  setTimeout(function () {
+    document.getElementById('anchor').insertAdjacentHTML('beforeend',
+      '<div class="layer"><div class="BaseHighlight"><div class="card"><span>🌐</span><span>Spanish / Español</span><button aria-label="Close">✕</button></div></div></div>');
+  }, 1000);
+</script>
+</body>
+</html>

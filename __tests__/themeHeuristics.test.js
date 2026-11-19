@@ -2421,6 +2421,29 @@ describe('mask elements', () => {
   });
 });
 
+describe('Session 8b: stacked covers, subtle borders, frosted glass', () => {
+  const R = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
+  test('a bar-sized cover is a stacked cover; a page wrapper is not', () => {
+    expect(H.isStackedCoverShape(R(16, 800, 358, 48))).toBe(true);
+    expect(H.isStackedCoverShape(R(0, 0, 390, 2400))).toBe(false);
+    expect(H.isStackedCoverShape(R(0, 0, 20, 20))).toBe(false);
+  });
+  test('a light hairline close to its fill is subtle; an input outline is not', () => {
+    const white = { r: 255, g: 255, b: 255, a: 1 };
+    expect(H.isSubtleLightBorder({ r: 233, g: 233, b: 233, a: 1 }, white)).toBe(true);
+    expect(H.isSubtleLightBorder({ r: 221, g: 221, b: 221, a: 1 }, { r: 247, g: 248, b: 244, a: 1 })).toBe(true);
+    expect(H.isSubtleLightBorder({ r: 204, g: 204, b: 204, a: 1 }, white)).toBe(false);
+    expect(H.isSubtleLightBorder({ r: 40, g: 117, b: 40, a: 1 }, white)).toBe(false);
+  });
+  test('frosted glass with no fill is opaque unless it covers the screen', () => {
+    const glass = { bg: 'rgba(0, 0, 0, 0)', backdrop: 'blur(5px)', img: 'none' };
+    expect(H.classifyAuthoredPaint(glass, 'layer')).toBe('opaque');
+    expect(H.classifyAuthoredPaint(glass, 'overlay')).toBe('opaque');
+    expect(H.classifyAuthoredPaint(glass, 'overlay', true)).toBe('clear');
+    expect(H.classifyAuthoredPaint({ bg: 'rgba(0, 0, 0, 0)', backdrop: 'none', img: 'none' }, 'layer')).toBe('clear');
+  });
+});
+
 describe('covering backdrops', () => {
   test('a blurred dark backdrop that covers the screen stays a scrim', () => {
     const p = { bg: 'rgba(0, 0, 0, 0.4)', backdrop: 'blur(2px)' };

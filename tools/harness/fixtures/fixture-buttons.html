@@ -21,6 +21,12 @@
       dialog rule could leave the scrim solid, and a full-width neutral
       button was painted as a theme surface (Save blended into the sheet)
     - a dark authored button (#1f1f1f, white text) that must stay as it is
+    - Session 8b (X-9, IMG_0708, A GUESS: Reddit's composer needs a login,
+      so the live sheet wasn't read): the same Save/Discard pair two shadow
+      roots deep (draft-panel > its shadow root > draft-actions > its shadow
+      root > buttons), Save's text is `color: inherit` (white on the light fill once themed,
+      as in the screenshot); the shape where nested roots got only the sheet copy
+      and settleButtons never ran
 -->
 <style>
   body { margin: 0; font: 15px -apple-system, system-ui, sans-serif; background: #fff; color: #2e2f32; }
@@ -50,8 +56,25 @@
 </section>
 <section><button class="atc">Add to Cart</button></section>
 <section><button class="dark-btn">Dark authored</button></section>
+<section><draft-panel></draft-panel></section>
 <draft-sheet></draft-sheet>
 <script>
+  customElements.define('draft-actions', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML =
+        '<style>.row{display:flex;flex-direction:column;gap:8px}button{padding:10px;border:0;border-radius:20px;font:inherit}' +
+        '.save{background:#e5ebee;color:inherit}.discard{background:#0a449b;color:#fff}</style>' +
+        '<div class="row"><button class="save">Save (nested)</button><button class="discard">Discard (nested)</button></div>';
+    }
+  });
+  customElements.define('draft-panel', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML =
+        '<style>.p{padding:12px;border-radius:12px;background:#fff}</style><div class="p"><b>Save Draft?</b><draft-actions></draft-actions></div>';
+    }
+  });
   customElements.define('draft-sheet', class extends HTMLElement {
     constructor() { super(); this.attachShadow({ mode: 'open' }); }
     open() {

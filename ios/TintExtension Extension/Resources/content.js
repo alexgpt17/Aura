@@ -2404,7 +2404,12 @@
             mask: mask || 'none',
             visibility: style.visibility,
             opacity: style.opacity,
-            overlayChrome: H.isOverlayChrome(el),
+            // A sticky bar inside an overlay scrolls over the overlay's own
+            // content (Urban Plates' category header in its open, non-modal
+            // <dialog>, U-1): the overlay's paint doesn't cover it, so it's
+            // judged as a layer. Only the overlay root itself is the static
+            // overlay rule's.
+            overlayChrome: style.position === 'sticky' && H.isOverlayRoot ? H.isOverlayRoot(el) : H.isOverlayChrome(el),
             tag: el.tagName,
             id: el.id,
             className: typeof el.className === 'string' ? el.className : '',
@@ -2524,19 +2529,55 @@
         if (entry && entry.source !== 'popover') return;
         let style;
         try { style = getComputedStyle(el); } catch (e) { return; }
-        let nominated = style.position === 'absolute' && style.zIndex !== 'auto'
+        let nominated = style.position === 'absolute'
             && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'
             && !(H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[el.tagName])
             && !H.isOverlayChrome(el) && !(H.isSearchChrome && H.isSearchChrome(el))
             && !(layerPaints.has(el) && !entry) && !isAdThemingSkipped(el);
+        let rect = null;
         if (nominated) {
-            let rect;
             try { rect = el.getBoundingClientRect(); } catch (e) { rect = null; }
             nominated = !!rect && rect.width >= POPOVER_MIN_WIDTH && rect.height >= POPOVER_MIN_HEIGHT
                 && !isOverlayCoveringSheet(rect, vh, vw);
         }
+        // No z-index (Walmart's "Spanish / Español" and country popups,
+        // X-12: an absolute layer hung off a 48 px anchor): still stacked
+        // over the page. What sets a popup apart from a badge or an icon
+        // laid over its own box is that it hangs out of its anchor.
+        // A layer laid over a photo (Airbnb's listing photos, A-5: the
+        // "Guest favorite" pill, frosted white, in a transparent absolute
+        // layer the size of the photo) is the same kind of surface.
+        if (nominated && style.zIndex === 'auto') {
+            nominated = hangsOutOfAnchor(el, rect) || laidOverMedia(el, rect);
+            if (nominated) hangingPopovers.add(el);
+        }
         if (nominated) out.push(el);
         else if (entry) releaseLayerRoot(el, 'popover');
+    }
+
+    // Hung-off popups are often a transparent positioning wrapper around
+    // the painted card, so their roots are evaluated even when clear.
+    const hangingPopovers = new WeakSet();
+    const POPOVER_HANG_MIN_PX = 16;
+    function laidOverMedia(el, rect) {
+        const anchor = el.offsetParent;
+        if (!anchor || anchor === document.body || anchor === document.documentElement) return false;
+        let media = null;
+        try { media = anchor.querySelector('img, picture, video'); } catch (e) { return false; }
+        if (!media || el.contains(media)) return false;
+        let m;
+        try { m = media.getBoundingClientRect(); } catch (e) { return false; }
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        return cx >= m.left && cx <= m.right && cy >= m.top && cy <= m.bottom;
+    }
+    function hangsOutOfAnchor(el, rect) {
+        const anchor = el.offsetParent;
+        if (!anchor || anchor === document.body || anchor === document.documentElement) return false;
+        let a;
+        try { a = anchor.getBoundingClientRect(); } catch (e) { return false; }
+        return rect.bottom - a.bottom >= POPOVER_HANG_MIN_PX || a.top - rect.top >= POPOVER_HANG_MIN_PX
+            || rect.right - a.right >= POPOVER_HANG_MIN_PX || a.left - rect.left >= POPOVER_HANG_MIN_PX;
     }
 
     // Steps that settle what the walk nominated: one batched probe for all
@@ -2549,7 +2590,7 @@
                 items: popovers,
                 visit: function (el) {
                     const v = H.classifyAuthoredPaint(readAuthoredPaint([el])[0], 'overlay');
-                    if (v === 'clear') releaseLayerRoot(el, 'popover');
+                    if (v === 'clear' && !hangingPopovers.has(el)) releaseLayerRoot(el, 'popover');
                     else evaluateAuthoredLayer(el, 'overlay', 'popover');
                 },
             },
@@ -3711,6 +3752,8 @@
         return el.getAttribute('role') === 'button';
     }
 
+    const NESTED_BUTTON_SELECTOR = 'button, input[type="button"], input[type="submit"], input[type="reset"], [role="button"]';
+
     function isStateControlElement(el) {
         const role = el.getAttribute('role');
         if (role === 'checkbox' || role === 'radio' || role === 'switch') return true;
@@ -4034,14 +4077,51 @@
     // the walk by cheap reads (position, size); the line check, the
     // authored-paint probe (the mask and its ancestors, one batch) and the
     // writes run in one step after the walk.
+    // Same rule, second shape (Session 8b, G-6): a stacked cover, a
+    // relative z-indexed bar inside an absolutely positioned container,
+    // painted its container's color so the content it's lifted over
+    // doesn't show (Google's AI Overview "Show more" backing, .zNsLfb).
+    // No line check: if nothing is under it, the themed color is what
+    // showed through anyway.
     // el -> [site inline background-color, priority]
     const maskPaints = new Map();
+    const stackedMasks = new WeakSet();
     const MASK_MAX_PER_PASS = 120;
     const MASK_MAX_NEIGHBORS = 24;
     const MASK_ANCESTOR_DEPTH = 6;
 
     function maskParentOf(n) {
         return n.parentElement || (n.parentNode && n.parentNode.host) || null;
+    }
+
+    function isStackedCover(el, style) {
+        const z = parseInt(style.zIndex, 10);
+        if (style.position !== 'relative' || !(z > 0)) return false;
+        for (let n = el.parentElement, d = 0; n && d < 2; n = n.parentElement, d++) {
+            let pos = '';
+            try { pos = getComputedStyle(n).position; } catch (e) { return false; }
+            if (pos === 'absolute') return true;
+        }
+        return false;
+    }
+
+    // The longest transition (duration + delay) among els, capped at 1 s.
+    function longestTransitionMs(els) {
+        const ms = (v) => {
+            const n = parseFloat(v);
+            return isNaN(n) ? 0 : (/ms$/.test(v) ? n : n * 1000);
+        };
+        let longest = 0;
+        for (let i = 0; i < els.length; i++) {
+            let cs;
+            try { cs = getComputedStyle(els[i]); } catch (e) { continue; }
+            const durs = String(cs.transitionDuration || '').split(',');
+            const delays = String(cs.transitionDelay || '').split(',');
+            for (let j = 0; j < durs.length; j++) {
+                longest = Math.max(longest, ms(durs[j].trim()) + ms((delays[j % delays.length] || '0s').trim()));
+            }
+        }
+        return Math.min(longest, 1000);
     }
 
     function visitMaskElement(el, out) {
@@ -4051,7 +4131,17 @@
         if (layerPaints.has(el) || buttonPaints.has(el) || isButtonLikeElement(el)) return;
         let style;
         try { style = getComputedStyle(el); } catch (e) { return; }
-        if (style.position !== 'absolute' || style.display === 'none' || style.visibility === 'hidden') return;
+        if (style.display === 'none' || style.visibility === 'hidden') return;
+        if (style.position !== 'absolute') {
+            if (style.position !== 'relative' || style.zIndex === 'auto') return;
+            let rect;
+            try { rect = el.getBoundingClientRect(); } catch (e) { return; }
+            if (H.isStackedCoverShape && H.isStackedCoverShape(rect) && isStackedCover(el, style)) {
+                stackedMasks.add(el);
+                out.push(el);
+            }
+            return;
+        }
         let rect;
         try { rect = el.getBoundingClientRect(); } catch (e) { return; }
         if (H.isMaskShape(rect)) out.push(el);
@@ -4110,7 +4200,9 @@
             const el = cands[i];
             let rect;
             try { rect = el.isConnected ? el.getBoundingClientRect() : null; } catch (e) { rect = null; }
-            if (rect && H.isMaskOverLine(rect, maskNeighbors(el))) masks.push(el);
+            if (rect && (stackedMasks.has(el)
+                ? H.isStackedCoverShape(rect) && !layerPaints.has(el) && isStackedCover(el, getComputedStyle(el))
+                : H.isMaskOverLine(rect, maskNeighbors(el)))) masks.push(el);
             else releaseMaskPaint(el);
         }
         if (!masks.length) return;
@@ -4198,6 +4290,98 @@
     function revertMaskPaints() {
         Array.from(maskPaints.keys()).forEach(releaseMaskPaint);
         maskPaints.clear();
+        revertBorderPaints();
+    }
+
+    // 3d-ter-bis. SUBTLE LIGHT BORDERS (Session 8b, F-3) — a card's light
+    // hairline (#e9e9e9 on #fff) is a bright line once the card is themed
+    // dark: the white lines up Urban Plates' checkout card. A border that
+    // barely differs from the authored fill it edges takes --aura-border.
+    // Dark themes only (on a light theme the authored line still reads);
+    // controls keep theirs (an input's outline is its shape). Nominated by
+    // cheap reads in the walk, decided in one probe batch after it.
+    const borderPaints = new Map();      // el -> [site inline border-color, priority]
+    const BORDER_MAX_PER_PASS = 80;
+    const BORDER_SIDES = ['Top', 'Right', 'Bottom', 'Left'];
+
+    function visitBorderElement(el, out) {
+        if (out.length >= BORDER_MAX_PER_PASS) return;
+        if (borderPaints.has(el)) { out.push([el, null]); return; }
+        if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[el.tagName]) return;
+        if (isButtonLikeElement(el)) return;
+        let cs;
+        try { cs = getComputedStyle(el); } catch (e) { return; }
+        for (let i = 0; i < 4; i++) {
+            const s = BORDER_SIDES[i];
+            if (cs['border' + s + 'Style'] === 'none' || !(parseFloat(cs['border' + s + 'Width']) > 0)) continue;
+            // A border in the text's color (currentColor: an icon's ring)
+            // is the element's shape, not a hairline.
+            if (cs['border' + s + 'Color'] === cs.color) continue;
+            const c = H.parseCssRgb(cs['border' + s + 'Color']);
+            // Light only here; the fill it's compared with is read in settle.
+            if (c && c.a >= 0.5 && H.relativeLuminance(c.r, c.g, c.b) >= 0.7) { out.push([el, c]); return; }
+        }
+    }
+
+    function releaseBorderPaint(el) {
+        const saved = borderPaints.get(el);
+        if (!saved) return;
+        try {
+            if (saved[0]) el.style.setProperty('border-color', saved[0], saved[1]);
+            else el.style.removeProperty('border-color');
+        } catch (e) {}
+        borderPaints.delete(el);
+    }
+
+    function revertBorderPaints() {
+        Array.from(borderPaints.keys()).forEach(releaseBorderPaint);
+    }
+
+    function settleBorders(cands) {
+        if (!cands.length || !currentTheme || !H || !H.isSubtleLightBorder) return;
+        if (H.isThemeBackgroundLight && H.isThemeBackgroundLight(currentTheme.background || '#121212')) {
+            cands.forEach(([el]) => releaseBorderPaint(el));
+            return;
+        }
+        // Our own border-color is lifted for the read (a re-check of a
+        // painted card reads the site's border again).
+        const els = cands.map(([el]) => el);
+        const lifted = els.map(el => borderPaints.has(el) ? el.style.getPropertyValue('border-color') : null);
+        els.forEach((el, i) => { if (lifted[i] != null) el.style.removeProperty('border-color'); });
+        const borders = els.map(el => {
+            try {
+                const cs = getComputedStyle(el);
+                for (let i = 0; i < 4; i++) {
+                    const s = BORDER_SIDES[i];
+                    if (cs['border' + s + 'Style'] !== 'none' && parseFloat(cs['border' + s + 'Width']) > 0) {
+                        return cs['border' + s + 'Color'] === cs.color ? null : H.parseCssRgb(cs['border' + s + 'Color']);
+                    }
+                }
+            } catch (e) {}
+            return null;
+        });
+        els.forEach((el, i) => { if (lifted[i] != null) el.style.setProperty('border-color', lifted[i], 'important'); });
+        const chains = els.map(el => {
+            const chain = [el];
+            for (let n = maskParentOf(el), d = 0; n && d < MASK_ANCESTOR_DEPTH
+                && n !== document.body && n !== document.documentElement; n = maskParentOf(n), d++) chain.push(n);
+            return chain;
+        });
+        const paints = readAuthoredPaint([].concat(...chains));
+        for (let i = 0, k = 0; i < els.length; k += chains[i].length, i++) {
+            const el = els[i];
+            let fill = null;
+            for (let j = 0; j < chains[i].length && !fill; j++) {
+                const c = H.parseCssRgb(paints[k + j] && paints[k + j].bg);
+                if (c && c.a >= 0.5) fill = c;
+            }
+            if (!el.isConnected || !H.isSubtleLightBorder(borders[i], fill)) { releaseBorderPaint(el); continue; }
+            if (!borderPaints.has(el)) borderPaints.set(el, [el.style.getPropertyValue('border-color'), el.style.getPropertyPriority('border-color')]);
+            if (el.style.getPropertyValue('border-color') !== 'var(--aura-border)') {
+                snapNextWrite(el);
+                el.style.setProperty('border-color', 'var(--aura-border)', 'important');
+            }
+        }
     }
 
     // 3d-quinquies. FADES — a gradient from transparent into the color of
@@ -5110,6 +5294,7 @@
             pendingMutationRecords = [];
             if (mutationDebounceTimer) { clearTimeout(mutationDebounceTimer); mutationDebounceTimer = null; }
         }
+        nestedButtons = [];
         const elements = collectElements(root);
         if (root === document.documentElement) fullPassCollected = true;
         const capped = elements.length > WALK_SLICE ? elements.slice(0, WALK_SLICE) : elements;
@@ -5128,6 +5313,8 @@
         const maskCandidates = [];
         const fadeCandidates = [];
         const bgImageCandidates = [];
+        const borderCandidates = [];
+        const darkTheme = !(H.isThemeBackgroundLight && H.isThemeBackgroundLight(currentTheme.background || '#121212'));
         const skipContrast = isActiveSplitTheme(currentTheme);
         let effectiveBgCache = null;
 
@@ -5215,16 +5402,31 @@
                     visitFadeElement(el, fadeCandidates);
                     visitBackgroundImageElement(el, vh, vw, bgImageCandidates);
                     visitBlendElement(el);
+                    if (darkTheme) visitBorderElement(el, borderCandidates);
                 },
             },
             ...smallSurfaceSteps(iconCandidates, popoverCandidates),
             () => settleButtons(buttonCandidates),
             () => settleStateControls(stateCandidates),
             () => settleMasks(maskCandidates),
+            () => settleBorders(borderCandidates),
             // After buttons and masks: a fade takes the themed color of
             // what's behind it, which those may have painted.
             () => settleFades(fadeCandidates),
-            () => settleBackgroundImages(bgImageCandidates)
+            () => settleBackgroundImages(bgImageCandidates),
+            // Last: nested roots are expanded as the steps above run.
+            // In chunks, one step each, so a page of nested comments
+            // doesn't settle hundreds of buttons in one task.
+            () => {
+                const list = nestedButtons;
+                nestedButtons = [];
+                const chunks = [];
+                for (let i = 0; i < list.length; i += NESTED_BUTTON_CHUNK) {
+                    const part = list.slice(i, i + NESTED_BUTTON_CHUNK);
+                    chunks.push(() => settleButtons(part));
+                }
+                return chunks;
+            }
         );
         // Contrast must run after bright/shell clears so muted spans are
         // judged against the theme background, not a still-white ancestor.
@@ -5487,6 +5689,9 @@
                 runSafetyPasses(document.documentElement);
             }
         };
+        // Two frames, kept (Session 8b tried one for Load-5: the first
+        // slice then also paid the page's first full style/layout, a
+        // 45-90 ms Aura task at load in the A/B).
         if (typeof requestAnimationFrame === 'function') {
             safetyPassesRaf = requestAnimationFrame(function () {
                 safetyPassesRaf = requestAnimationFrame(run);
@@ -5655,6 +5860,31 @@
     // root's direct children; put the copy back in the same microtask and
     // queue a pass scoped to the host for the new content.
     const shadowCopyWatchers = new Map();
+
+    // A shadow root seen before the pass reaches it gets the sheet copy (and
+    // its watcher) at once; so do the roots nested in it, a few levels
+    // deep. One <style> per root, no per-element reads.
+    const SHADOW_SHEET_NOW_DEPTH = 3;
+    const SHADOW_SHEET_NOW_MAX = 64;
+    function ensureShadowSheetNow(host, depth) {
+        const shadow = host.shadowRoot;
+        if (!shadow || !currentTheme) return;
+        if (!shadow.querySelector(':scope > style[data-aura-shadow]')) {
+            const style = document.createElement('style');
+            style.setAttribute('data-aura-shadow', 'true');
+            style.textContent = getFullStyleSheetCached(currentTheme, lastAppliedThemeKey);
+            shadow.appendChild(style);
+            auraSheetCopies.add(style);
+        }
+        watchShadowCopy(host, shadow);
+        if (depth >= SHADOW_SHEET_NOW_DEPTH) return;
+        let all = [];
+        try { all = shadow.querySelectorAll('*'); } catch (e) {}
+        for (let i = 0, n = 0; i < all.length && n < SHADOW_SHEET_NOW_MAX; i++) {
+            if (all[i].shadowRoot) { n++; ensureShadowSheetNow(all[i], depth + 1); }
+        }
+    }
+
     function watchShadowCopy(host, shadow) {
         if (shadowCopyWatchers.has(shadow)) return;
         // SPAs drop shadow hosts all the time; don't keep them alive.
@@ -5678,6 +5908,10 @@
                     for (let k = 0; k < cands.length; k++) {
                         const n = cands[k];
                         if (n.nodeType === 1 && n.shadowRoot && !n.shadowRoot.querySelector(':scope > style[data-aura-shadow]')) {
+                            // The sheet now, the per-element work with the
+                            // pass: waiting for the pass left hydrating cards
+                            // white for ~0.8 s (Load-5, Session 8b).
+                            ensureShadowSheetNow(n, 0);
                             pendingMutationRecords.push({ target: n, addedNodes: [], removedNodes: [] });
                             scheduleSafetyPassDispatch();
                         }
@@ -5828,6 +6062,12 @@
     // and their own nested roots, not the per-element steps, which on a
     // Reddit-sized comment tree tripled Aura's time on the hydration
     // fixture.
+    // One root's steps run in order, so one cache at a time is enough.
+    let shadowContrastCache = new WeakMap();
+    // Buttons found in nested shadow roots during the current pass.
+    let nestedButtons = [];
+    const NESTED_BUTTON_CHUNK = 64;
+
     function shadowRootSteps(host, nested) {
         const shadow = host.shadowRoot;
         if (!shadow) return null;
@@ -5853,6 +6093,18 @@
             const inner = [];
             const all = shadow.querySelectorAll('*');
             for (let i = 0; i < all.length; i++) if (all[i].shadowRoot) inner.push(all[i]);
+            // Buttons only (X-9, Reddit's "Save Draft?" Save: a light fill
+            // with the theme's light text). Found by selector, not by the
+            // per-element walk the top-level roots get (that walk tripled
+            // Aura's time on the hydration fixture).
+            // Collected for the whole pass and settled in one batch at its
+            // end (one probe for every nested root: per-root batches cost
+            // 4x the button time on the hydration fixture).
+            let found = [];
+            try { found = shadow.querySelectorAll(NESTED_BUTTON_SELECTOR); } catch (e) {}
+            for (let i = 0; i < found.length && nestedButtons.length < BUTTON_MAX_PER_PASS; i++) {
+                if (isButtonLikeElement(found[i])) nestedButtons.push(found[i]);
+            }
             return inner.map(el => () => shadowRootSteps(el, true));
         }
 
@@ -5948,6 +6200,14 @@
                     && hostRect.top >= -20 && hostRect.top <= 80;
                 if (looksLikeTopBarHost) reopaqueTopChrome(shadow);
             },
+            // Text contrast, as in the light DOM (Session 8b, decided
+            // Nov 16): the last step, after every fill above is settled,
+            // sliced like the walk. Top-level roots only; nested roots get
+            // the sheet and their buttons.
+            ...(isActiveSplitTheme(currentTheme) ? [] : [
+                () => { shadowContrastCache = new WeakMap(); },
+                { items: shadowElements, visit: el => visitContrastElement(el, shadowContrastCache) },
+            ]),
         ];
     }
 
@@ -6288,6 +6548,17 @@
                     contrastAddedNodes(mutationsList);
                     for (let i = 0; i < mutationsList.length; i++) {
                         pendingMutationRecords.push(mutationsList[i]);
+                        // A component added with its shadow root attached,
+                        // or one that attached it in place and flipped a
+                        // class (hydration): its sheet copy now (Load-5).
+                        if (currentTheme && fullPassCollected) {
+                            const rec = mutationsList[i];
+                            const added = rec.type === 'attributes' ? [rec.target] : rec.addedNodes;
+                            for (let k = 0; k < added.length; k++) {
+                                const n = added[k];
+                                if (n.nodeType === 1 && n.shadowRoot && !shadowCopyWatchers.has(n.shadowRoot)) safePass(() => ensureShadowSheetNow(n, 1));
+                            }
+                        }
                     }
                     scheduleSafetyPassDispatch();
                 });
@@ -6451,6 +6722,19 @@
                     if (cands.length) {
                         safePass(() => settleMasks(cands));
                         discardOwnMutationRecords();
+                        // The label is still where it was: its move onto the
+                        // border is a transition (Urban Plates: `all .3s`),
+                        // longer than the scoped pass's debounce, so the line
+                        // check above and that pass both see it mid-field
+                        // (F-2, Session 8b). Settle again once it has landed.
+                        const wait = longestTransitionMs(cands);
+                        if (wait > 0) {
+                            setTimeout(() => {
+                                if (!currentTheme) return;
+                                safePass(() => settleMasks(cands.filter(el => el.isConnected)));
+                                discardOwnMutationRecords();
+                            }, wait + 34);
+                        }
                     }
                     queueScopedSafetyPass(event);
                 };

@@ -185,6 +185,31 @@
         return { responseEnd: null, domInteractive: null };
     }
 
+    // Load-1 (Session 8b): did the per-site cache theme the first frame?
+    // "cache hit @12ms ld/0 css 14ms fcp 180ms ok": read at 12 ms while the
+    // page was still loading with an empty body, sheet in at 14 ms, first
+    // paint at 180 ms, so the first frame was themed. "LATE" = the sheet
+    // landed after the first paint (or the script ran once the body
+    // already had content); a miss names its reason.
+    var firstPaintMs = null;
+    try {
+        new PerformanceObserver(function (list) {
+            list.getEntries().forEach(function (e) {
+                if (firstPaintMs === null || e.startTime < firstPaintMs) firstPaintMs = e.startTime;
+            });
+        }).observe({ type: 'paint', buffered: true });
+    } catch (e) {}
+
+    function cacheLine() {
+        var c = window.__AURA_CACHE_STATE__;
+        if (!c) return 'cache -';
+        var rs = c.readyState === 'loading' ? 'ld' : c.readyState === 'interactive' ? 'int' : 'done';
+        var css = stats.cssAppliedMs;
+        var late = (css !== null && firstPaintMs !== null && css > firstPaintMs) || c.bodyNodes > 0;
+        return 'cache ' + c.result + ' @' + ms(c.t) + ' ' + rs + '/' + c.bodyNodes
+            + ' css ' + ms(css) + ' fcp ' + ms(firstPaintMs) + ' ' + (late ? 'LATE' : 'ok') + '  ' + c.host;
+    }
+
     function render() {
         if (!hudBody) return;
         var t = now();
@@ -196,6 +221,7 @@
         var lines = [
             'load  script ' + ms(scriptStartMs) + '  (respEnd ' + ms(nav.responseEnd) + ', domInt ' + ms(nav.domInteractive) + ')',
             '      storage ' + ms(stats.storageResolvedMs) + '  css ' + ms(stats.cssAppliedMs),
+            cacheLine(),
             'pass  ' + p1 + '/s (10s avg ' + p10.toFixed(1) + '/s)  total ' + stats.passTotal,
             '      sync ' + ms(stats.lastSyncMs) + ' (max ' + ms(stats.maxSyncMs) + ')  full ' + ms(stats.lastTotalMs) + '  els ' + stats.passElements,
             '      root ' + stats.passRoot,
