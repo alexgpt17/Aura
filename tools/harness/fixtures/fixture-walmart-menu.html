@@ -27,6 +27,12 @@
       class removed (one task).
     - 41 elements on the page have color/all transitions (24 × color
       .15s, 17 × all .1s): an inline color write on one of them animates.
+  Session 8d (X-11 still failing, IMG_0743): re-read live. The first two
+  rows aren't plain text: "Language | English" is a full-width
+  `button.bg-white.mid-gray` (white, 272 x 24) inside LI.mv4, and "Country,
+  language and currency" is a white pill button (`border-radius: 1000px`,
+  `transition: all .1s`, 272 x 32). The drawer has 5 white buttons; the
+  panel itself has no fill.
   The fixture opens the menu itself at 2.0 s and closes it at 3.8 s (inside
   the color timeline's 6 s); the harness action opens it again by click.
 -->
@@ -48,6 +54,8 @@
   .list { list-style: none; margin: 0; padding: 0 16px; color: #74767c; }
   .list li { margin: 16px 0; transition: color .15s; }
   .list hr { border: 0; border-top: 1px solid #e3e4e5; }
+  .list li button { display: flex; width: 100%; border: 0; padding: 0; background: #fff; color: #74767c; font: inherit; text-align: left; }
+  .list li button.pill { height: 32px; padding: 0 12px; border-radius: 1000px; box-shadow: 0 0 0 1px #e3e4e5; transition: all .1s; }
   .close { position: absolute; inset: 0; width: 100%; border: 0; padding: 0; background: rgba(255,255,255,0); }
 </style>
 </head>
@@ -78,7 +86,12 @@
         if (i === 2 || i === 7) ul.appendChild(document.createElement('hr'));
         var li = document.createElement('li');
         li.className = 'mv4';
-        li.textContent = t;
+        if (i < 2) {
+          var b = document.createElement('button');
+          b.className = i === 0 ? 'bg-white mid-gray' : 'pill';
+          b.textContent = t;
+          li.appendChild(b);
+        } else li.textContent = t;
         ul.appendChild(li);
       });
     }, 190);

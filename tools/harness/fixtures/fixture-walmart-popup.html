@@ -18,9 +18,24 @@
       div.relative.br2 (the card: #001e60, white text) > globe + title +
       a close button.
     - Inserted at 1 s, over the "How do you want your items?" row.
+  Session 8d (X-12 still failing on the phone, IMG_0742): re-read live in
+  the same Chrome window. The real "Spanish / Español" popup hangs off the
+  ☰ button INSIDE the sticky blue header (span.bg-secondary.sticky, z 5,
+  84 px), and its card's fill is an inline
+  `style="background: var(--color-core-blue-160)"` (#001e60 on :root), not
+  a class rule; the layer is placed with an inline translate3d. Every
+  element has `transition: all` (0 s). That popup is #hdr-anchor below; the
+  row-anchored one above stays as the second case (the country popup).
+  A class flip at 2.5 s re-reads the layer, as the live page's re-renders do.
 -->
 <style>
   body { margin: 0; font: 15px -apple-system, system-ui, sans-serif; background: #fff; color: #2e2f32; }
+  :root { --color-core-blue-160: #001e60; }
+  * { transition: all 0s; }
+  .bg-secondary { position: sticky; top: 0; z-index: 5; display: block; height: 84px; background: #0053e2; color: #fff; }
+  .bg-secondary header { display: flex; align-items: center; gap: 10px; height: 84px; padding: 0 16px; box-sizing: border-box; }
+  .bg-secondary .q { flex: 1; height: 40px; border-radius: 20px; background: #fff; color: #74767c; display: flex; align-items: center; padding: 0 16px; }
+  .bg-secondary button { border: 0; background: rgba(255,255,255,0); color: #fff; font-size: 22px; width: 32px; height: 32px; padding: 0; }
   .hdr { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 10px; height: 64px; padding: 0 16px; background: #0053e2; color: #fff; }
   .hdr .q { flex: 1; height: 40px; border-radius: 20px; background: #fff; color: #74767c; display: flex; align-items: center; padding: 0 16px; }
   .row { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px; background: #0053e2; color: #fff; font-weight: 700; }
@@ -35,7 +50,7 @@
 </style>
 </head>
 <body>
-<div class="hdr"><span>☰</span><span>✳︎</span><div class="q">Search Walmart</div><span>🛒</span></div>
+<span class="bg-secondary"><header><div><span class="Highlight" id="hdr-anchor"><div><button aria-label="Menu">☰</button></div></span></div><span>✳︎</span><div class="q">Search Walmart</div><span>🛒</span></header></span>
 <div class="row"><span class="Highlight" id="anchor">🌐</span><span>How do you want your items?</span><span style="margin-left:auto;font-weight:400">Washington…</span></div>
 <p style="padding:0 16px">Rollbacks &amp; More · Pharmacy · Holiday</p>
 <div class="tiles"><div></div><div></div><div></div><div></div></div>
@@ -43,7 +58,16 @@
   setTimeout(function () {
     document.getElementById('anchor').insertAdjacentHTML('beforeend',
       '<div class="layer"><div class="BaseHighlight"><div class="card"><span>🌐</span><span>Spanish / Español</span><button aria-label="Close">✕</button></div></div></div>');
+    document.getElementById('hdr-anchor').insertAdjacentHTML('beforeend',
+      '<div class="absolute zIndex" style="position:absolute;top:0;left:0;transform:translate3d(0px,32px,0px)"><div class="BaseHighlight"><div class="flex" style="position:relative;display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:4px;color:#fff;white-space:nowrap;font-weight:700;background: var(--color-core-blue-160);"><span>🌐</span><span>Spanish / Español now available!</span><button aria-label="Close" style="background: none;">✕</button></div></div></div>');
   }, 1000);
+  // The live page keeps re-rendering around the popup; a class flip on its
+  // wrapper at 2.5 s makes the engine re-read the layer (the step that
+  // lost the inline var() fill).
+  setTimeout(function () {
+    var h = document.querySelector('#hdr-anchor .BaseHighlight');
+    if (h) h.className = 'BaseHighlight BaseHighlight_bottomRight';
+  }, 2500);
 </script>
 </body>
 </html>

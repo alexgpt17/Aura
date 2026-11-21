@@ -359,6 +359,37 @@
         }
     }
 
+    // A site's inline `background: var(--token)` (Walmart's popups, X-12:
+    // `style="background: var(--color-core-blue-160)"`) is a shorthand with
+    // a var(), so every background longhand holds a pending-substitution
+    // value: the longhand reads back "", and the first longhand write or
+    // removal blanks the whole shorthand. The site's fill was then gone for
+    // every later probe (it read transparent) and every release (it put
+    // back transparent). When the shorthand is one var() that resolves to a
+    // color, the same paint as a `background-color` longhand is identical
+    // and the token stays live; afterwards the engine's longhand save,
+    // probe and restore work on it as on any other inline fill (Session 8d).
+    const VAR_ONLY_RE = /^\s*var\(\s*(--[\w-]+)\s*(?:,[^)]*)?\)\s*$/;
+    function expandInlineVarBackgrounds(root) {
+        let list;
+        try { list = root.querySelectorAll('[style*="var("]'); } catch (e) { return; }
+        const els = root.nodeType === 1 ? [root, ...list] : list;
+        for (let i = 0; i < els.length; i++) {
+            const st = els[i].style;
+            if (!st) continue;
+            const v = st.getPropertyValue('background');
+            if (!v || st.getPropertyValue('background-color')) continue;
+            const m = VAR_ONLY_RE.exec(v);
+            if (!m) continue;
+            let resolved = '';
+            try { resolved = getComputedStyle(els[i]).getPropertyValue(m[1]).trim(); } catch (e) { continue; }
+            if (!resolved || !(window.CSS && CSS.supports && CSS.supports('color', resolved))) continue;
+            const prio = st.getPropertyPriority('background');
+            st.removeProperty('background');
+            st.setProperty('background-color', v.trim(), prio);
+        }
+    }
+
     // One misbehaving element (a detached node mid-mutation, a throwing
     // getter, an SVG className, a hostile third-party web component) must
     // never abort the whole walk — the passes further down (and the
@@ -916,6 +947,10 @@
             ':not([role="alert"]):not([role="status"]):not([aria-live="assertive"]):not([aria-live="polite"])' +
             getUniversalTransparencyExcludeNot(window.location.hostname);
         const probeNot = ':where(:not([data-aura-probe]))';
+        // The page's own root fill, read by authoredPageFill (Session 8d).
+        // Background only: color-scheme stays on, it's inherited and
+        // flipping it would restyle the whole page for the read.
+        const rootProbeNot = ':where(:not([data-aura-rootprobe]))';
         // Checkbox/radio/switch and selected controls keep their own state
         // fill; JS maps it (settleStateControls), and restores the parts
         // inside one from the authored-paint probe (a descendant clause
@@ -985,6 +1020,8 @@
             }
             html {
                 color-scheme: ${colorScheme} !important;
+            }
+            html${rootProbeNot} {
                 background-color: ${isSplit ? splitColors.dark : bgColor} !important;
                 ${isSplit ? '' : 'background-image: none !important;'}
             }
@@ -993,29 +1030,35 @@
                the mix-blend backdrop; html::before is the compositor lock. */
             ${splitLayerCss}
             body {
-                background-color: transparent !important;
-                background-image: none !important;
                 color: var(--aura-text) !important;
             }
+            body${rootProbeNot} {
+                background-color: transparent !important;
+                background-image: none !important;
+            }
             ` : usesGradientBg ? `
-            html {
+            html${rootProbeNot} {
                 background-image: ${bgGradient} !important;
                 background-attachment: fixed !important;
                 background-repeat: no-repeat !important;
                 background-size: cover !important;
             }
             body {
+                color: var(--aura-text) !important;
+            }
+            body${rootProbeNot} {
                 background-color: transparent !important;
                 background-image: none !important;
-                color: var(--aura-text) !important;
             }` : `
-            html {
+            html${rootProbeNot} {
                 background: ${bgColor} !important;
             }
             body {
+                color: var(--aura-text) !important;
+            }
+            body${rootProbeNot} {
                 background-color: ${bgColor} !important;
                 background: ${bgColor} !important;
-                color: var(--aura-text) !important;
             }`}
 
 
@@ -1922,10 +1965,75 @@
                 cardBg.push(paints[i] && paints[i].bg);
             }
         }
+        addPseudoNubs(nodes, paints, wanted, token);
         if (!nubs.length) return;
         const nubPaints = readAuthoredPaint(nubs);
         for (let n = 0; n < nubs.length; n++) {
             if (nubPaints[n] && nubPaints[n].bg === cardBg[n]) wanted.set(nubs[n], [token, true]);
+        }
+    }
+
+    // The arrow can also be a ::before/::after, on the card or on a wrapper
+    // around it (Walmart's "Spanish / Español" popup: `.BaseHighlight::before`,
+    // a rotated 11 px square in the card's #001e60, X-12's "dark-blue
+    // diamond"). The universal rule never reaches a pseudo-element, so its
+    // computed fill is the authored one: same rule as above, written through
+    // the pseudo-override sheet (Session 8d).
+    const pseudoNubHosts = new Set();
+    function addPseudoNubs(nodes, paints, wanted, token) {
+        const cardBgs = new Set();
+        for (let i = 0; i < nodes.length; i++) {
+            const w = wanted.get(nodes[i]);
+            if (w && w[1] && paints[i] && paints[i].bg) cardBgs.add(paints[i].bg);
+        }
+        // Read the authored pseudo fill: a nub painted by an earlier pass
+        // has its marker lifted for the read (one recalc for the batch).
+        const n = Math.min(nodes.length, 64);
+        const toks = new Array(n);
+        for (let i = 0; i < n; i++) {
+            toks[i] = nodes[i].getAttribute('data-aura-pnub');
+            if (toks[i]) nodes[i].removeAttribute('data-aura-pnub');
+        }
+        const found = new Array(n);
+        for (let i = 0; i < n; i++) {
+            const rules = [];
+            for (const pseudo of ['::before', '::after']) {
+                let ps;
+                try { ps = getComputedStyle(nodes[i], pseudo); } catch (e) { continue; }
+                if (!ps || ps.content === 'none' || ps.content === 'normal' || ps.position !== 'absolute') continue;
+                const pw = parseFloat(ps.width);
+                const ph = parseFloat(ps.height);
+                if (!(pw >= 1 && ph >= 1 && pw <= NUB_MAX_SIZE && ph <= NUB_MAX_SIZE)) continue;
+                if (!cardBgs.has(ps.backgroundColor)) continue;
+                rules.push(pseudo);
+            }
+            found[i] = rules;
+        }
+        for (let i = 0; i < n; i++) if (toks[i]) nodes[i].setAttribute('data-aura-pnub', toks[i]);
+        let changed = false;
+        for (let i = 0; i < n; i++) {
+            const el = nodes[i];
+            const rules = found[i];
+            let tok = toks[i];
+            if (!rules.length) {
+                if (tok && pseudoBgRulesByToken.delete('nub' + tok)) changed = true;
+                continue;
+            }
+            if (!tok) {
+                tok = String(++pseudoBgCounter);
+                el.setAttribute('data-aura-pnub', tok);
+                pseudoNubHosts.add(el);
+            }
+            const css = rules.map(p => `[data-aura-pnub="${tok}"]${p} { background-color: ${token} !important; }`).join('\n');
+            if (pseudoBgRulesByToken.get('nub' + tok) !== css) {
+                pseudoBgRulesByToken.set('nub' + tok, css);
+                changed = true;
+            }
+        }
+        if (changed) {
+            const sheet = ensurePseudoBgStyleEl();
+            const css = Array.from(pseudoBgRulesByToken.values()).join('\n');
+            if (sheet.textContent !== css) sheet.textContent = css;
         }
     }
 
@@ -3771,6 +3879,35 @@
         fastContrast(els);
     }
 
+    // Buttons in nodes the site just added are settled here too, before
+    // the next frame (X-11, Walmart's ☰ drawer: its rows are full-width
+    // `button.bg-white` and a white pill; the sheet turned their text light
+    // at once while their fill waited up to 300 ms for the pass, so the
+    // drawer opened with white bars and unreadable text). Same gates as
+    // the added-text path; a bounded count, so a feed of cards with a
+    // button each still waits for the pass.
+    const FAST_BUTTON_MAX = 24;
+    function settleAddedButtons(records) {
+        if (!fullPassCollected || document.readyState === 'loading' || !currentTheme || !H || isUserTyping()) return;
+        const buttons = [];
+        for (let r = 0; r < records.length; r++) {
+            const rec = records[r];
+            if (rec.type !== 'childList') continue;
+            for (let n = 0; n < rec.addedNodes.length; n++) {
+                const node = rec.addedNodes[n];
+                if (node.nodeType !== 1 || !node.isConnected || isOwnNode(node)) continue;
+                if (isButtonLikeElement(node)) buttons.push(node);
+                let inner;
+                try { inner = node.querySelectorAll(NESTED_BUTTON_SELECTOR); } catch (e) { continue; }
+                if (buttons.length + inner.length > FAST_BUTTON_MAX) return;
+                for (let k = 0; k < inner.length; k++) buttons.push(inner[k]);
+            }
+        }
+        if (!buttons.length) return;
+        settleButtons(buttons);
+        discardOwnMutationRecords();
+    }
+
     // Text in an element that starts a CSS animation (a cookie sheet or
     // toast sliding in): decided as it starts, the same way as added
     // nodes. A first-screen pass can miss it while it's still translated
@@ -4029,7 +4166,13 @@
             try { cs = getComputedStyle(b); } catch (e) { continue; }
             const f = H.firstGradientStop(cs.backgroundImage) || H.parseCssRgb(cs.backgroundColor);
             if (!f || f.a < 0.5) continue;
-            if (H.fillStandsApart(f, themeBgParsed)) {
+            // A distinct fill of ours stays on while the button is
+            // re-decided, so the computed fill is ours, not the site's: its
+            // container is probed whatever that fill looks like (Session 8d:
+            // Airbnb's #222 "Accept all", lifted by the added-node path,
+            // read as standing apart on the next pass and lost its lift).
+            const prevEntry = buttonPaints.get(b);
+            if (H.fillStandsApart(f, themeBgParsed) && !(prevEntry && prevEntry.mode === 'distinct')) {
                 // Still needed for a full-width neutral strip (the
                 // surface rule asks whether it blended into its container).
                 if (!H.isNeutralFill(f)) continue;
@@ -4671,7 +4814,7 @@
     // positioned hosts: an absolutely positioned fade is laid out against
     // its host, and reading ::before/::after on every static element would
     // double the walk's style reads.
-    function visitFadeElement(el, out) {
+    function visitFadeElement(el, out, masksOut) {
         if (out.length >= FADE_MAX_PER_PASS) return;
         if (H.BRIGHT_SKIP_TAGS && H.BRIGHT_SKIP_TAGS[el.tagName] && el.tagName !== 'BUTTON') return;
         let cs;
@@ -4691,10 +4834,15 @@
         for (let i = 0; i < 2; i++) {
             const pseudo = i === 0 ? '::before' : '::after';
             const token = el.getAttribute('data-aura-fade');
+            if (token && pseudoMaskRules.has(token + pseudo)) { if (masksOut) masksOut.push([el, pseudo]); continue; }
             if (token && fadePseudoRules.has(token + pseudo)) { out.push([el, pseudo]); continue; }
             let ps;
             try { ps = getComputedStyle(el, pseudo); } catch (e) { continue; }
-            if (ps.content === 'none' || ps.content === 'normal' || ps.backgroundImage === 'none') continue;
+            if (ps.content === 'none' || ps.content === 'normal') continue;
+            if (ps.backgroundImage === 'none') {
+                if (masksOut && masksOut.length < PSEUDO_MASK_MAX_PER_PASS && isPseudoMaskShape(ps)) masksOut.push([el, pseudo]);
+                continue;
+            }
             if (ps.position !== 'absolute' && ps.position !== 'fixed') continue;
             if (isFadePaint(ps.backgroundColor, ps.backgroundImage)) out.push([el, pseudo]);
         }
@@ -4817,6 +4965,125 @@
             }
         }
         if (rulesChanged) writeFadePseudoRules();
+    }
+
+    // Pseudo-element masks (Session 8d, R-4): the mask rule's shape as a
+    // ::before/::after, which neither the strip nor the element mask rule
+    // can reach. Reddit's "N more replies" row: `.more-comments-partial::
+    // before { position: absolute; inset-inline-start: -24px; width: 24px;
+    // height: 100%; background-color: var(--color-neutral-background) }`,
+    // a strip in the page color hung beside its host to cut the parent's
+    // thread line off below the curve. With iOS in dark mode that's
+    // #0E1113: black squares on a colored theme. A small solid pseudo whose
+    // fill matches what its host sits on is painted the themed color of
+    // what's behind it now, like an element mask. Nested comments sit
+    // deeper than any ancestor walk, so the page's own root fill is the
+    // fallback for "what it sits on" (authoredPageFill).
+    const pseudoMaskRules = new Map();   // "token::before" -> rule (shares the fade token)
+    const PSEUDO_MASK_MAX_PER_PASS = 80;
+    const PSEUDO_MASK_DEPTH = 12;
+    function isPseudoMaskShape(ps) {
+        if (ps.position !== 'absolute' || ps.display === 'none' || ps.visibility === 'hidden' || ps.opacity === '0') return false;
+        const c = H.parseCssRgb(ps.backgroundColor);
+        if (!c || c.a < 0.5) return false;
+        const w = parseFloat(ps.width);
+        const h = parseFloat(ps.height);
+        return !!(H.isMaskShape && H.isMaskShape({ width: w, height: h }));
+    }
+
+    // The fill the site paints its page with (html, else body), read with
+    // Aura's root paint lifted for one style read in this task; cached per
+    // root class names.
+    let pageFillCache = null;
+    function authoredPageFill() {
+        const de = document.documentElement;
+        const body = document.body;
+        if (!de || !body) return null;
+        const key = String(de.getAttribute('class') || '') + '|' + String(body.getAttribute('class') || '');
+        if (pageFillCache && pageFillCache.key === key) return pageFillCache.fill;
+        const roots = [body, de];
+        const props = ['background-color', 'background-image'];
+        const saved = roots.map(r => props.map(p => [p, r.style.getPropertyValue(p), r.style.getPropertyPriority(p)]));
+        let fill = null;
+        try {
+            roots.forEach(r => {
+                r.setAttribute('data-aura-notrans', '');
+                r.setAttribute('data-aura-rootprobe', '');
+                props.forEach(p => r.style.removeProperty(p));
+            });
+            for (let i = 0; i < roots.length && !fill; i++) {
+                const c = H.parseCssRgb(getComputedStyle(roots[i]).backgroundColor);
+                if (c && c.a >= 0.5) fill = c;
+            }
+        } catch (e) {}
+        roots.forEach((r, i) => {
+            r.removeAttribute('data-aura-rootprobe');
+            saved[i].forEach(([p, v, prio]) => { if (v) r.style.setProperty(p, v, prio); });
+            notransPending.push(r);
+        });
+        if (!notransRaf) notransRaf = requestAnimationFrame(clearNotrans);
+        pageFillCache = { key, fill };
+        return fill;
+    }
+
+    function settlePseudoMasks(cands) {
+        if (!cands.length || !currentTheme || !H || !H.isMaskFill) return;
+        // The authored pseudo fill: read with our rules off.
+        const sheet = pseudoBgStyleEl;
+        if (sheet && pseudoMaskRules.size) sheet.disabled = true;
+        const fills = cands.map(([el, pseudo]) => {
+            let ps;
+            try { ps = el.isConnected ? getComputedStyle(el, pseudo) : null; } catch (e) { ps = null; }
+            return ps && ps.backgroundImage === 'none' && isPseudoMaskShape(ps) ? H.parseCssRgb(ps.backgroundColor) : null;
+        });
+        if (sheet) sheet.disabled = false;
+        const chains = cands.map(([el]) => {
+            const chain = [];
+            for (let n = el, d = 0; n && d < PSEUDO_MASK_DEPTH
+                && n !== document.body && n !== document.documentElement; n = maskParentOf(n), d++) chain.push(n);
+            return chain;
+        });
+        const flat = [].concat(...chains);
+        const behindPaint = flat.length ? readAuthoredPaint(flat) : [];
+        let page;
+        let changed = false;
+        for (let i = 0, k = 0; i < cands.length; k += chains[i].length, i++) {
+            const [el, pseudo] = cands[i];
+            const chain = chains[i];
+            let behind = null;
+            for (let j = 0; j < chain.length && !behind; j++) {
+                const c = H.parseCssRgb(behindPaint[k + j] && behindPaint[k + j].bg);
+                if (c && c.a >= 0.5) behind = c;
+            }
+            if (!behind) {
+                if (page === undefined) page = authoredPageFill();
+                behind = page;
+            }
+            const token = el.getAttribute('data-aura-fade');
+            // Unlike an element mask, an unknown backdrop is no match: a
+            // solid pseudo is a dot, a badge, a bar far more often.
+            if (!fills[i] || !behind || !H.isMaskFill(fills[i], behind)) {
+                if (token && pseudoMaskRules.delete(token + pseudo)) changed = true;
+                continue;
+            }
+            let color = 'var(--aura-bg)';
+            for (let j = 0; j < chain.length; j++) {
+                let bg = '';
+                try { bg = getComputedStyle(chain[j]).backgroundColor; } catch (e) { continue; }
+                const c = H.parseCssRgb(bg);
+                if (c && c.a >= 0.5) { color = bg; break; }
+            }
+            let tok = token;
+            if (!tok) { tok = String(++fadeTokenCounter); el.setAttribute('data-aura-fade', tok); }
+            const rule = `[data-aura-fade="${tok}"]${pseudo} { background-color: ${color} !important; }`;
+            if (pseudoMaskRules.get(tok + pseudo) !== rule) { pseudoMaskRules.set(tok + pseudo, rule); changed = true; }
+        }
+        if (changed) {
+            pseudoBgRulesByToken.set('pseudoMasks', Array.from(pseudoMaskRules.values()).join('\n'));
+            const css = Array.from(pseudoBgRulesByToken.values()).join('\n');
+            const el = ensurePseudoBgStyleEl();
+            if (el.textContent !== css) el.textContent = css;
+        }
     }
 
     // 3d-sexies. BACKGROUND IMAGES UNDER TEXT (X-10, decided Nov 14) — a
@@ -4953,11 +5220,13 @@
     function revertFadePaints() {
         Array.from(fadePaints.keys()).forEach(el => releaseFade(el, null));
         fadePaints.clear();
-        fadePseudoRules.forEach((rule, key) => {
+        [fadePseudoRules, pseudoMaskRules].forEach(rules => rules.forEach((rule, key) => {
             const el = document.querySelector(`[data-aura-fade="${key.replace(/::.*$/, '')}"]`);
             if (el) el.removeAttribute('data-aura-fade');
-        });
+        }));
         fadePseudoRules.clear();
+        pseudoMaskRules.clear();
+        pageFillCache = null;
     }
 
     // 3e. SPA SHELL / GRADIENT SAFETY NET
@@ -5596,6 +5865,7 @@
             if (mutationDebounceTimer) { clearTimeout(mutationDebounceTimer); mutationDebounceTimer = null; }
         }
         nestedButtons = [];
+        safePass(() => expandInlineVarBackgrounds(root));
         const elements = collectElements(root);
         if (root === document.documentElement) {
             fullPassCollected = true;
@@ -5616,6 +5886,7 @@
         const stateCandidates = [];
         const maskCandidates = [];
         const fadeCandidates = [];
+        const pseudoMaskCandidates = [];
         const bgImageCandidates = [];
         const borderCandidates = [];
         const darkTheme = !(H.isThemeBackgroundLight && H.isThemeBackgroundLight(currentTheme.background || '#121212'));
@@ -5711,7 +5982,7 @@
                     visitFloatingIconControlElement(el, vh, vw, iconCandidates);
                     visitControlElement(el, buttonCandidates, stateCandidates);
                     visitMaskElement(el, maskCandidates);
-                    visitFadeElement(el, fadeCandidates);
+                    visitFadeElement(el, fadeCandidates, pseudoMaskCandidates);
                     visitBackgroundImageElement(el, vh, vw, bgImageCandidates);
                     visitBlendElement(el);
                     if (darkTheme) visitBorderElement(el, borderCandidates);
@@ -5725,6 +5996,7 @@
             // After buttons and masks: a fade takes the themed color of
             // what's behind it, which those may have painted.
             () => settleFades(fadeCandidates),
+            () => settlePseudoMasks(pseudoMaskCandidates),
             () => settleBackgroundImages(bgImageCandidates),
             // Last: nested roots are expanded as the steps above run.
             // In chunks, one step each, so a page of nested comments
@@ -6126,6 +6398,10 @@
             try { el.removeAttribute('data-aura-pbg'); } catch (e) {}
         });
         pseudoBgNavPanelHosts.clear();
+        pseudoNubHosts.forEach(el => {
+            try { el.removeAttribute('data-aura-pnub'); } catch (e) {}
+        });
+        pseudoNubHosts.clear();
         pseudoBgRulesByToken.clear();
         loaderBgModified.forEach(el => {
             try { el.style.removeProperty('background-image'); } catch (e) {}
@@ -6401,6 +6677,7 @@
             auraSheetCopies.add(style);
         }
         watchShadowCopy(host, shadow);
+        expandInlineVarBackgrounds(shadow);
         if (nested) {
             const inner = [];
             const all = shadow.querySelectorAll('*');
@@ -6885,6 +7162,7 @@
                     DBG?.mutations(mutationsList);
                     if (layerPaints.size) repairRewrittenLayerPaints(mutationsList);
                     contrastAddedNodes(mutationsList);
+                    safePass(() => settleAddedButtons(mutationsList));
                     for (let i = 0; i < mutationsList.length; i++) {
                         pendingMutationRecords.push(mutationsList[i]);
                         // A component added with its shadow root attached,

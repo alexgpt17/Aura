@@ -20,6 +20,13 @@
       painted the page's #0e1113 that hides the rest of the line. Inside a
       shadow root, as on shreddit. On a light Aura theme the span stays
       #0e1113: the black squares
+  Session 8d (R-4 still failing on the phone, IMG_0741): on Reddit's dark
+  CSS the corner square is a pseudo-element, not an element:
+  `.more-comments-partial::before { position: absolute;
+  inset-inline-start: -24px; top: 0; width: 24px; height: 100%;
+  background-color: var(--color-neutral-background) }` (#0E1113), beside
+  the "N more replies" row (read from the dark-scheme reddit-post
+  snapshot). Modeled in light DOM below the shadow thread (.pthread).
   Session 8 (F-2 on focus): Urban Plates' order page stylesheet has
   `.listboxLabelInput:focus + .listboxLabelVisualLabel, …:autofill + …
   { background: #fff }` (read live in desktop Chrome; the checkout form
@@ -40,6 +47,10 @@
   .listboxLabelInput:focus + .listboxLabelVisualLabel { top: -9px; font-size: 12px; background: #fff; }
   .dark { padding: 12px 16px 40px; background: #0e1113; color: #d7dadc; }
   .dark h3 { margin: 0 0 8px; font-size: 15px; }
+  .pthread { position: relative; margin-top: 16px; display: grid; grid-template-columns: 24px 1fr; }
+  .pthread::after { content: ""; position: absolute; left: 11px; top: 0; bottom: 0; border-left: 1px solid #3e4142; }
+  .pthread .more-partial { grid-column-start: 2; position: relative; display: flex; align-items: center; min-height: 32px; color: #82959b; font-size: 13px; }
+  .pthread .more-partial::before { content: ""; position: absolute; inset-inline-start: -24px; top: 0; width: 24px; height: 100%; background-color: #0e1113; z-index: 1; }
 </style>
 </head>
 <body>
@@ -52,6 +63,7 @@
 <div class="dark">
   <h3>Comments</h3>
   <x-thread></x-thread>
+  <div class="pthread"><div class="more-partial">⊕ 77 more replies</div></div>
 </div>
 <script>
   customElements.define('x-thread', class extends HTMLElement {

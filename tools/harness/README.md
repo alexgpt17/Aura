@@ -112,6 +112,8 @@ Replays use the same DOM every time, so paint diffs and timings compare like for
   - `fixture-walmart-popup` (Session 8b, served as `www.walmart.com`, desktop Chrome at 500 px): the "Spanish / Español" popup, an absolute layer with no z-index hung below a 48 px anchor > `.BaseHighlight` (arrow = its `::before`) > a `#001e60` card, inserted at 1 s (X-12).
   - `fixture-airbnb-chips` (Session 8b addition, A-5, phone-shaped live DOM): a listing photo with the frosted "Guest favorite" pill (`rgba(255,255,255,.8)` + blur) in a transparent absolute layer, and a "Prices include all fees" pill (same build, a guess).
 
+  - Session 8d (rebuilt from walmart.com read live in Chrome; the dark-scheme `snapshots/walmart.html` is Walmart's bot check): `fixture-walmart-popup` adds the real "Spanish / Español" popup, hung off the ☰ inside the sticky header, its card filled by an inline `background: var(--color-core-blue-160)`, with a class flip at 2.5 s that makes the engine re-read it (X-12); `fixture-walmart-menu`'s first two drawer rows are white buttons (`button.bg-white`, a pill with `transition: all .1s`) (X-11). `fixture-masks` adds Reddit's dark-CSS corner mask, a `::before` beside the "more replies" row (R-4).
+
   A fixture can be served from a real site's origin with `origin` in sites.js, so host-gated engine code (SITE_FIXES, Google passes) runs. Fixtures can reference images in `fixtures/img/` (served with their image type).
 
 ## Theme switch (`--scenarios switch`)
